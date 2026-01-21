@@ -1,14 +1,172 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// Prisma v6 Schema
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
+}
+
+// ============= CORE MODELS =============
+
+model User {
+  id           Int     @id @default(autoincrement())
+  email        String  @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  phone        String?
+  settings     Json?   @default("{}")
+
+  // Relationships
+  groups        GroupMember[]  @relation("UserGroups")
+  createdTasks  Task[]         @relation("TaskCreator")
+  assignments   Assignment[]   @relation("UserAssignments")
+  feedback      Feedback[]     @relation("UserFeedback")
+  notifications Notification[] @relation("UserNotifications")
+
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  @@map("users")
+}
+
+model Group {
+  id          Int     @id @default(autoincrement())
+  name        String
+  description String?
+  inviteCode  String  @unique
+  avatarUrl   String?
+  settings    Json?   @default("{}")
+
+  // Relationships
+  members GroupMember[] @relation("GroupMembers")
+  tasks   Task[]        @relation("GroupTasks")
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id      Int    @id @default(autoincrement())
+  userId  Int
+  groupId Int
+  role    String @default("MEMBER") // "ADMIN" or "MEMBER"
+
+  // Relationships
+  user  User  @relation("UserGroups", fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation("GroupMembers", fields: [groupId], references: [id], onDelete: Cascade)
+
+  joinedAt DateTime @default(now())
+
+  @@unique([userId, groupId])
+  @@map("group_members")
+}
+
+model Task {
+  id          Int     @id @default(autoincrement())
+  title       String
+  description String?
+  points      Int     @default(1)
+  frequency   String  @default("ONCE") // DAILY, WEEKLY, MONTHLY, ONCE
+  category    String?
+
+  // Foreign keys
+  groupId     Int
+  createdById Int
+
+  // Relationships
+  group       Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
+  creator     User         @relation("TaskCreator", fields: [createdById], references: [id])
+  assignments Assignment[] @relation("TaskAssignments")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("tasks")
+}
+
+model Assignment {
+  id          Int       @id @default(autoincrement())
+  taskId      Int
+  userId      Int
+  dueDate     DateTime
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  verified    Boolean   @default(false)
+  photoUrl    String?
+
+  // Relationships
+  task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
+  user        User         @relation("UserAssignments", fields: [userId], references: [id])
+  swapRequest SwapRequest? @relation("AssignmentSwapRequest")
+
+  createdAt DateTime @default(now())
+
+  @@index([dueDate])
+  @@index([completed])
+  @@index([userId, completed])
+  @@map("assignments")
+}
+
+model SwapRequest {
+  id           Int     @id @default(autoincrement())
+  assignmentId Int     @unique // ✅ ADDED @unique for one-to-one relation
+  reason       String?
+  status       String  @default("PENDING") // PENDING, ACCEPTED, DECLINED
+
+  assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("swap_requests")
+}
+
+model Notification {
+  id      Int     @id @default(autoincrement())
+  userId  Int
+  type    String // TASK_ASSIGNED, TASK_REMINDER, etc.
+  title   String
+  message String
+  read    Boolean @default(false)
+
+  user User @relation("UserNotifications", fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model Feedback {
+  id      Int    @id @default(autoincrement())
+  userId  Int
+  type    String // BUG, FEATURE, COMPLAINT
+  message String
+  status  String @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+
+  user User @relation("UserFeedback", fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("feedback")
+}
+
+// System Admins (separate from regular users)
+model SystemAdmin {
+  id           Int    @id @default(autoincrement())
+  email        String @unique
+  passwordHash String
+  name         String
+  role         String @default("SUPPORT") // SUPER_ADMIN, SUPPORT, ANALYST
+
+  createdAt DateTime @default(now())
+
+  @@map("system_admins")
 }
