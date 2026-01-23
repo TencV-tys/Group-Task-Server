@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE `users` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `id` VARCHAR(191) NOT NULL,
     `email` VARCHAR(191) NOT NULL,
     `passwordHash` VARCHAR(191) NOT NULL,
     `name` VARCHAR(191) NOT NULL,
@@ -9,7 +9,7 @@ CREATE TABLE `users` (
     `role` ENUM('USER', 'GROUP_ADMIN') NOT NULL DEFAULT 'USER',
     `roleStatus` ENUM('ACTIVE', 'SUSPENDED', 'DISABLED') NOT NULL DEFAULT 'ACTIVE',
     `roleStatusChangedAt` DATETIME(3) NULL,
-    `roleStatusChangedBy` INTEGER NULL,
+    `roleStatusChangedBy` VARCHAR(191) NULL,
     `roleStatusReason` VARCHAR(191) NULL,
     `settings` JSON NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -22,7 +22,7 @@ CREATE TABLE `users` (
 
 -- CreateTable
 CREATE TABLE `groups` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `id` VARCHAR(191) NOT NULL,
     `name` VARCHAR(191) NOT NULL,
     `description` VARCHAR(191) NULL,
     `inviteCode` VARCHAR(191) NOT NULL,
@@ -37,9 +37,9 @@ CREATE TABLE `groups` (
 
 -- CreateTable
 CREATE TABLE `group_members` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `userId` INTEGER NOT NULL,
-    `groupId` INTEGER NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `groupId` VARCHAR(191) NOT NULL,
     `groupRole` ENUM('ADMIN', 'MEMBER') NOT NULL DEFAULT 'MEMBER',
     `joinedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
@@ -49,14 +49,14 @@ CREATE TABLE `group_members` (
 
 -- CreateTable
 CREATE TABLE `tasks` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `id` VARCHAR(191) NOT NULL,
     `title` VARCHAR(191) NOT NULL,
     `description` VARCHAR(191) NULL,
     `points` INTEGER NOT NULL DEFAULT 1,
     `frequency` VARCHAR(191) NOT NULL DEFAULT 'ONCE',
     `category` VARCHAR(191) NULL,
-    `groupId` INTEGER NOT NULL,
-    `createdById` INTEGER NOT NULL,
+    `groupId` VARCHAR(191) NOT NULL,
+    `createdById` VARCHAR(191) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
@@ -65,9 +65,9 @@ CREATE TABLE `tasks` (
 
 -- CreateTable
 CREATE TABLE `assignments` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `taskId` INTEGER NOT NULL,
-    `userId` INTEGER NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `taskId` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
     `dueDate` DATETIME(3) NOT NULL,
     `completed` BOOLEAN NOT NULL DEFAULT false,
     `completedAt` DATETIME(3) NULL,
@@ -83,8 +83,8 @@ CREATE TABLE `assignments` (
 
 -- CreateTable
 CREATE TABLE `swap_requests` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `assignmentId` INTEGER NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `assignmentId` VARCHAR(191) NOT NULL,
     `reason` VARCHAR(191) NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'PENDING',
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -95,8 +95,8 @@ CREATE TABLE `swap_requests` (
 
 -- CreateTable
 CREATE TABLE `notifications` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `userId` INTEGER NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
     `type` VARCHAR(191) NOT NULL,
     `title` VARCHAR(191) NOT NULL,
     `message` VARCHAR(191) NOT NULL,
@@ -108,8 +108,8 @@ CREATE TABLE `notifications` (
 
 -- CreateTable
 CREATE TABLE `feedback` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `userId` INTEGER NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
     `type` VARCHAR(191) NOT NULL,
     `message` VARCHAR(191) NOT NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'OPEN',
@@ -121,7 +121,7 @@ CREATE TABLE `feedback` (
 
 -- CreateTable
 CREATE TABLE `system_admins` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `id` VARCHAR(191) NOT NULL,
     `email` VARCHAR(191) NOT NULL,
     `passwordHash` VARCHAR(191) NOT NULL,
     `name` VARCHAR(191) NOT NULL,
@@ -138,9 +138,9 @@ CREATE TABLE `system_admins` (
 
 -- CreateTable
 CREATE TABLE `admin_audit_logs` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `adminId` INTEGER NOT NULL,
-    `targetUserId` INTEGER NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `adminId` VARCHAR(191) NOT NULL,
+    `targetUserId` VARCHAR(191) NULL,
     `action` VARCHAR(191) NOT NULL,
     `details` JSON NULL,
     `ipAddress` VARCHAR(191) NULL,
@@ -156,7 +156,7 @@ CREATE TABLE `admin_audit_logs` (
 -- CreateTable
 CREATE TABLE `refresh_tokens` (
     `id` VARCHAR(191) NOT NULL,
-    `userId` INTEGER NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
     `token` VARCHAR(191) NOT NULL,
     `type` ENUM('ACCESS', 'REFRESH', 'PASSWORD_RESET', 'EMAIL_VERIFICATION') NOT NULL DEFAULT 'REFRESH',
     `expiresAt` DATETIME(3) NOT NULL,
@@ -173,7 +173,7 @@ CREATE TABLE `refresh_tokens` (
 -- CreateTable
 CREATE TABLE `admin_refresh_tokens` (
     `id` VARCHAR(191) NOT NULL,
-    `adminId` INTEGER NOT NULL,
+    `adminId` VARCHAR(191) NOT NULL,
     `token` VARCHAR(191) NOT NULL,
     `type` ENUM('ACCESS', 'REFRESH', 'PASSWORD_RESET', 'EMAIL_VERIFICATION') NOT NULL DEFAULT 'REFRESH',
     `expiresAt` DATETIME(3) NOT NULL,
