@@ -1,7 +1,9 @@
+import { UserJwtUtils } from './../utils/user.jwtutils';
 
 import { UserRole, UserRoleStatus } from "@prisma/client";
 import prisma from "../prisma";
 import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
+import { comparePassword, hashedPassword } from "../utils/user.bcrypt";
 export class UserServices{
 
  static async signup(email:string,name:string,password:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
@@ -13,13 +15,25 @@ export class UserServices{
                         message:"All fields are required"
                     }
                 }
+               
+                const existingUser = await prisma.user.findUnique({
+                    where:{email}
+                });
 
+                if(existingUser){
+                       return{
+                        success:false,
+                        message:"Email found"
+                       }
+                }
+                
+                const passwordHashed = await hashedPassword(password,10);
 
                 const user = await prisma.user.create({
                     data:{
                          name:name,
                         email:email,
-                        passwordHash:password,
+                        passwordHash:passwordHashed,
                         avatarUrl:avatarUrl ?? null,
                         phone:phone ?? null,
                         role:UserRole.USER ,
@@ -29,10 +43,12 @@ export class UserServices{
                 });
                 
                 const userId = user.id as unknown as string;
+                const token = UserJwtUtils.generateToken(userId,user.email,user.role);
 
                  return{
                     success:true,
                     message:"Sign up successfully",
+                    token,
                     user:{
                         id:userId,
                         name:user.name,
@@ -78,11 +94,22 @@ export class UserServices{
                 message:"User not found"
             }
         } 
-        
+         
+        const validPassword = await comparePassword(password,user.passwordHash);
+          
+        if(!validPassword){
+            return{
+                success:false,
+                message:"Invalid Password"
+            }
+        }
+
         const userId = user.id as unknown as string;
+        const token = UserJwtUtils.generateToken(userId,user.email,user.role);
           return{
              success:true,
              message:"Login Successfully",
+             token,
              user:{
                 id:userId,
                 name:user.name,
