@@ -8,6 +8,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============= USER ROLES =============
+enum UserRole {
+  USER
+  GROUP_ADMIN
+}
+
+enum UserRoleStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum GroupMemberRole {
+  ADMIN
+  MEMBER
+}
+
+enum SystemAdminRole {
+  SUPER_ADMIN
+  SUPPORT
+  ANALYST
+}
+
+enum TokenType {
+  ACCESS
+  REFRESH
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
 // ============= CORE MODELS =============
 
 model User {
@@ -17,7 +47,17 @@ model User {
   name         String
   avatarUrl    String?
   phone        String?
-  settings     Json?   @default("{}")
+
+  // User Role System
+  role       UserRole       @default(USER)
+  roleStatus UserRoleStatus @default(ACTIVE)
+
+  // System Admin Oversight
+  roleStatusChangedAt DateTime?
+  roleStatusChangedBy Int?
+  roleStatusReason    String?
+
+  settings Json? @default("{}")
 
   // Relationships
   groups        GroupMember[]  @relation("UserGroups")
@@ -25,6 +65,15 @@ model User {
   assignments   Assignment[]   @relation("UserAssignments")
   feedback      Feedback[]     @relation("UserFeedback")
   notifications Notification[] @relation("UserNotifications")
+  
+  // Authentication tokens (MOBILE APP USERS)
+  refreshTokens RefreshToken[] @relation("UserRefreshTokens")
+
+  // System Admin who changed status
+  statusChangedByAdmin SystemAdmin? @relation("StatusChangedByAdmin", fields: [roleStatusChangedBy], references: [id])
+
+  // Relationships to Admin
+  adminModifications AdminAuditLog[] @relation("UserAdminAuditLogs")
 
   // Timestamps
   createdAt   DateTime  @default(now())
@@ -54,10 +103,10 @@ model Group {
 }
 
 model GroupMember {
-  id      Int    @id @default(autoincrement())
-  userId  Int
-  groupId Int
-  role    String @default("MEMBER") // "ADMIN" or "MEMBER"
+  id        Int             @id @default(autoincrement())
+  userId    Int
+  groupId   Int
+  groupRole GroupMemberRole @default(MEMBER)
 
   // Relationships
   user  User  @relation("UserGroups", fields: [userId], references: [id], onDelete: Cascade)
@@ -74,7 +123,7 @@ model Task {
   title       String
   description String?
   points      Int     @default(1)
-  frequency   String  @default("ONCE") // DAILY, WEEKLY, MONTHLY, ONCE
+  frequency   String  @default("ONCE")
   category    String?
 
   // Foreign keys
@@ -117,9 +166,9 @@ model Assignment {
 
 model SwapRequest {
   id           Int     @id @default(autoincrement())
-  assignmentId Int     @unique // ✅ ADDED @unique for one-to-one relation
+  assignmentId Int     @unique
   reason       String?
-  status       String  @default("PENDING") // PENDING, ACCEPTED, DECLINED
+  status       String  @default("PENDING")
 
   assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
 
@@ -131,7 +180,7 @@ model SwapRequest {
 model Notification {
   id      Int     @id @default(autoincrement())
   userId  Int
-  type    String // TASK_ASSIGNED, TASK_REMINDER, etc.
+  type    String
   title   String
   message String
   read    Boolean @default(false)
@@ -146,9 +195,9 @@ model Notification {
 model Feedback {
   id      Int    @id @default(autoincrement())
   userId  Int
-  type    String // BUG, FEATURE, COMPLAINT
+  type    String
   message String
-  status  String @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+  status  String @default("OPEN")
 
   user User @relation("UserFeedback", fields: [userId], references: [id])
 
@@ -158,15 +207,90 @@ model Feedback {
   @@map("feedback")
 }
 
-// System Admins (separate from regular users)
+// ============= SYSTEM ADMINS =============
+
 model SystemAdmin {
-  id           Int    @id @default(autoincrement())
-  email        String @unique
+  id           Int             @id @default(autoincrement())
+  email        String          @unique
   passwordHash String
   name         String
-  role         String @default("SUPPORT") // SUPER_ADMIN, SUPPORT, ANALYST
+  role         SystemAdminRole @default(SUPPORT)
+  permissions  Json?           @default("[]")
+
+  // Relationships
+  modifiedUsers User[]          @relation("StatusChangedByAdmin")
+  auditLogs     AdminAuditLog[] @relation("AdminAuditLogs")
+  
+  // Authentication tokens (WEB ADMIN USERS)
+  refreshTokens AdminRefreshToken[] @relation("AdminRefreshTokens")
+
+  // Status
+  lastLoginAt DateTime?
+  isActive    Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_admins")
+}
+
+model AdminAuditLog {
+  id           Int     @id @default(autoincrement())
+  adminId      Int
+  targetUserId Int?
+  action       String
+  details      Json?
+  ipAddress    String?
+  userAgent    String?
+
+  // Relationships
+  admin      SystemAdmin @relation("AdminAuditLogs", fields: [adminId], references: [id], onDelete: Cascade)
+  targetUser User?       @relation("UserAdminAuditLogs", fields: [targetUserId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
-  @@map("system_admins")
+  @@index([adminId])
+  @@index([targetUserId])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
+}
+
+// ============= AUTHENTICATION MODELS =============
+
+// For MOBILE APP USERS
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    Int
+  token     String   @unique
+  type      TokenType @default(REFRESH)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  
+  user      User     @relation("UserRefreshTokens", fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// For WEB ADMIN USERS (separate from mobile users)
+model AdminRefreshToken {
+  id        String      @id @default(uuid())
+  adminId   Int
+  token     String      @unique
+  type      TokenType   @default(REFRESH)
+  expiresAt DateTime
+  revoked   Boolean     @default(false)
+  
+  admin     SystemAdmin @relation("AdminRefreshTokens", fields: [adminId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  
+  @@index([adminId])
+  @@index([token])
+  @@map("admin_refresh_tokens")
 }
