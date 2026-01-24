@@ -2,7 +2,7 @@ import { Request, Response, NextFunction} from "express";
 import jwt from "jsonwebtoken";
 import { success } from "zod";
 
-interface UserJwtPayload{
+export interface UserJwtPayload{
     userId:string;
     email:string;
     role:string;

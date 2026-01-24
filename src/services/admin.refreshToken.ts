@@ -34,5 +34,27 @@ export class AdminRefreshToken{
     });
 
   }
+  static async isValidToken(token:string):Promise<boolean>{
+      const refreshToken = await prisma.adminRefreshToken.findUnique({
+        where:{token:token}
+      });
+
+      if(!refreshToken) return false;
+      if(refreshToken.revoked) return false;
+      if(refreshToken.expiresAt < new Date()) return false;
+
+      return true;
+
+  }
+
+
+  static async deleteExpiredToken(){
+    return prisma.adminRefreshToken.deleteMany({
+        where:{
+            expiresAt:{lt:new Date()}
+        }
+    });
+  }
+
 
 }

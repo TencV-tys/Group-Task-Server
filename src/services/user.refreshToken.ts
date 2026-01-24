@@ -30,5 +30,26 @@ export class UserRefreshToken{
             data:{revoked:true}
         });
      }
+   
+     static async isValidToken(token:string):Promise<boolean>{
+             const refreshToken = await prisma.refreshToken.findUnique({
+                where:{token:token}
+             });
+
+             if(!refreshToken) return false;
+             if(refreshToken.revoked) return false;
+             if(refreshToken.expiresAt < new Date()) return false;
+
+             return true;
+
+     }
+
+     static async deleteExpireTokens(){
+               return prisma.refreshToken.deleteMany({
+                where: {
+                     expiresAt: {lt:new Date()}
+                      }
+               });      
+     } 
 
 }

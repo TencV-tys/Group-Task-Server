@@ -1,5 +1,5 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
-
+import { UserJwtPayload } from '../middlewares/user.auth.middleware';
 
 export class UserJwtUtils{
 
@@ -50,5 +50,24 @@ export class UserJwtUtils{
         );
     }
 
+
+     static verifyToken(token:string):UserJwtPayload{
+           const secret = process.env.USER_JWT_SECRET as string;
+
+           if(!secret) throw new Error("User jwt secret not configured");
+
+           return jwt.verify(token,secret) as UserJwtPayload;
+     }
+
+     static verifyRefreshToken(token:string):UserJwtPayload{
+           const refreshSecret = process.env.USER_JWT_REFRESH_SECRET as string;
+
+           if(!refreshSecret) throw new Error("User jwt refresh secret not configured");
+
+           return jwt.verify(token,refreshSecret) as UserJwtPayload;
+
+
+
+     }
 
 }

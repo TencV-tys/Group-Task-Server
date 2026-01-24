@@ -1,5 +1,5 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
-
+import { AdminJwtPayload } from '../middlewares/admin.auth.middleware';
 export class AdminJwtUtils{
  
        static generateToken(adminId:string,email:string,role:string):string{
@@ -49,5 +49,23 @@ export class AdminJwtUtils{
 
        }
 
+     static verifyToken(token:string):AdminJwtPayload{
+         const secret = process.env.ADMIN_JWT_SECRET as string;
 
+         if(!secret) throw new Error("Admin jwt secret not configured");
+
+         return jwt.verify(token,secret) as AdminJwtPayload;
+
+     }
+
+
+
+     static verifyRefreshToken(token:string):AdminJwtPayload{
+         const refreshSecret = process.env.ADMIN_JWT_REFRESH_SECRET as string;
+
+         if(!refreshSecret) throw new Error("Admin jwt refresh secret not configured");
+
+         return jwt.verify(token,refreshSecret) as AdminJwtPayload;
+
+     }
 }
