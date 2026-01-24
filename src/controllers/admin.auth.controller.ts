@@ -2,7 +2,7 @@ import { success } from "zod";
 import { AdminAuthServices } from "../services/admin.auth.services";
 import { Request,Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
-import { AdminRefreshToken } from "../services/admin.refreshToken";
+import { AdminRefreshToken } from "../services/admin.refreshToken.services";
 export class AdminAuthController{
 
    static async login(req:Request,res:Response){

@@ -34,6 +34,13 @@ export class UserRefreshServices{
                     }
                 }
 
+                if(decoded.userId !== tokenData.userId){
+                    return{
+                        success:false,
+                        message:"Token mismatch"
+                    }
+                }
+
                 const user = tokenData.user;
 
                 const newAccessToken = UserJwtUtils.generateToken(user.id,user.email,user.role);
