@@ -3,7 +3,7 @@ import { UserJwtUtils } from './../utils/user.jwtutils';
 import { UserRole, UserRoleStatus } from "@prisma/client";
 import prisma from "../prisma";
 import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
-import { comparePassword, hashedPassword } from "../utils/user.bcrypt";
+import { comparePassword, hashedPassword } from "../utils/shared.bcrypt";
 export class UserServices{
 
  static async signup(email:string,name:string,password:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
