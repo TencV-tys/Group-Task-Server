@@ -23,6 +23,19 @@ export class UserRefreshToken{
             });
 
     }
+         
+      // REVOKE all tokens for a user
+    static async revokeAllUserTokens(userId: string) {
+        return prisma.refreshToken.updateMany({
+            where: { 
+                userId: userId,
+                revoked: false 
+            },
+            data: { revoked: true }
+        });
+    }
+
+
 
      static async revokedToken(token:string){
         return prisma.refreshToken.update({

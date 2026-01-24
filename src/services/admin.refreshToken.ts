@@ -34,6 +34,19 @@ export class AdminRefreshToken{
     });
 
   }
+
+ // REVOKE all tokens for an admin
+    static async revokeAllAdminTokens(adminId: string) {
+        return prisma.adminRefreshToken.updateMany({
+            where: { 
+                adminId: adminId,
+                revoked: false 
+            },
+            data: { revoked: true }
+        });
+    }
+
+
   static async isValidToken(token:string):Promise<boolean>{
       const refreshToken = await prisma.adminRefreshToken.findUnique({
         where:{token:token}
