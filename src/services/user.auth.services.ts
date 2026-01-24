@@ -8,7 +8,7 @@ export class UserServices{
 
  static async signup(email:string,name:string,password:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
             try{
-               
+        
                 if(!email || !password || !name ){
                     return{
                         success:false,
