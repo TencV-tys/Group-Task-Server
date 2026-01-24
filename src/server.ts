@@ -2,7 +2,7 @@ import  express  from "express";
 import dotenv from "dotenv";
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-
+import UserAuthRoutes from './routes/user.routes';
 
 dotenv.config();
 
@@ -15,6 +15,9 @@ svr.use(cors({
 }));
 svr.use(cookieParser());
 svr.use(express.urlencoded({extended:true}));
+
+
+svr.use('/api/auth/users',UserAuthRoutes);
 
 
 const PORT = process.env.PORT || 5000;
