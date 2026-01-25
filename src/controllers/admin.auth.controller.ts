@@ -3,6 +3,7 @@ import { AdminAuthServices } from "../services/admin.auth.services";
 import { Request,Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
 import { AdminRefreshToken } from "../services/admin.create.refreshToken.services";
+import { AdminRefreshServices } from "../services/admin.refresh.services";
 export class AdminAuthController{
 
    static async login(req:Request,res:Response){
@@ -62,6 +63,64 @@ export class AdminAuthController{
 
    }
 
+   static async refreshToken(req:Request,res:Response){
+    try{
+       const adminRefreshToken = req.cookies.adminRefreshToken;
+
+        if(!adminRefreshToken){
+                return res.status(400).json({ 
+                    success:false,
+                    message:"Refresh token required"
+                })
+            }
+
+            const result = await AdminRefreshServices.refreshAdminToken(adminRefreshToken);
+
+            if(!result.success){
+              res.clearCookie('adminToken');
+              res.clearCookie('adminRefreshToken');
+
+                  return res.status(401).json({
+                        success:false,
+                        message:result.message
+                    });
+            }
+
+            res.cookie('adminToken',result.newAccessToken,{
+               httpOnly:true,
+               secure:process.env.NODE_ENV === "production",
+               sameSite:"strict",
+               maxAge: 15 * 60 * 1000
+            });
+            
+            return res.json({
+              success:true,
+              message:"Token refreshed successfully",
+              accessToken: result.newAccessToken,
+              admin: result.admin
+            });
+
+    }catch(e:any){
+                 res.clearCookie('adminToken');
+            res.clearCookie('adminRefreshToken');
+            
+            return res.status(500).json({
+                success:false,
+                message:"Token refresh failed"
+            })
+
+    }
+
+   }
+
+   static async logout(req:Request,res:Response){
+         try{
+
+         }catch(e:any){
+
+         }
+
+   }
 
 
 }

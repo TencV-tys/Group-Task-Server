@@ -137,7 +137,7 @@ export class UserAuthController{
             const userRefreshToken = req.cookies.userRefreshToken;
 
             if(!userRefreshToken){
-                return res.status(400).json({
+                return res.status(400).json({ 
                     success:false,
                     message:"Refresh token required"
                 })
