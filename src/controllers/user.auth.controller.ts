@@ -212,8 +212,8 @@ export class UserAuthController{
                res.clearCookie('userRefreshToken');
 
                return res.json({
-                success:false,
-                message:""
+                success:true,
+                message:result.message
                })
                
 
