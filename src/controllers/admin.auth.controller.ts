@@ -1,9 +1,12 @@
+import { access } from 'node:fs';
 import { success } from "zod";
 import { AdminAuthServices } from "../services/admin.auth.services";
 import { Request,Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
 import { AdminRefreshToken } from "../services/admin.create.refreshToken.services";
 import { AdminRefreshServices } from "../services/admin.refresh.services";
+import { decode } from 'node:punycode';
+import { AdminLogoutServices } from '../services/admin.logout.services';
 export class AdminAuthController{
 
    static async login(req:Request,res:Response){
@@ -115,9 +118,44 @@ export class AdminAuthController{
 
    static async logout(req:Request,res:Response){
          try{
+            const refreshToken = req.cookies.adminRefreshToken;
+            
+            let adminId: string | undefined;
+
+            const accessToken = req.cookies.adminToken;
+
+            if(accessToken){
+              try{
+                  const decoded = AdminJwtUtils.verifyToken(accessToken);
+                  adminId = decoded.adminId;
+              }catch(e:any){
+                      console.error("Access token expired during logout");
+              }
+            }
+           
+            const result = await AdminLogoutServices.adminLogout(refreshToken,adminId);
+
+            res.clearCookie('adminToken');
+            res.clearCookie('adminRefreshToken');
+
+            return res.json({
+              success:true,
+              message:"Admin logged out successfully"
+            });
+
+
 
          }catch(e:any){
-
+             console.error("Admin logout error:", e);
+            
+            // Still clear cookies
+            res.clearCookie('adminToken');
+            res.clearCookie('adminRefreshToken');
+            
+            return res.status(500).json({
+                success: false,
+                message: "Logout failed"
+            });
          }
 
    }
