@@ -1,8 +1,16 @@
+import { useState } from 'react';
+import { access } from 'node:fs';
+import { access } from 'node:fs';
+import { UserRefreshToken } from './../services/user.create.refreshToken.services';
+import { UserRefreshToken } from '../services/user.create.refreshToken.services';
 import {Request,Response} from 'express';
 import { UserServices } from '../services/user.auth.services';
-import { UserRefreshToken } from '../services/user.refreshToken.services';
+import { UserRefreshToken } from '../services/user.create.refreshToken.services';
 import { UserJwtUtils } from '../utils/user.jwtutils';
 import { success } from 'zod';
+import { UserRefreshServices } from '../services/user.refresh.services';
+import { access } from 'node:fs';
+import { UserLogoutServices } from '../services/user.logout.services';
 
 
 export class UserAuthController{
@@ -21,9 +29,9 @@ export class UserAuthController{
            }
 
            const user = result.user;
-           const refreshToken = UserJwtUtils.generateRefreshToken(user.id,user.email,user.role);
+           const userRefreshToken = UserJwtUtils.generateRefreshToken(user.id,user.email,user.role);
              
-           await UserRefreshToken.createRefreshToken(user.id,refreshToken);
+           await UserRefreshToken.createRefreshToken(user.id,userRefreshToken);
 
            res.cookie('userToken',result.token,{
             httpOnly:true,
@@ -32,7 +40,7 @@ export class UserAuthController{
             maxAge: 7 * 24 * 60 * 60 * 1000
            });
             
-           res.cookie('refreshToken',refreshToken,{
+           res.cookie('userRefreshToken',userRefreshToken,{
             httpOnly:true,
             secure:process.env.NODE_ENV === "production",
             sameSite:"strict",
@@ -124,6 +132,98 @@ export class UserAuthController{
           
 
 
+     }
+
+     
+     static async refreshToken(req:Request,res:Response){
+          try{
+            const userRefreshToken = req.cookies.UserRefreshToken;
+
+            if(!userRefreshToken){
+                return res.status(400).json({
+                    success:false,
+                    message:"Refresh token required"
+                })
+            }
+
+            const result = await UserRefreshServices.refreshUserToken(userRefreshToken);
+
+                 if(!result.success){
+                    res.clearCookie('userToken');
+                    res.clearCookie('userRefreshToken');
+
+                    return res.status(401).json({
+                        success:false,
+                        message:result.message
+                    });
+                 }
+
+                 res.cookie('userToken',result.accessToken,{
+                    httpOnly:true,
+                    secure:process.env.NODE_ENV === "production",
+                    sameSite:"strict",
+                    maxAge: 15 * 60 * 1000
+                 });
+
+                 return res.json({
+                    success:true,
+                    message:"Token refreshed successfully",
+                    accessToken: result.accessToken,
+                    user:result.user
+                 });
+
+          }catch(e:any){
+                // Clear cookies on error
+            res.clearCookie('userToken');
+            res.clearCookie('userRefreshToken');
+            
+            return res.status(500).json({
+                success:false,
+                message:"Token refresh failed"
+            })
+          }
+
+
+     }
+
+     static async logout(req:Request, res:Response){
+           try{
+                const userRefreshToken = req.cookies.userRefreshToken;
+             
+
+                   let userId: string | undefined;
+
+                   const accessToken = req.cookies.userToken;
+
+                   if(accessToken){
+                    try{
+                      const decoded = UserJwtUtils.verifyToken(accessToken);
+                      userId = decoded.userId;
+                    }catch(e){
+                         console.error("Access token expired during logout");
+                    }
+                   }
+                      
+                   const result = await UserLogoutServices.userLogout(userRefreshToken,userId);
+
+                   if(!result.success){
+                    console.warn(`Logout service returned error: ${result.message}`);
+                   }
+                         
+                 
+               res.clearCookie('userToken');
+               res.clearCookie('userRefreshToken');
+
+               return res.json({
+                success:false,
+                message:""
+               })
+               
+
+
+           }catch(e:any){
+
+           }
      }
 
 

@@ -2,7 +2,7 @@ import { success } from "zod";
 import { AdminAuthServices } from "../services/admin.auth.services";
 import { Request,Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
-import { AdminRefreshToken } from "../services/admin.refreshToken.services";
+import { AdminRefreshToken } from "../services/admin.create.refreshToken.services";
 export class AdminAuthController{
 
    static async login(req:Request,res:Response){
@@ -19,9 +19,9 @@ export class AdminAuthController{
           }
           const admin = result.admin;
 
-          const refreshToken = await AdminJwtUtils.generateRefreshToken(admin.id,admin.email,admin.role);
+          const adminRefreshToken = await AdminJwtUtils.generateRefreshToken(admin.id,admin.email,admin.role);
               
-          await AdminRefreshToken.createAdminRefreshToken(admin.id,refreshToken);
+          await AdminRefreshToken.createAdminRefreshToken(admin.id,adminRefreshToken);
 
           res.cookie('adminToken',result.token,{
             httpOnly:true,
@@ -30,7 +30,7 @@ export class AdminAuthController{
             maxAge:7 * 24 * 60 *60 * 1000
           });
 
-          res.cookie('refreshToken',refreshToken,{
+          res.cookie('adminRefreshToken',adminRefreshToken,{
             httpOnly:true,
             secure:process.env.NODE_ENV === "production",
             sameSite:"strict",
