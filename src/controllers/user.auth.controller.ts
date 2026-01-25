@@ -1,15 +1,12 @@
-import { useState } from 'react';
-import { access } from 'node:fs';
-import { access } from 'node:fs';
-import { UserRefreshToken } from './../services/user.create.refreshToken.services';
-import { UserRefreshToken } from '../services/user.create.refreshToken.services';
+
+
 import {Request,Response} from 'express';
 import { UserServices } from '../services/user.auth.services';
 import { UserRefreshToken } from '../services/user.create.refreshToken.services';
 import { UserJwtUtils } from '../utils/user.jwtutils';
-import { success } from 'zod';
+
 import { UserRefreshServices } from '../services/user.refresh.services';
-import { access } from 'node:fs';
+
 import { UserLogoutServices } from '../services/user.logout.services';
 
 
@@ -89,7 +86,7 @@ export class UserAuthController{
             
             const user = result.user;
 
-            const refreshToken = UserJwtUtils.generateRefreshToken(user.id,user.email,user.role);
+            const userRefreshToken = UserJwtUtils.generateRefreshToken(user.id,user.email,user.role);
 
               res.cookie('userToken',result.token,{
                 httpOnly:true,
@@ -98,14 +95,14 @@ export class UserAuthController{
                 maxAge:7 * 24 * 60 * 60 * 1000
               });
 
-              res.cookie('refreshToken',refreshToken,{
+              res.cookie('userRefreshToken',userRefreshToken,{
                 httpOnly:true,
                 secure:process.env.NODE_ENV === "production",
                 sameSite:'strict',
                 maxAge: 30 * 24 * 60 * 60 * 1000
               });
               
-              await UserRefreshToken.createRefreshToken(user.id,refreshToken);
+              await UserRefreshToken.createRefreshToken(user.id,userRefreshToken);
 
               return res.json({
                 success:true,
@@ -137,7 +134,7 @@ export class UserAuthController{
      
      static async refreshToken(req:Request,res:Response){
           try{
-            const userRefreshToken = req.cookies.UserRefreshToken;
+            const userRefreshToken = req.cookies.userRefreshToken;
 
             if(!userRefreshToken){
                 return res.status(400).json({
@@ -222,7 +219,16 @@ export class UserAuthController{
 
 
            }catch(e:any){
-
+              console.error("Logout error:", e);
+            
+            // Still try to clear cookies even if error
+            res.clearCookie('userToken');
+            res.clearCookie('userRefreshToken');
+            
+            return res.status(500).json({
+                success: false,
+                message: "Logout failed"
+            });
            }
      }
 
