@@ -5,7 +5,7 @@ import cors from 'cors';
 import UserAuthRoutes from './routes/user.auth.routes';
 import AdminAuthRoutes from './routes/admin.auth.routes';
 
-dotenv.config();
+dotenv.config(); 
 
 const svr = express();
 
@@ -21,5 +21,11 @@ svr.use(express.urlencoded({extended:true}));
 svr.use('/api/auth/users',UserAuthRoutes);
 svr.use('/api/admin/admins',AdminAuthRoutes);
 
+const COMPUTER_IP = '10.219.65.2';
 const PORT = process.env.PORT || 5000;
-svr.listen(PORT,()=>console.log(`Server running at http://localhost:${PORT}`));
+svr.listen(PORT,()=>
+    {
+        console.log(`Server running at http://localhost:${PORT}`)
+            console.log(`   http://${COMPUTER_IP}:${PORT}`);    
+    }
+);

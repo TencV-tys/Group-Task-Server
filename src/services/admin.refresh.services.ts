@@ -49,7 +49,7 @@ export class AdminRefreshServices{
                     newAccessToken,
                     admin:{
                         id:admin.id,
-                        name:admin.name,
+                        fullName:admin.fullName,
                         email:admin.email,
                         role:admin.role
                     }
