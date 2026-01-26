@@ -28,6 +28,7 @@ CREATE TABLE `groups` (
     `inviteCode` VARCHAR(191) NOT NULL,
     `avatarUrl` VARCHAR(191) NULL,
     `settings` JSON NULL,
+    `createdById` VARCHAR(191) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
@@ -212,6 +213,9 @@ CREATE TABLE `admin_refresh_tokens` (
 
 -- AddForeignKey
 ALTER TABLE `users` ADD CONSTRAINT `users_roleStatusChangedBy_fkey` FOREIGN KEY (`roleStatusChangedBy`) REFERENCES `system_admins`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `groups` ADD CONSTRAINT `groups_createdById_fkey` FOREIGN KEY (`createdById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `group_members` ADD CONSTRAINT `group_members_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

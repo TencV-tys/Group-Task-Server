@@ -20,9 +20,10 @@ enum UserRoleStatus {
   DISABLED
 }
 
+// SIMPLIFIED: Just ADMIN and MEMBER
 enum GroupMemberRole {
-  ADMIN
-  MEMBER
+  ADMIN    // Group Admin (creator)
+  MEMBER   // Regular member
 }
 
 enum SystemAdminRole {
@@ -51,9 +52,9 @@ model User {
   id           String  @id @default(uuid())
   email        String  @unique
   passwordHash String
-  fullName     String // Changed from 'name' to 'fullName'
+  fullName     String
   avatarUrl    String?
-  gender       Gender? // Changed from 'phone' to 'gender'
+  gender       Gender?
 
   // User Role System
   role       UserRole       @default(USER)
@@ -68,10 +69,11 @@ model User {
 
   // Relationships
   groups            GroupMember[]      @relation("UserGroups")
+  createdGroups     Group[]            @relation("GroupCreator")
   createdTasks      Task[]             @relation("TaskCreator")
   assignments       Assignment[]       @relation("UserAssignments")
   feedback          Feedback[]         @relation("UserFeedback")
-  userNotifications UserNotification[] // User notifications
+  userNotifications UserNotification[]
   refreshTokens     RefreshToken[]     @relation("UserRefreshTokens")
 
   // System Admin who changed status
@@ -95,10 +97,14 @@ model Group {
   inviteCode  String  @unique
   avatarUrl   String?
   settings    Json?   @default("{}")
+  
+  // NEW: Track who created the group
+  createdById String
 
   // Relationships
   members GroupMember[] @relation("GroupMembers")
   tasks   Task[]        @relation("GroupTasks")
+  creator User          @relation("GroupCreator", fields: [createdById], references: [id])
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -221,14 +227,14 @@ model UserNotification {
 
 // For WEB ADMIN DASHBOARD
 model AdminNotification {
-  id       String  @id @default(uuid())
+  id       String      @id @default(uuid())
   adminId  String?
   type     String
   title    String
   message  String
   data     Json?
-  read     Boolean @default(false)
-  priority String  @default("NORMAL")
+  read     Boolean     @default(false)
+  priority String      @default("NORMAL")
 
   admin SystemAdmin? @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
@@ -247,7 +253,7 @@ model SystemAdmin {
   id           String          @id @default(uuid())
   email        String          @unique
   passwordHash String
-  fullName     String // Changed from 'name' to 'fullName' for consistency
+  fullName     String
   role         SystemAdminRole @default(SUPPORT)
   permissions  Json?           @default("[]")
 
