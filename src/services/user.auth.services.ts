@@ -6,10 +6,10 @@ import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
 import { comparePassword, hashedPassword } from "../utils/shared.bcrypt";
 export class UserServices{
 
- static async signup(email:string,name:string,password:string,confirmPassword:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
+ static async signup(email:string,fullName:string,password:string,confirmPassword:string,avatarUrl?:string | null,gender?:string | null):Promise<UserSignUpAuthTypes>{
             try{
         
-                if(!email || !password || !confirmPassword || !name ){
+                if(!email || !password || !confirmPassword || !fullName ){
                     return{
                         success:false,
                         message:"All fields are required"
@@ -38,11 +38,11 @@ export class UserServices{
 
                 const user = await prisma.user.create({
                     data:{
-                         name:name,
+                        fullName:fullName,
                         email:email,
                         passwordHash:passwordHashed,
                         avatarUrl:avatarUrl ?? null,
-                        phone:phone ?? null,
+                        gender:gender ?? null,
                         role:UserRole.USER ,
                         roleStatus:UserRoleStatus.ACTIVE
                     
@@ -58,11 +58,11 @@ export class UserServices{
                     token,
                     user:{
                         id:userId,
-                        name:user.name,
+                        fullName:user.fullName,
                         email:user.email,
                         passwordHash:user.passwordHash,
                         avatarUrl:user.avatarUrl,
-                        phone:user.phone,
+                        gender:user.gender,
                         role: user.role,
                         roleStatus: user.roleStatus
                     }
@@ -119,10 +119,10 @@ export class UserServices{
              token,
              user:{
                 id:userId,
-                name:user.name,
+                fullName:user.fullName,
                 email:user.email,
                 avatarUrl:user.avatarUrl,
-                phone:user.phone,
+                gender:user.gender,
                 role:user.role,
                 roleStatus:user.roleStatus
              }

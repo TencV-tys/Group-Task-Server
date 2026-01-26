@@ -1,5 +1,4 @@
 import { SystemAdminRole } from '@prisma/client';
-import { success } from 'zod';
 
 
 export interface AdminLoginAuthTypes{

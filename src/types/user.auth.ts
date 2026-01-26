@@ -6,11 +6,11 @@ message:string;
 token?:string;
 user?:{
     id:string;
-    name:string;
+    fullName:string;
     email:string;
     passwordHash:string;
     avatarUrl?:string | null;
-    phone?:string | null;
+    gender?:string | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };
@@ -27,10 +27,10 @@ message:string;
 token?:string;
 user?:{
     id:string;
-    name:string;
+    fullName:string;
     email:string;
     avatarUrl?:string | null;
-    phone?:string | null;
+    gender?:string | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };

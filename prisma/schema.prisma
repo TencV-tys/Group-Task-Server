@@ -38,15 +38,22 @@ enum TokenType {
   EMAIL_VERIFICATION
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
 // ============= CORE MODELS =============
 
 model User {
   id           String  @id @default(uuid())
   email        String  @unique
   passwordHash String
-  name         String
+  fullName     String // Changed from 'name' to 'fullName'
   avatarUrl    String?
-  phone        String?
+  gender       Gender? // Changed from 'phone' to 'gender'
 
   // User Role System
   role       UserRole       @default(USER)
@@ -194,18 +201,18 @@ model Feedback {
 
 // For MOBILE APP USERS
 model UserNotification {
-  id        String   @id @default(uuid())
-  userId    String
-  type      String
-  title     String
-  message   String
-  data      Json?
-  read      Boolean  @default(false)
-  
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id      String  @id @default(uuid())
+  userId  String
+  type    String
+  title   String
+  message String
+  data    Json?
+  read    Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
-  
+
   @@index([userId])
   @@index([read])
   @@index([createdAt])
@@ -214,19 +221,19 @@ model UserNotification {
 
 // For WEB ADMIN DASHBOARD
 model AdminNotification {
-  id        String      @id @default(uuid())
-  adminId   String?
-  type      String
-  title     String
-  message   String
-  data      Json?
-  read      Boolean     @default(false)
-  priority  String      @default("NORMAL")
-  
-  admin     SystemAdmin? @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime    @default(now())
-  
+  id       String  @id @default(uuid())
+  adminId  String?
+  type     String
+  title    String
+  message  String
+  data     Json?
+  read     Boolean @default(false)
+  priority String  @default("NORMAL")
+
+  admin SystemAdmin? @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
   @@index([adminId])
   @@index([read])
   @@index([priority])
@@ -240,15 +247,15 @@ model SystemAdmin {
   id           String          @id @default(uuid())
   email        String          @unique
   passwordHash String
-  name         String
+  fullName     String // Changed from 'name' to 'fullName' for consistency
   role         SystemAdminRole @default(SUPPORT)
   permissions  Json?           @default("[]")
 
   // Relationships
-  modifiedUsers      User[]               @relation("StatusChangedByAdmin")
-  auditLogs          AdminAuditLog[]      @relation("AdminAuditLogs")
-  adminNotifications AdminNotification[]  // Admin notifications
-  refreshTokens      AdminRefreshToken[]  @relation("AdminRefreshTokens")
+  modifiedUsers      User[]              @relation("StatusChangedByAdmin")
+  auditLogs          AdminAuditLog[]     @relation("AdminAuditLogs")
+  adminNotifications AdminNotification[] // Admin notifications
+  refreshTokens      AdminRefreshToken[] @relation("AdminRefreshTokens")
 
   // Status
   lastLoginAt DateTime?

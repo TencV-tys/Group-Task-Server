@@ -14,9 +14,9 @@ export class UserAuthController{
 
     static async signup(req:Request, res:Response){
        try{
-           const {name,email,password,avatarUrl,phone} = req.body;     
+           const {fullName,email,password,confirmPassword,avatarUrl,gender} = req.body;     
               
-           const result = await UserServices.signup(email,name,password,avatarUrl,phone);
+           const result = await UserServices.signup(email,fullName,password,confirmPassword,avatarUrl,gender);
            
            if(!result.success || !result.user){
                return res.status(401).json({
@@ -50,9 +50,9 @@ export class UserAuthController{
               user:{
                 id:user.id,
                 email:user.email,
-                name:user.name,
+                fullName:user.fullName,
                 avatarUrl:user.avatarUrl,
-                phone:user.phone,
+                gender:user.gender,
                 role:user.role
               }
            });
@@ -109,10 +109,10 @@ export class UserAuthController{
                 message:result.message,
                 user:{
                     id:user.id,
-                    name:user.name,
+                    fullName:user.fullName,
                     email:user.email,
                     avatarUrl:user.avatarUrl,
-                    phone:user.phone,
+                    gender:user.gender,
                     role:user.role
                 }
               });
