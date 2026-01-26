@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import UserAuthRoutes from './routes/user.auth.routes';
 import AdminAuthRoutes from './routes/admin.auth.routes';
+import GroupRoutes from './routes/group.routes';
 
 dotenv.config(); 
 
@@ -19,7 +20,8 @@ svr.use(express.urlencoded({extended:true}));
 
 
 svr.use('/api/auth/users',UserAuthRoutes);
-svr.use('/api/admin/admins',AdminAuthRoutes);
+svr.use('/api/auth/admins',AdminAuthRoutes);
+svr.use('/api/group',GroupRoutes);
 
 const COMPUTER_IP = '10.219.65.2';
 const PORT = process.env.PORT || 5000;
