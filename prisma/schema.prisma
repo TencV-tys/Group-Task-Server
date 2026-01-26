@@ -41,7 +41,7 @@ enum TokenType {
 // ============= CORE MODELS =============
 
 model User {
-  id           String  @id @default(uuid()) // CHANGED TO UUID
+  id           String  @id @default(uuid())
   email        String  @unique
   passwordHash String
   name         String
@@ -54,20 +54,18 @@ model User {
 
   // System Admin Oversight
   roleStatusChangedAt DateTime?
-  roleStatusChangedBy String? // CHANGED TO String (UUID)
+  roleStatusChangedBy String?
   roleStatusReason    String?
 
   settings Json? @default("{}")
 
   // Relationships
-  groups        GroupMember[]  @relation("UserGroups")
-  createdTasks  Task[]         @relation("TaskCreator")
-  assignments   Assignment[]   @relation("UserAssignments")
-  feedback      Feedback[]     @relation("UserFeedback")
-  notifications Notification[] @relation("UserNotifications")
-
-  // Authentication tokens (MOBILE APP USERS)
-  refreshTokens RefreshToken[] @relation("UserRefreshTokens")
+  groups            GroupMember[]      @relation("UserGroups")
+  createdTasks      Task[]             @relation("TaskCreator")
+  assignments       Assignment[]       @relation("UserAssignments")
+  feedback          Feedback[]         @relation("UserFeedback")
+  userNotifications UserNotification[] // User notifications
+  refreshTokens     RefreshToken[]     @relation("UserRefreshTokens")
 
   // System Admin who changed status
   statusChangedByAdmin SystemAdmin? @relation("StatusChangedByAdmin", fields: [roleStatusChangedBy], references: [id])
@@ -84,7 +82,7 @@ model User {
 }
 
 model Group {
-  id          String  @id @default(uuid()) // CHANGED TO UUID
+  id          String  @id @default(uuid())
   name        String
   description String?
   inviteCode  String  @unique
@@ -103,9 +101,9 @@ model Group {
 }
 
 model GroupMember {
-  id        String          @id @default(uuid()) // CHANGED TO UUID
-  userId    String // CHANGED TO String (UUID)
-  groupId   String // CHANGED TO String (UUID)
+  id        String          @id @default(uuid())
+  userId    String
+  groupId   String
   groupRole GroupMemberRole @default(MEMBER)
 
   // Relationships
@@ -119,7 +117,7 @@ model GroupMember {
 }
 
 model Task {
-  id          String  @id @default(uuid()) // CHANGED TO UUID
+  id          String  @id @default(uuid())
   title       String
   description String?
   points      Int     @default(1)
@@ -127,8 +125,8 @@ model Task {
   category    String?
 
   // Foreign keys
-  groupId     String // CHANGED TO String (UUID)
-  createdById String // CHANGED TO String (UUID)
+  groupId     String
+  createdById String
 
   // Relationships
   group       Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
@@ -142,9 +140,9 @@ model Task {
 }
 
 model Assignment {
-  id          String    @id @default(uuid()) // CHANGED TO UUID
-  taskId      String // CHANGED TO String (UUID)
-  userId      String // CHANGED TO String (UUID)
+  id          String    @id @default(uuid())
+  taskId      String
+  userId      String
   dueDate     DateTime
   completed   Boolean   @default(false)
   completedAt DateTime?
@@ -165,8 +163,8 @@ model Assignment {
 }
 
 model SwapRequest {
-  id           String  @id @default(uuid()) // CHANGED TO UUID
-  assignmentId String  @unique // CHANGED TO String (UUID)
+  id           String  @id @default(uuid())
+  assignmentId String  @unique
   reason       String?
   status       String  @default("PENDING")
 
@@ -177,24 +175,9 @@ model SwapRequest {
   @@map("swap_requests")
 }
 
-model Notification {
-  id      String  @id @default(uuid()) // CHANGED TO UUID
-  userId  String // CHANGED TO String (UUID)
-  type    String
-  title   String
-  message String
-  read    Boolean @default(false)
-
-  user User @relation("UserNotifications", fields: [userId], references: [id])
-
-  createdAt DateTime @default(now())
-
-  @@map("notifications")
-}
-
 model Feedback {
-  id      String @id @default(uuid()) // CHANGED TO UUID
-  userId  String // CHANGED TO String (UUID)
+  id      String @id @default(uuid())
+  userId  String
   type    String
   message String
   status  String @default("OPEN")
@@ -207,10 +190,54 @@ model Feedback {
   @@map("feedback")
 }
 
+// ============= NOTIFICATION MODELS =============
+
+// For MOBILE APP USERS
+model UserNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("user_notifications")
+}
+
+// For WEB ADMIN DASHBOARD
+model AdminNotification {
+  id        String      @id @default(uuid())
+  adminId   String?
+  type      String
+  title     String
+  message   String
+  data      Json?
+  read      Boolean     @default(false)
+  priority  String      @default("NORMAL")
+  
+  admin     SystemAdmin? @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime    @default(now())
+  
+  @@index([adminId])
+  @@index([read])
+  @@index([priority])
+  @@index([createdAt])
+  @@map("admin_notifications")
+}
+
 // ============= SYSTEM ADMINS =============
 
 model SystemAdmin {
-  id           String          @id @default(uuid()) // CHANGED TO UUID
+  id           String          @id @default(uuid())
   email        String          @unique
   passwordHash String
   name         String
@@ -218,11 +245,10 @@ model SystemAdmin {
   permissions  Json?           @default("[]")
 
   // Relationships
-  modifiedUsers User[]          @relation("StatusChangedByAdmin")
-  auditLogs     AdminAuditLog[] @relation("AdminAuditLogs")
-
-  // Authentication tokens (WEB ADMIN USERS)
-  refreshTokens AdminRefreshToken[] @relation("AdminRefreshTokens")
+  modifiedUsers      User[]               @relation("StatusChangedByAdmin")
+  auditLogs          AdminAuditLog[]      @relation("AdminAuditLogs")
+  adminNotifications AdminNotification[]  // Admin notifications
+  refreshTokens      AdminRefreshToken[]  @relation("AdminRefreshTokens")
 
   // Status
   lastLoginAt DateTime?
@@ -235,9 +261,9 @@ model SystemAdmin {
 }
 
 model AdminAuditLog {
-  id           String  @id @default(uuid()) // CHANGED TO UUID
-  adminId      String // CHANGED TO String (UUID)
-  targetUserId String? // CHANGED TO String (UUID)
+  id           String  @id @default(uuid())
+  adminId      String
+  targetUserId String?
   action       String
   details      Json?
   ipAddress    String?
@@ -260,7 +286,7 @@ model AdminAuditLog {
 // For MOBILE APP USERS
 model RefreshToken {
   id        String    @id @default(uuid())
-  userId    String // CHANGED TO String (UUID)
+  userId    String
   token     String    @unique
   type      TokenType @default(REFRESH)
   expiresAt DateTime
@@ -279,7 +305,7 @@ model RefreshToken {
 // For WEB ADMIN USERS (separate from mobile users)
 model AdminRefreshToken {
   id        String    @id @default(uuid())
-  adminId   String // CHANGED TO String (UUID)
+  adminId   String
   token     String    @unique
   type      TokenType @default(REFRESH)
   expiresAt DateTime
