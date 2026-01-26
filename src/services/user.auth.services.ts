@@ -1,12 +1,14 @@
+
+
 import { UserJwtUtils } from './../utils/user.jwtutils';
 
-import { UserRole, UserRoleStatus } from "@prisma/client";
+import { UserRole, UserRoleStatus,Gender } from "@prisma/client";
 import prisma from "../prisma";
 import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
 import { comparePassword, hashedPassword } from "../utils/shared.bcrypt";
 export class UserServices{
 
- static async signup(email:string,fullName:string,password:string,confirmPassword:string,avatarUrl?:string | null,gender?:string | null):Promise<UserSignUpAuthTypes>{
+ static async signup(email:string,fullName:string,password:string,confirmPassword:string,avatarUrl?:string | null,gender?:Gender | null):Promise<UserSignUpAuthTypes>{
             try{
         
                 if(!email || !password || !confirmPassword || !fullName ){
@@ -42,7 +44,7 @@ export class UserServices{
                         email:email,
                         passwordHash:passwordHashed,
                         avatarUrl:avatarUrl ?? null,
-                        gender:gender ?? null,
+                        gender:gender ?? null, 
                         role:UserRole.USER ,
                         roleStatus:UserRoleStatus.ACTIVE
                     

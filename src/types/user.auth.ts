@@ -1,4 +1,5 @@
-import { UserRole, UserRoleStatus } from "@prisma/client";
+
+import { UserRole, UserRoleStatus,Gender } from "@prisma/client";
 
 export interface UserSignUpAuthTypes{
 success:boolean;
@@ -10,7 +11,7 @@ user?:{
     email:string;
     passwordHash:string;
     avatarUrl?:string | null;
-    gender?:string | null;
+    gender?:Gender | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };
@@ -30,7 +31,7 @@ user?:{
     fullName:string;
     email:string;
     avatarUrl?:string | null;
-    gender?:string | null;
+    gender?:Gender | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };

@@ -7,7 +7,7 @@ export interface AdminLoginAuthTypes{
  token?:string;
  admin?:{
         id:string;
-        name:string;
+        fullName:string;
         email:string;
         role:SystemAdminRole;
         isActive:boolean;

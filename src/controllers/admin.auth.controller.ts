@@ -45,7 +45,7 @@ export class AdminAuthController{
             message:"Admin Login Successfully",
             admin:{
                 id:admin.id,
-                name:admin.name,
+                fullName:admin.fullName,
                 email:admin.email,
                 role:admin.role,
                 isActive:admin.isActive,
