@@ -6,15 +6,22 @@ import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
 import { comparePassword, hashedPassword } from "../utils/shared.bcrypt";
 export class UserServices{
 
- static async signup(email:string,name:string,password:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
+ static async signup(email:string,name:string,password:string,confirmPassword:string,avatarUrl?:string | null,phone?:string | null):Promise<UserSignUpAuthTypes>{
             try{
         
-                if(!email || !password || !name ){
+                if(!email || !password || !confirmPassword || !name ){
                     return{
                         success:false,
                         message:"All fields are required"
                     }
                 }
+
+             if(password !== confirmPassword){
+                return{
+                    success:false,
+                    message:"Please confirm your password"
+                }
+             }
                
                 const existingUser = await prisma.user.findUnique({
                     where:{email}
