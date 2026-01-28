@@ -3,6 +3,7 @@ import { Request,Response } from "express";
 import { GroupServices } from "../services/group.services";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { success } from "zod";
+import { group } from "node:console";
 export class GroupController{
  
       static async createGroup(req:UserAuthRequest, res:Response){
@@ -53,6 +54,51 @@ export class GroupController{
       }
      
   
+      static async joinGroup(req:UserAuthRequest, res:Response){
+        try{
+            const userId = req.user?.id;
 
+            if(!userId){
+                return res.status(400).json({
+                    success:false,
+                    message:"User not authenticated"
+                });
+            }
+
+            const {inviteCode} = req.body;
+
+             if(!inviteCode || !inviteCode.trim()){
+                return res.status(400).json({
+                    success:false,
+                    message:"Invite code is required"
+                })
+             }
+
+            const join = await GroupServices.joinGroup(userId,inviteCode.trim());
+              
+            if(!join.success){
+               return res.status(400).json({
+                success:false,
+                message:join.message
+               })
+            }
+
+            return res.json({
+                success:true,
+                message:join.message,
+                group:join.group,
+                membership:join.membership
+            })
+
+
+        }catch(e:any){
+            return res.status(500).json({
+                success:false,
+                message:"Internal server error"
+            })
+        }
+
+      }
+        
 
 }
