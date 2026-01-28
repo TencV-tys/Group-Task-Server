@@ -8,5 +8,6 @@ router.use(UserAuthMiddleware);
 
 router.post('/create',GroupController.createGroup);
 router.post('/join',GroupController.joinGroup);
+router.get('/my-groups',GroupController.getUserGroup);
 
 export default router;

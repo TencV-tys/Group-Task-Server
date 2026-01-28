@@ -99,6 +99,43 @@ export class GroupController{
         }
 
       }
+
+
+      static async getUserGroup(req:UserAuthRequest, res:Response){
+             try{
+                const userId = req.user?.id;
+                
+                if(!userId){
+                    return res.status(400).json({
+                        success:false,
+                        message:"User is not authenticated"
+                    });
+                }
+
+                const group = await GroupServices.getUserGroups(userId);
+
+                if(!group.success){
+                    return res.status(400).json({
+                        success:false,
+                        message:group.message
+                    });
+                }
+                
+                return res.json({
+                    success:true,
+                    message:group.message,
+                    groups:group.groups
+                });
+
+             }catch(e:any){
+                return res.status(500).json({
+                    success:false,
+                    message:"Internal server error"
+                });
+
+             }
+
+      }
         
 
 }
