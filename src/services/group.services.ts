@@ -120,5 +120,55 @@ export class GroupServices{
 
 
     }
+ 
+
+    static async getUserGroups(userId:string){
+            try{
+                 const membership = await prisma.groupMember.findMany({
+                    where:{userId},
+                    include:{
+                        group:{
+                            select:{
+                                id:true,
+                                description:true,
+                                avatarUrl:true,
+                                inviteCode:true,
+                                createdAt:true,
+                                creator:{
+                                    select:{
+                                        id:true,
+                                        fullName:true
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    orderBy:{
+                        joinedAt:'desc'
+                    }
+                 });
+           
+                 const groups = membership.map(membership => ({
+                    ...membership.group,
+                    userRole:membership.groupRole,
+                    joinedAt:membership.joinedAt
+                 }));
+
+                 return{
+                    success:true,
+                    message:"Groups retrieved successfully",
+                    groups:groups
+                 }
+
+            }catch(error:any){
+                   console.error("ERROR getting user groups:", error);
+            return {
+                success: false,
+                message: "Error retrieving groups",
+                error: error.message
+            };
+            }
+    }
+
 
 }
