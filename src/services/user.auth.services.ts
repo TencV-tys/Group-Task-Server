@@ -18,11 +18,7 @@ static async signup(
     gender?: string | null
 ): Promise<UserSignUpAuthTypes> {
     try {
-        console.log("=== BACKEND SIGNUP START ===");
-        console.log("Email:", email);
-        console.log("FullName:", fullName);
-        console.log("Gender received:", gender);
-        console.log("Gender type:", typeof gender);
+    
         
         if (!email || !password || !confirmPassword || !fullName) {
             console.log("Validation failed: Missing fields");
@@ -45,14 +41,13 @@ static async signup(
         if (gender) {
             const upperGender = gender.toUpperCase();
             const validGenders = Object.values(Gender) as string[];
-            console.log("Valid genders:", validGenders);
-            console.log("Received gender:", upperGender);
+        
             
             if (validGenders.includes(upperGender)) {
                 genderEnum = upperGender as Gender;
-                console.log("Gender validated as:", genderEnum);
+           
             } else {
-                console.log("Gender validation failed");
+           
                 return {
                     success: false,
                     message: `Invalid gender. Must be one of: ${validGenders.join(', ')}`
@@ -62,7 +57,7 @@ static async signup(
             console.log("No gender provided");
         }
 
-        console.log("Checking for existing user...");
+        
         const existingUser = await prisma.user.findUnique({
             where: { email }
         });
@@ -75,10 +70,10 @@ static async signup(
             };
         }
 
-        console.log("Creating password hash...");
+    
         const passwordHashed = await hashedPassword(password, 10);
 
-        console.log("Creating user in database...");
+      
         const user = await prisma.user.create({
             data: {
                 fullName: fullName,
@@ -91,11 +86,9 @@ static async signup(
             }
         });
 
-        console.log("User created successfully! ID:", user.id);
         
         const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
 
-        console.log("=== BACKEND SIGNUP SUCCESS ===");
         return {
             success: true,
             message: "Sign up successfully",
@@ -113,11 +106,7 @@ static async signup(
         };
 
     } catch (e: any) {
-        console.error("=== BACKEND SIGNUP ERROR ===");
-        console.error("Error type:", e.constructor.name);
-        console.error("Error message:", e.message);
-        console.error("Error stack:", e.stack);
-        
+     
         // Check for specific Prisma errors
         if (e.code) {
             console.error("Prisma error code:", e.code);
@@ -128,7 +117,7 @@ static async signup(
             message: "Sign up failed: " + e.message,
             error: e.message
         };
-    }
+    } 
 }
 
 
