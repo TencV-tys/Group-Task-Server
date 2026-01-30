@@ -181,7 +181,7 @@ CREATE TABLE `admin_audit_logs` (
 CREATE TABLE `refresh_tokens` (
     `id` VARCHAR(191) NOT NULL,
     `userId` VARCHAR(191) NOT NULL,
-    `token` VARCHAR(191) NOT NULL,
+    `token` VARCHAR(1000) NOT NULL,
     `type` ENUM('ACCESS', 'REFRESH', 'PASSWORD_RESET', 'EMAIL_VERIFICATION') NOT NULL DEFAULT 'REFRESH',
     `expiresAt` DATETIME(3) NOT NULL,
     `revoked` BOOLEAN NOT NULL DEFAULT false,
@@ -198,7 +198,7 @@ CREATE TABLE `refresh_tokens` (
 CREATE TABLE `admin_refresh_tokens` (
     `id` VARCHAR(191) NOT NULL,
     `adminId` VARCHAR(191) NOT NULL,
-    `token` VARCHAR(191) NOT NULL,
+    `token` VARCHAR(1000) NOT NULL,
     `type` ENUM('ACCESS', 'REFRESH', 'PASSWORD_RESET', 'EMAIL_VERIFICATION') NOT NULL DEFAULT 'REFRESH',
     `expiresAt` DATETIME(3) NOT NULL,
     `revoked` BOOLEAN NOT NULL DEFAULT false,

@@ -300,7 +300,7 @@ model AdminAuditLog {
 model RefreshToken {
   id        String    @id @default(uuid())
   userId    String
-  token     String    @unique
+  token     String    @unique @db.VarChar(1000)
   type      TokenType @default(REFRESH)
   expiresAt DateTime
   revoked   Boolean   @default(false)
@@ -319,7 +319,7 @@ model RefreshToken {
 model AdminRefreshToken {
   id        String    @id @default(uuid())
   adminId   String
-  token     String    @unique
+  token     String    @unique @db.VarChar(1000)
   type      TokenType @default(REFRESH)
   expiresAt DateTime
   revoked   Boolean   @default(false)

@@ -11,7 +11,7 @@ user?:{
     email:string;
     passwordHash:string;
     avatarUrl?:string | null;
-    gender?:Gender | null;
+    gender?:Gender | string | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };
@@ -31,7 +31,7 @@ user?:{
     fullName:string;
     email:string;
     avatarUrl?:string | null;
-    gender?:Gender | null;
+    gender?:Gender | string | null;
     role:UserRole;
     roleStatus:UserRoleStatus;
 };
