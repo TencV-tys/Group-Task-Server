@@ -4,16 +4,17 @@ import prisma from "../prisma";
 
 export class GroupServices{
 
-    static async createGroup(userId:string, groupName:string){
+    static async createGroup(userId:string, groupName:string, description?:string | null){
         
         try{
              const group = await prisma.group.create({
                 data:{
                     name:groupName,
+                    description:description || null,
                     inviteCode:Math.random().toString(36).substring(2, 8).toUpperCase(),
                     createdById:userId
                 }
-             });
+             }); 
 
              const member = await prisma.groupMember.create({
                 data:{
@@ -24,7 +25,7 @@ export class GroupServices{
              });
 
              return{
-                success:false,
+                success:true,
                 message:"Group Created!",
                 group:group,
                 inviteCode:group.inviteCode,

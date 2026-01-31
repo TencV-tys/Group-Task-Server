@@ -18,7 +18,7 @@ export class GroupController{
                 });
             }
 
-            const {name} = req.body;
+            const {name, description} = req.body;
             
             if(!name || !name.trim()){
                 return res.status(400).json({
@@ -26,8 +26,9 @@ export class GroupController{
                     message:"Group name is required"
                 });
             }
+             
 
-            const group = await GroupServices.createGroup(userId,name.trim());
+            const group = await GroupServices.createGroup(userId,name.trim(), description.trim());
 
              if(!group.success){
                 return res.status(401).json({
