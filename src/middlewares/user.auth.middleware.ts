@@ -36,7 +36,7 @@ export const UserAuthMiddleware = (req:UserAuthRequest, res:Response, next:NextF
        }
 
           
-      const decodedUserToken = jwt.verify(userToken,process.env.JWT_SECRET as string) as UserJwtPayload;
+      const decodedUserToken = jwt.verify(userToken,process.env.USER_JWT_SECRET as string) as UserJwtPayload;
           
       req.user = {
          id:decodedUserToken.userId,

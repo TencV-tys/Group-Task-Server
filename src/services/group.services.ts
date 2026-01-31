@@ -131,6 +131,7 @@ export class GroupServices{
                         group:{
                             select:{
                                 id:true,
+                                name:true, 
                                 description:true,
                                 avatarUrl:true,
                                 inviteCode:true,
