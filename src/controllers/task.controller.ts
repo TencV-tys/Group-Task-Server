@@ -1,70 +1,68 @@
-
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { TaskService } from "../services/task.services";
 
-export class TaskController{
-           
-    static async createTask(req:UserAuthRequest, res:Response){
-            try{
-                 const userId = req.user?.id;
-                 
-                 const {groupId} = req.params;
+export class TaskController {
+  static async createTask(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params;
+      const { title, description, points, frequency, category } = req.body;
 
-                 const { title, description, 
-                     points, frequency,category
-                 } = req.body;
+      if (!userId) {
+        return res.status(401).json({ // FIXED: Use res.status().json()
+          success: false,
+          message: "User not authenticated"
+        });
+      }
 
-                 if(!userId){
-                    return{
-                        success:false,
-                        message:"User not authenticated"
-                    }
-                 }
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
 
-           if (!groupId) {
-           return res.status(400).json({
-           success: false,
-           message: "Group ID is required"
-           });
-             }
-                  
-            if (!title || !title.trim()) {
-              return res.status(400).json({
-              success: false,
-               message: "Task title is required"
-             });
-             }
-                  
-                 const result = await TaskService.createTask( userId, groupId, title,
-                description, points || 1, frequency || 'ONCE', category);
+      if (!title || !title.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Task title is required"
+        });
+      }
 
-                 if (!result.success) {
-                 return res.status(400).json({
-                 success: false,
-                   message: result.message
-                 });
-                 }
-                     
+      const result = await TaskService.createTask(
+        userId,
+        groupId,
+        title,
+        description,
+        points || 1,
+        frequency || 'ONCE',
+        category
+      );
 
-                 return res.json({
-                    success: true,
-                    message: result.message,
-                    task: result.tasks
-                   });
-               
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
 
-            }catch(e:any){
-                console.error("Creating task error",e)
-                return res.status(500).json({
-                    success:false,
-                    message: e.message || "Internal server error"    
-                });
-            }
+      return res.status(201).json({ // 201 for created
+        success: true,
+        message: result.message,
+        task: result.task // FIXED: result.task not result.tasks
+      });
 
+    } catch (e: any) {
+      console.error("Creating task error", e);
+      return res.status(500).json({
+        success: false,
+        message: e.message || "Internal server error"
+      });
     }
+  }
 
-    // Get all tasks in a group
+  // Get all tasks in a group
   static async getGroupTasks(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -84,7 +82,7 @@ export class TaskController{
         });
       }
 
-      const result = await TaskService.getGroupTask(groupId, userId);
+      const result = await TaskService.getGroupTasks(groupId, userId); // FIXED: getGroupTasks (plural)
 
       if (!result.success) {
         return res.status(400).json({
@@ -108,7 +106,7 @@ export class TaskController{
     }
   }
 
-    // Get single task details
+  // Get single task details
   static async getTaskDetails(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -151,8 +149,8 @@ export class TaskController{
       });
     }
   }
-        
-   // Delete a task
+
+  // Delete a task
   static async deleteTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -195,5 +193,54 @@ export class TaskController{
     }
   }
 
- 
+  // Update a task - ADD THIS METHOD
+  static async updateTask(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { taskId } = req.params;
+      const { title, description, points, frequency, category } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!taskId) {
+        return res.status(400).json({
+          success: false,
+          message: "Task ID is required"
+        });
+      }
+
+      const result = await TaskService.updateTask(userId, taskId, {
+        title,
+        description,
+        points,
+        frequency,
+        category
+      });
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        task: result.task
+      });
+
+    } catch (error: any) {
+      console.error("TaskController.updateTask error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
 }
