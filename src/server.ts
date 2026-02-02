@@ -6,6 +6,7 @@ import UserAuthRoutes from './routes/user.auth.routes';
 import AdminAuthRoutes from './routes/admin.auth.routes';
 import GroupRoutes from './routes/group.routes';
 import HomeRoute from './routes/home.routes';
+import TaskRoutes from './routes/task.routes';
 
 dotenv.config(); 
 
@@ -24,6 +25,7 @@ svr.use('/api/auth/users',UserAuthRoutes);
 svr.use('/api/auth/admins',AdminAuthRoutes);
 svr.use('/api/group',GroupRoutes);
 svr.use('/api/home',HomeRoute);
+svr.use('/api/tasks',TaskRoutes);
 
 const COMPUTER_IP = '10.219.65.2';
 const PORT = process.env.PORT || 5000;
