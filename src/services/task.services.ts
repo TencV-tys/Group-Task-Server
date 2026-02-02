@@ -1,7 +1,5 @@
 import { success } from "zod";
 import prisma from "../prisma";
-import ca from "zod/v4/locales/ca.js";
-import tr from "zod/v4/locales/tr.js";
 
 export class TaskService{
  
@@ -344,6 +342,94 @@ export class TaskService{
     }
   }
 
+  static async updateTask( userId:string, taskId:string, 
+    title:string, points:number = 1, 
+    frequency:string = "ONCE" , category:string,description?:string
+  ){
+    try{
+         
+        if(!taskId){
+            return{
+                success:false,
+                message:"Task ID is required"
+            };
+        }
+
+          // First, check if user can update this task
+      const task = await prisma.task.findUnique({
+        where: { id: taskId },
+        include: {
+          group: true
+        }
+      });
+
+       if(!task){
+        return{
+            success:false,
+            message:"Task not found"
+        }
+       }
+
+
+      // Check if user is admin of the group
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: task.groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+        if(!membership){
+            return{
+                success:false,
+                message:"Only group admins can update tasks"
+            }
+        }
+ // Update the task
+      const updatedTask = await prisma.task.update({
+        where: { id: taskId },
+        data: {
+          title: title?.trim() || task.title,
+          description: description?.trim() || task.description,
+          points: points || task.points,
+          frequency: frequency || task.frequency,
+          category: category?.trim() || task.category
+        },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true
+            }
+          },
+          creator: {
+            select: {
+              id: true,
+              fullName: true
+            }
+          }
+        }
+      });
+
+      return{
+        success:true,
+        message:"Task updated successfully",
+        task:updatedTask
+      }
+
+
+         
+    }catch(e:any){
+           return{
+            success:false,
+            message:e.message || "error in update service"
+           }
+
+    }
+
+
+  }
 
 
 

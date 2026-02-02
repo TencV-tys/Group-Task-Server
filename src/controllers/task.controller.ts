@@ -84,7 +84,7 @@ export class TaskController{
         });
       }
 
-      const result = await TaskServices.getGroupTasks(groupId, userId);
+      const result = await TaskService.getGroupTask(groupId, userId);
 
       if (!result.success) {
         return res.status(400).json({
@@ -128,7 +128,7 @@ export class TaskController{
         });
       }
 
-      const result = await TaskServices.getTaskDetails(taskId, userId);
+      const result = await TaskService.getTaskDetails(taskId, userId);
 
       if (!result.success) {
         return res.status(400).json({
@@ -172,7 +172,7 @@ export class TaskController{
         });
       }
 
-      const result = await TaskServices.deleteTask(taskId, userId);
+      const result = await TaskService.deleteTask(taskId, userId);
 
       if (!result.success) {
         return res.status(400).json({
