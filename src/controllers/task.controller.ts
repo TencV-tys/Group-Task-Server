@@ -6,7 +6,7 @@ export class TaskController {
   static async createTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { groupId } = req.params;
+      const  {groupId}  = req.params as {groupId:string} ;
       const { title, description, points, frequency, category } = req.body;
 
       if (!userId) {
@@ -66,7 +66,7 @@ export class TaskController {
   static async getGroupTasks(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { groupId } = req.params;
+      const { groupId } = req.params as {groupId:string};
 
       if (!userId) {
         return res.status(401).json({
@@ -110,7 +110,7 @@ export class TaskController {
   static async getTaskDetails(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { taskId } = req.params;
+      const { taskId } = req.params as {taskId:string};
 
       if (!userId) {
         return res.status(401).json({
@@ -154,7 +154,7 @@ export class TaskController {
   static async deleteTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { taskId } = req.params;
+      const { taskId } = req.params as {taskId:string};
 
       if (!userId) {
         return res.status(401).json({
@@ -197,7 +197,7 @@ export class TaskController {
   static async updateTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { taskId } = req.params;
+      const { taskId } = req.params as {taskId:string};
       const { title, description, points, frequency, category } = req.body;
 
       if (!userId) {

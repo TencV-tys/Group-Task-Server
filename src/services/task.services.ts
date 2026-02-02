@@ -103,7 +103,7 @@ export class TaskService{
 
     }
 
-    static async getGroupTask(groupId:string, userId:string){
+    static async getGroupTasks(groupId:string, userId:string){
               try{
                    const membership = await prisma.groupMember.findFirst({
                     where:{
