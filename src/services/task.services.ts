@@ -1,4 +1,4 @@
-import { success } from "zod";
+
 import prisma from "../prisma";
 
 export class TaskService{
@@ -121,6 +121,7 @@ export class TaskService{
 
                    const tasks = await prisma.task.findMany({
                     where:{
+                        
                         groupId:groupId
                     },
                     include:{
@@ -147,12 +148,12 @@ export class TaskService{
                             select:{
                                 assignments:true
                             }
-                        },
+                        }
+                    },
                         orderBy:{
                             createdAt:'desc'
                         }
 
-                    }
                    });
 
                    const formattedTasks  = tasks.map(task =>({
