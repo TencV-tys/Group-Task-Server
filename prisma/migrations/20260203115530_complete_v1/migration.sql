@@ -29,6 +29,8 @@ CREATE TABLE `groups` (
     `avatarUrl` VARCHAR(191) NULL,
     `settings` JSON NULL,
     `createdById` VARCHAR(191) NOT NULL,
+    `currentRotationWeek` INTEGER NOT NULL DEFAULT 0,
+    `lastRotationUpdate` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
@@ -42,6 +44,8 @@ CREATE TABLE `group_members` (
     `userId` VARCHAR(191) NOT NULL,
     `groupId` VARCHAR(191) NOT NULL,
     `groupRole` ENUM('ADMIN', 'MEMBER') NOT NULL DEFAULT 'MEMBER',
+    `rotationOrder` INTEGER NULL,
+    `isActive` BOOLEAN NOT NULL DEFAULT true,
     `joinedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `group_members_userId_groupId_key`(`userId`, `groupId`),
@@ -54,8 +58,14 @@ CREATE TABLE `tasks` (
     `title` VARCHAR(191) NOT NULL,
     `description` VARCHAR(191) NULL,
     `points` INTEGER NOT NULL DEFAULT 1,
-    `frequency` VARCHAR(191) NOT NULL DEFAULT 'ONCE',
+    `frequency` VARCHAR(191) NOT NULL DEFAULT 'WEEKLY',
+    `timeOfDay` ENUM('MORNING', 'AFTERNOON', 'EVENING', 'ANYTIME') NULL,
+    `dayOfWeek` ENUM('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY') NULL,
+    `isRecurring` BOOLEAN NOT NULL DEFAULT true,
     `category` VARCHAR(191) NULL,
+    `rotationOrder` INTEGER NULL,
+    `currentAssignee` VARCHAR(191) NULL,
+    `lastAssignedAt` DATETIME(3) NULL,
     `groupId` VARCHAR(191) NOT NULL,
     `createdById` VARCHAR(191) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -74,11 +84,16 @@ CREATE TABLE `assignments` (
     `completedAt` DATETIME(3) NULL,
     `verified` BOOLEAN NOT NULL DEFAULT false,
     `photoUrl` VARCHAR(191) NULL,
+    `rotationWeek` INTEGER NOT NULL DEFAULT 0,
+    `weekStart` DATETIME(3) NOT NULL,
+    `weekEnd` DATETIME(3) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `assignments_dueDate_idx`(`dueDate`),
     INDEX `assignments_completed_idx`(`completed`),
     INDEX `assignments_userId_completed_idx`(`userId`, `completed`),
+    INDEX `assignments_rotationWeek_idx`(`rotationWeek`),
+    INDEX `assignments_weekStart_weekEnd_idx`(`weekStart`, `weekEnd`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -88,7 +103,11 @@ CREATE TABLE `swap_requests` (
     `assignmentId` VARCHAR(191) NOT NULL,
     `reason` VARCHAR(191) NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'PENDING',
+    `requestedBy` VARCHAR(191) NOT NULL,
+    `targetUserId` VARCHAR(191) NULL,
+    `expiresAt` DATETIME(3) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
 
     UNIQUE INDEX `swap_requests_assignmentId_key`(`assignmentId`),
     PRIMARY KEY (`id`)

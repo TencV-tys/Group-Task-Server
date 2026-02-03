@@ -8,7 +8,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============= USER ROLES =============
+// ============= ENUMS =============
 enum UserRole {
   USER
   GROUP_ADMIN
@@ -20,10 +20,9 @@ enum UserRoleStatus {
   DISABLED
 }
 
-// SIMPLIFIED: Just ADMIN and MEMBER
 enum GroupMemberRole {
-  ADMIN    // Group Admin (creator)
-  MEMBER   // Regular member
+  ADMIN
+  MEMBER
 }
 
 enum SystemAdminRole {
@@ -46,6 +45,25 @@ enum Gender {
   PREFER_NOT_TO_SAY
 }
 
+// NEW: Time of day for task scheduling
+enum TimeOfDay {
+  MORNING     // 6 AM - 12 PM
+  AFTERNOON   // 12 PM - 6 PM
+  EVENING     // 6 PM - 10 PM
+  ANYTIME     // Anytime during the day
+}
+
+// NEW: Days of week for scheduling
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
 // ============= CORE MODELS =============
 
 model User {
@@ -56,11 +74,9 @@ model User {
   avatarUrl    String?
   gender       Gender?
 
-  // User Role System
   role       UserRole       @default(USER)
   roleStatus UserRoleStatus @default(ACTIVE)
 
-  // System Admin Oversight
   roleStatusChangedAt DateTime?
   roleStatusChangedBy String?
   roleStatusReason    String?
@@ -76,13 +92,10 @@ model User {
   userNotifications UserNotification[]
   refreshTokens     RefreshToken[]     @relation("UserRefreshTokens")
 
-  // System Admin who changed status
   statusChangedByAdmin SystemAdmin? @relation("StatusChangedByAdmin", fields: [roleStatusChangedBy], references: [id])
 
-  // Relationships to Admin
   adminModifications AdminAuditLog[] @relation("UserAdminAuditLogs")
 
-  // Timestamps
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   lastLoginAt DateTime?
@@ -98,15 +111,17 @@ model Group {
   avatarUrl   String?
   settings    Json?   @default("{}")
   
-  // NEW: Track who created the group
   createdById String
+
+  // NEW: Rotation tracking
+  currentRotationWeek Int @default(0)  // Current week in rotation cycle
+  lastRotationUpdate  DateTime?        // When rotation was last updated
 
   // Relationships
   members GroupMember[] @relation("GroupMembers")
   tasks   Task[]        @relation("GroupTasks")
   creator User          @relation("GroupCreator", fields: [createdById], references: [id])
 
-  // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -118,6 +133,10 @@ model GroupMember {
   userId    String
   groupId   String
   groupRole GroupMemberRole @default(MEMBER)
+
+  // NEW: For rotation tracking
+  rotationOrder Int?    // Order in rotation sequence
+  isActive      Boolean @default(true)  // Whether member participates in rotation
 
   // Relationships
   user  User  @relation("UserGroups", fields: [userId], references: [id], onDelete: Cascade)
@@ -134,8 +153,18 @@ model Task {
   title       String
   description String?
   points      Int     @default(1)
-  frequency   String  @default("ONCE")
+  frequency   String  @default("WEEKLY")  // Changed default to WEEKLY for rotation
+
+  // NEW: Scheduling fields
+  timeOfDay   TimeOfDay?  // When the task should be done
+  dayOfWeek   DayOfWeek?  // Which day of the week
+  isRecurring Boolean     @default(true)  // If task repeats weekly
   category    String?
+
+  // NEW: Rotation tracking
+  rotationOrder   Int?      // Order in the rotation sequence
+  currentAssignee String?   // Current user assigned (for easier querying)
+  lastAssignedAt  DateTime? // When it was last assigned to someone
 
   // Foreign keys
   groupId     String
@@ -162,6 +191,11 @@ model Assignment {
   verified    Boolean   @default(false)
   photoUrl    String?
 
+  // NEW: Rotation tracking
+  rotationWeek Int @default(0)  // Which week in rotation this assignment is for
+  weekStart    DateTime         // Start of the week for this assignment
+  weekEnd      DateTime         // End of the week for this assignment
+
   // Relationships
   task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
   user        User         @relation("UserAssignments", fields: [userId], references: [id])
@@ -172,6 +206,8 @@ model Assignment {
   @@index([dueDate])
   @@index([completed])
   @@index([userId, completed])
+  @@index([rotationWeek])
+  @@index([weekStart, weekEnd])
   @@map("assignments")
 }
 
@@ -181,12 +217,20 @@ model SwapRequest {
   reason       String?
   status       String  @default("PENDING")
 
+  // NEW: For tracking swaps
+  requestedBy  String  // User who requested the swap
+  targetUserId String? // User to swap with (if null, anyone can accept)
+  expiresAt    DateTime? // When swap request expires
+
   assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("swap_requests")
 }
+
+// ... rest of the models remain the same ...
 
 model Feedback {
   id      String @id @default(uuid())
