@@ -228,4 +228,89 @@ export class GroupMembersController {
       });
     }
   }
+
+ static async getGroupInfo(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const {groupId} = req.params as {groupId:string};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      // Check if user is a member of the group
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId
+        },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              inviteCode: true,
+              avatarUrl: true,
+              createdAt: true
+            }
+          }
+        }
+      });
+
+      if (!membership) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not a member of this group"
+        });
+      }
+
+      // Get member count
+      const memberCount = await prisma.groupMember.count({
+        where: { groupId: groupId }
+      });
+
+      // Only show invite code to admins
+      const responseData: any = {
+        id: membership.group.id,
+        name: membership.group.name,
+        description: membership.group.description,
+        avatarUrl: membership.group.avatarUrl,
+        createdAt: membership.group.createdAt,
+        memberCount: memberCount,
+        userRole: membership.groupRole
+      };
+
+      // Only include invite code if user is admin
+      if (membership.groupRole === "ADMIN") {
+        responseData.inviteCode = membership.group.inviteCode;
+      }
+
+      return res.json({
+        success: true,
+        message: "Group info retrieved",
+        group: responseData
+      });
+
+    } catch (error: any) {
+      console.error("GroupMembersController.getGroupInfo error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+
+
 }

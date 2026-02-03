@@ -1,23 +1,25 @@
 // src/routes/group.members.routes.ts
 import { Router } from "express";
 import { GroupMembersController } from "../controllers/group.members.controller";
-import { UserAuthMiddleware } from "../middlewares/user.auth.middleware";
 
-const router = Router();
+const router = Router({ mergeParams: true }); // Important: mergeParams: true
 
-// All routes require authentication
-router.use(UserAuthMiddleware);
+// Note: These routes are mounted under /:groupId
+// So the full path will be: /api/group/:groupId/members
 
 // Get all members of a group
-router.get("/:groupId/members", GroupMembersController.getGroupMembers);
+router.get("/members", GroupMembersController.getGroupMembers);
+
+// Get group info (including invite code)
+router.get("/info", GroupMembersController.getGroupInfo);
 
 // Remove a member from group (admin only)
-router.delete("/:groupId/members/:memberId", GroupMembersController.removeMember);
+router.delete("/members/:memberId", GroupMembersController.removeMember);
 
 // Update member role (admin only)
-router.put("/:groupId/members/:memberId/role", GroupMembersController.updateMemberRole);
+router.put("/members/:memberId/role", GroupMembersController.updateMemberRole);
 
 // Leave group (member can leave their own membership)
-router.delete("/:groupId/leave", GroupMembersController.leaveGroup);
+router.delete("/leave", GroupMembersController.leaveGroup);
 
 export default router;
