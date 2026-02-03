@@ -10,6 +10,9 @@ const router = Router({ mergeParams: true }); // Important: mergeParams: true
 // Get all members of a group
 router.get("/members", GroupMembersController.getGroupMembers);
 
+// Get group members with rotation details
+router.get("/members-rotation", GroupMembersController.getGroupMembersWithRotation);
+
 // Get group info (including invite code)
 router.get("/info", GroupMembersController.getGroupInfo);
 
@@ -18,6 +21,12 @@ router.delete("/members/:memberId", GroupMembersController.removeMember);
 
 // Update member role (admin only)
 router.put("/members/:memberId/role", GroupMembersController.updateMemberRole);
+
+// Update member rotation settings (admin only)
+router.put("/members/:memberId/rotation", GroupMembersController.updateMemberRotation);
+
+// Reorder rotation sequence (admin only)
+router.post("/reorder-rotation", GroupMembersController.reorderRotationSequence);
 
 // Leave group (member can leave their own membership)
 router.delete("/leave", GroupMembersController.leaveGroup);

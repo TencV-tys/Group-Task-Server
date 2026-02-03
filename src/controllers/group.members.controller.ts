@@ -3,14 +3,13 @@ import { Request, Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { GroupMembersService } from "../services/group.members.services";
 import prisma from "../prisma";
+
 export class GroupMembersController {
   // Get all members of a group
   static async getGroupMembers(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const groupId = Array.isArray(req.params.groupId) 
-        ? req.params.groupId[0] 
-        : req.params.groupId;
+      const { groupId } = req.params as { groupId: string };
 
       if (!userId) {
         return res.status(401).json({
@@ -40,7 +39,12 @@ export class GroupMembersController {
         message: result.message,
         members: result.members,
         userRole: result.userRole,
-        groupId: groupId
+        currentRotationWeek: result.currentRotationWeek,
+        groupId: groupId,
+        stats: {
+          totalMembers: result.totalMembers,
+          activeMembers: result.activeMembers
+        }
       });
 
     } catch (error: any) {
@@ -52,16 +56,58 @@ export class GroupMembersController {
     }
   }
 
+  // Get group members with rotation details
+  static async getGroupMembersWithRotation(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await GroupMembersService.getGroupMembersWithRotation(groupId, userId);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        group: result.group,
+        members: result.members,
+        userRole: result.userRole,
+        rotationStats: result.rotationStats
+      });
+
+    } catch (error: any) {
+      console.error("GroupMembersController.getGroupMembersWithRotation error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
   // Remove a member from group (admin only)
   static async removeMember(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const groupId = Array.isArray(req.params.groupId) 
-        ? req.params.groupId[0] 
-        : req.params.groupId;
-      const memberId = Array.isArray(req.params.memberId) 
-        ? req.params.memberId[0] 
-        : req.params.memberId;
+      const { groupId, memberId } = req.params as { groupId: string, memberId: string };
 
       if (!userId) {
         return res.status(401).json({
@@ -104,12 +150,7 @@ export class GroupMembersController {
   static async updateMemberRole(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const groupId = Array.isArray(req.params.groupId) 
-        ? req.params.groupId[0] 
-        : req.params.groupId;
-      const memberId = Array.isArray(req.params.memberId) 
-        ? req.params.memberId[0] 
-        : req.params.memberId;
+      const { groupId, memberId } = req.params as { groupId: string, memberId: string };
       const { newRole } = req.body;
 
       if (!userId) {
@@ -156,13 +197,106 @@ export class GroupMembersController {
     }
   }
 
+  // Update member rotation settings
+  static async updateMemberRotation(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId, memberId } = req.params as { groupId: string, memberId: string };
+      const { rotationOrder, isActive } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId || !memberId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID and Member ID are required"
+        });
+      }
+
+      const result = await GroupMembersService.updateMemberRotation(
+        groupId,
+        memberId,
+        userId,
+        rotationOrder,
+        isActive
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        member: result.member
+      });
+
+    } catch (error: any) {
+      console.error("GroupMembersController.updateMemberRotation error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // Reorder rotation sequence
+  static async reorderRotationSequence(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+      const { newOrder } = req.body; // Array of { memberId, rotationOrder }
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId || !newOrder || !Array.isArray(newOrder)) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID and new order array are required"
+        });
+      }
+
+      const result = await GroupMembersService.reorderRotationSequence(groupId, userId, newOrder);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message
+      });
+
+    } catch (error: any) {
+      console.error("GroupMembersController.reorderRotationSequence error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
   // Member leaves group
   static async leaveGroup(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const groupId = Array.isArray(req.params.groupId) 
-        ? req.params.groupId[0] 
-        : req.params.groupId;
+      const { groupId } = req.params as { groupId: string };
 
       if (!userId) {
         return res.status(401).json({
@@ -210,6 +344,33 @@ export class GroupMembersController {
         }
       }
 
+      // If member is active in rotation, check for current tasks
+      if (userMembership.isActive) {
+        const group = await prisma.group.findUnique({
+          where: { id: groupId }
+        });
+
+        if (group) {
+          const currentAssignments = await prisma.assignment.findMany({
+            where: {
+              userId: userId,
+              task: {
+                groupId: groupId
+              },
+              rotationWeek: group.currentRotationWeek,
+              completed: false
+            }
+          });
+
+          if (currentAssignments.length > 0) {
+            return res.status(400).json({
+              success: false,
+              message: `You have ${currentAssignments.length} uncompleted tasks for this week. Complete them or request a swap before leaving.`
+            });
+          }
+        }
+      }
+
       // Delete the membership
       await prisma.groupMember.delete({
         where: { id: userMembership.id }
@@ -229,10 +390,10 @@ export class GroupMembersController {
     }
   }
 
- static async getGroupInfo(req: UserAuthRequest, res: Response) {
+  static async getGroupInfo(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const {groupId} = req.params as {groupId:string};
+      const { groupId } = req.params as { groupId: string };
 
       if (!userId) {
         return res.status(401).json({
@@ -262,7 +423,9 @@ export class GroupMembersController {
               description: true,
               inviteCode: true,
               avatarUrl: true,
-              createdAt: true
+              createdAt: true,
+              currentRotationWeek: true,
+              lastRotationUpdate: true
             }
           }
         }
@@ -275,9 +438,23 @@ export class GroupMembersController {
         });
       }
 
-      // Get member count
+      // Get member count and rotation stats
       const memberCount = await prisma.groupMember.count({
         where: { groupId: groupId }
+      });
+
+      const activeMemberCount = await prisma.groupMember.count({
+        where: { 
+          groupId: groupId,
+          isActive: true 
+        }
+      });
+
+      const recurringTaskCount = await prisma.task.count({
+        where: { 
+          groupId: groupId,
+          isRecurring: true 
+        }
       });
 
       // Only show invite code to admins
@@ -287,7 +464,11 @@ export class GroupMembersController {
         description: membership.group.description,
         avatarUrl: membership.group.avatarUrl,
         createdAt: membership.group.createdAt,
+        currentRotationWeek: membership.group.currentRotationWeek,
+        lastRotationUpdate: membership.group.lastRotationUpdate,
         memberCount: memberCount,
+        activeMemberCount: activeMemberCount,
+        recurringTaskCount: recurringTaskCount,
         userRole: membership.groupRole
       };
 
@@ -310,7 +491,4 @@ export class GroupMembersController {
       });
     }
   }
-
-
-
 }
