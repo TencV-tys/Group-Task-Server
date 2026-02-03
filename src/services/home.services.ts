@@ -22,29 +22,107 @@ export class HomeServices {
         };
       }
 
-      // FIXED: Changed 'where: {id: userId}' to 'where: {userId: userId}'
-      const groupsCount = await prisma.groupMember.count({
-        where: { userId: userId } // Fixed
+      // Get user's group memberships with rotation info
+      const userMemberships = await prisma.groupMember.findMany({
+        where: { userId: userId },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              avatarUrl: true,
+              currentRotationWeek: true,
+              lastRotationUpdate: true,
+              _count: {
+                select: {
+                  tasks: {
+                    where: { isRecurring: true }
+                  },
+                  members: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { joinedAt: 'desc' }
       });
 
-      const tasksDue = await prisma.assignment.count({
+      const groupsCount = userMemberships.length;
+
+      // Get current week assignments for user (tasks due this week)
+      const now = new Date();
+      const currentWeekStart = new Date(now);
+      currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay() + 1);
+      currentWeekStart.setHours(0, 0, 0, 0);
+
+      const currentWeekEnd = new Date(currentWeekStart);
+      currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+      currentWeekEnd.setHours(23, 59, 59, 999);
+
+      // Get assignments for current rotation week
+      const currentWeekAssignments = await prisma.assignment.findMany({
         where: {
-          userId: userId, // Fixed
+          userId: userId,
           completed: false,
-          dueDate: { lt: new Date() }
+          weekStart: { lte: now },
+          weekEnd: { gte: now }
+        },
+        include: {
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              timeOfDay: true,
+              dayOfWeek: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
         }
       });
 
+      const tasksDueThisWeek = currentWeekAssignments.length;
+      
+      // Get overdue tasks (due before today)
+      const overdueTasks = await prisma.assignment.count({
+        where: {
+          userId: userId,
+          completed: false,
+          dueDate: { lt: now }
+        }
+      });
+
+      // Get completed tasks count
       const completedTasks = await prisma.assignment.count({
         where: {
-          userId: userId, // Fixed
+          userId: userId,
           completed: true
         }
       });
 
-      // FIXED: Changed 'where: { id: userId }' to 'where: { userId: userId }'
+      // Get total assignments count
+      const totalTasks = await prisma.assignment.count({
+        where: { userId: userId }
+      });
+
+      // Get pending swap requests
+      const swapRequests = await prisma.swapRequest.count({
+        where: {
+          assignment: {
+            userId: userId
+          },
+          status: "PENDING"
+        }
+      });
+
+      // Get recent activity (notifications)
       const recentActivity = await prisma.userNotification.findMany({
-        where: { userId: userId }, // Fixed
+        where: { userId: userId },
         orderBy: { createdAt: 'desc' },
         take: 5,
         select: {
@@ -57,30 +135,136 @@ export class HomeServices {
         }
       });
 
-      // Additional stats you might want:
-      // Total tasks assigned
-      const totalTasks = await prisma.assignment.count({
-        where: { userId: userId }
-      });
+      // Get upcoming rotations (next week's tasks)
+      const nextWeekStart = new Date(currentWeekStart);
+      nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+      
+      const nextWeekEnd = new Date(currentWeekEnd);
+      nextWeekEnd.setDate(nextWeekEnd.getDate() + 7);
 
-      // Groups with task assignments
-      const groupsWithTasks = await prisma.groupMember.findMany({
-        where: { userId: userId },
+      const upcomingAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          weekStart: { gte: nextWeekStart },
+          weekEnd: { lte: nextWeekEnd }
+        },
         include: {
-          group: {
+          task: {
             select: {
               id: true,
-              name: true,
-              _count: {
-                select: {
-                  tasks: true
-                  // Add more counts as needed
-                }
-              }
+              title: true,
+              points: true,
+              timeOfDay: true,
+              dayOfWeek: true
+            }
+          }
+        },
+        take: 3
+      });
+
+      // Calculate points earned this week - FIXED
+      const completedThisWeek = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true,
+          completedAt: {
+            gte: currentWeekStart
+          }
+        },
+        include: {
+          task: {
+            select: {
+              points: true
             }
           }
         }
       });
+
+      const pointsThisWeek = completedThisWeek.reduce((sum, assignment) => 
+        sum + (assignment.task.points || 0), 0
+      );
+
+      // Format groups with rotation info
+      const groups = userMemberships.map(member => {
+        const group = member.group;
+        const tasksForThisGroup = currentWeekAssignments.filter(
+          assignment => assignment.task.group.id === group.id
+        );
+
+        return {
+          id: group.id,
+          name: group.name,
+          avatarUrl: group.avatarUrl,
+          role: member.groupRole,
+          rotationOrder: member.rotationOrder,
+          isActive: member.isActive,
+          currentRotationWeek: group.currentRotationWeek,
+          lastRotationUpdate: group.lastRotationUpdate,
+          stats: {
+            totalTasks: group._count.tasks,
+            totalMembers: group._count.members,
+            yourTasksThisWeek: tasksForThisGroup.length,
+            recurringTasks: group._count.tasks
+          }
+        };
+      });
+
+      // Sort groups by activity
+      groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
+
+      // Get leaderboard data
+      const completedAssignmentsForLeaderboard = await prisma.assignment.findMany({
+        where: {
+          completed: true,
+          completedAt: {
+            gte: currentWeekStart
+          },
+          task: {
+            groupId: {
+              in: userMemberships.map(m => m.groupId)
+            }
+          }
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true
+            }
+          }
+        }
+      });
+
+      // Group by user and calculate points
+      const leaderboardMap = new Map();
+      completedAssignmentsForLeaderboard.forEach(assignment => {
+        const userId = assignment.userId;
+        if (!leaderboardMap.has(userId)) {
+          leaderboardMap.set(userId, {
+            user: assignment.user,
+            completedTasks: 0,
+            totalPoints: 0
+          });
+        }
+        const userData = leaderboardMap.get(userId);
+        userData.completedTasks++;
+        userData.totalPoints += assignment.task.points || 0;
+      });
+
+      // Convert to array and sort by points
+      const leaderboard = Array.from(leaderboardMap.values())
+        .sort((a, b) => b.totalPoints - a.totalPoints)
+        .slice(0, 5)
+        .map(item => ({
+          ...item,
+          isCurrentUser: item.user.id === userId
+        }));
 
       return {
         success: true,
@@ -88,28 +272,57 @@ export class HomeServices {
           user: {
             ...user,
             groupsCount,
-            tasksDue,
-            totalTasks,
-            completedTasks
+            pointsThisWeek,
+            totalPoints: await this.getTotalPoints(userId)
           },
           stats: {
             groupsCount,
-            tasksDue,
+            tasksDueThisWeek,
+            overdueTasks,
             completedTasks,
             totalTasks,
-            completionRate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0
+            swapRequests,
+            completionRate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0,
+            pointsThisWeek
           },
+          currentWeekTasks: currentWeekAssignments.map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task.id,
+            title: assignment.task.title,
+            points: assignment.task.points,
+            timeOfDay: assignment.task.timeOfDay,
+            dayOfWeek: assignment.task.dayOfWeek,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            groupName: assignment.task.group.name,
+            groupId: assignment.task.group.id,
+            weekStart: assignment.weekStart,
+            weekEnd: assignment.weekEnd
+          })),
+          upcomingTasks: upcomingAssignments.map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task.id,
+            title: assignment.task.title,
+            points: assignment.task.points,
+            timeOfDay: assignment.task.timeOfDay,
+            dayOfWeek: assignment.task.dayOfWeek,
+            weekStart: assignment.weekStart,
+            weekEnd: assignment.weekEnd,
+            startsInDays: Math.ceil((assignment.weekStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          })),
+          groups: groups,
+          leaderboard: leaderboard,
           recentActivity: recentActivity.map(activity => ({
             ...activity,
             icon: this.getActivityIcon(activity.type),
             timeAgo: this.getTimeAgo(activity.createdAt)
           })),
-          groups: groupsWithTasks.map(member => ({
-            id: member.group.id,
-            name: member.group.name,
-            taskCount: member.group._count.tasks,
-            role: member.groupRole
-          }))
+          rotationInfo: {
+            currentWeekStart,
+            currentWeekEnd,
+            nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
+            daysUntilNextRotation: Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          }
         }
       };
 
@@ -122,14 +335,49 @@ export class HomeServices {
     }
   }
 
+  // Helper to get total points for user - FIXED
+  static async getTotalPoints(userId: string): Promise<number> {
+    try {
+      const completedAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          }
+        }
+      });
+
+      return completedAssignments.reduce((sum, assignment) => 
+        sum + (assignment.task.points || 0), 0
+      );
+    } catch (error) {
+      console.error("Error getting total points:", error);
+      return 0;
+    }
+  }
+
   static getActivityIcon(type: string) {
     const icons: Record<string, string> = {
       TASK_ASSIGNED: '📝',
       TASK_COMPLETED: '✅',
+      TASK_OVERDUE: '⚠️',
       GROUP_JOINED: '👥',
       GROUP_CREATED: '🏠',
+      ROTATION_ADVANCED: '🔄',
+      SWAP_REQUESTED: '🔄',
+      SWAP_ACCEPTED: '🤝',
+      SWAP_DECLINED: '❌',
       MENTION: '💬',
-      REMINDER: '⏰'
+      REMINDER: '⏰',
+      POINTS_EARNED: '⭐',
+      NEW_MEMBER: '🆕',
+      TASK_CREATED: '➕',
+      ROTATION_ORDER_CHANGED: '📊'
     };
     return icons[type] || '📌';
   }
@@ -149,6 +397,108 @@ export class HomeServices {
       return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
     } else {
       return date.toLocaleDateString();
+    }
+  }
+
+  static async getWeeklySummary(userId: string) {
+    try {
+      const now = new Date();
+      const weekStart = new Date(now);
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+      weekStart.setHours(0, 0, 0, 0);
+
+      // Get completed tasks this week
+      const completedThisWeek = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true,
+          completedAt: {
+            gte: weekStart
+          }
+        },
+        include: {
+          task: {
+            select: {
+              title: true,
+              points: true,
+              group: {
+                select: {
+                  name: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { completedAt: 'desc' }
+      });
+
+      // Get pending tasks for this week
+      const pendingThisWeek = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: false,
+          weekStart: { lte: now },
+          weekEnd: { gte: now }
+        },
+        include: {
+          task: {
+            select: {
+              title: true,
+              points: true,
+              timeOfDay: true,
+              dayOfWeek: true
+            }
+          }
+        }
+      });
+
+      // Calculate points
+      const totalPoints = completedThisWeek.reduce((sum, assignment) => 
+        sum + (assignment.task.points || 0), 0
+      );
+
+      // Group by day
+      const byDay: Record<string, any> = {};
+      completedThisWeek.forEach(assignment => {
+        if (assignment.completedAt) {
+          const day = assignment.completedAt.toLocaleDateString('en-US', { weekday: 'short' });
+          if (!byDay[day]) {
+            byDay[day] = { count: 0, points: 0 };
+          }
+          byDay[day].count++;
+          byDay[day].points += assignment.task.points || 0;
+        }
+      });
+
+      return {
+        success: true,
+        data: {
+          completedTasks: completedThisWeek.length,
+          pendingTasks: pendingThisWeek.length,
+          totalPoints,
+          completedTasksList: completedThisWeek.map(task => ({
+            title: task.task.title,
+            points: task.task.points,
+            group: task.task.group.name,
+            completedAt: task.completedAt
+          })),
+          pendingTasksList: pendingThisWeek.map(task => ({
+            title: task.task.title,
+            points: task.task.points,
+            timeOfDay: task.task.timeOfDay,
+            dayOfWeek: task.task.dayOfWeek,
+            dueDate: task.dueDate
+          })),
+          dailyStats: byDay
+        }
+      };
+
+    } catch (error: any) {
+      console.error("HomeServices.getWeeklySummary error:", error);
+      return {
+        success: false,
+        message: error.message || "Error getting weekly summary"
+      };
     }
   }
 }

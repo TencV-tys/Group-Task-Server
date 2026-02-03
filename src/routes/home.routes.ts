@@ -11,4 +11,8 @@ router.get('/',HomeController.getHomeData);
 
 router.get('/stats',HomeController.getHomeData);
 
+// In your home.routes.ts, add:
+router.get('/weekly-summary', HomeController.getWeeklySummary);
+router.get('/dashboard-stats', HomeController.getDashboardStats);
+
 export default router;
