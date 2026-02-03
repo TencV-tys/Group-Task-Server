@@ -90,8 +90,8 @@ export class HomeController {
       currentWeekStart.setDate(currentWeekStart.getDate() - currentWeekStart.getDay() + 1);
       currentWeekStart.setHours(0, 0, 0, 0);
 
-      // Get completed assignments with their tasks to calculate points
-      const completedAssignments = await prisma.assignment.findMany({
+      // Get completed assignments this week with their tasks to calculate points
+      const completedAssignmentsThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
@@ -106,8 +106,27 @@ export class HomeController {
         }
       });
 
-      // Calculate total points from completed assignments
-      const totalPoints = completedAssignments.reduce((sum, assignment) => 
+      // Get all completed assignments for total points
+      const allCompletedAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          }
+        }
+      });
+
+      // Calculate points
+      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
+        sum + (assignment.task.points || 0), 0
+      );
+      
+      const totalPoints = allCompletedAssignments.reduce((sum, assignment) => 
         sum + (assignment.task.points || 0), 0
       );
 
@@ -157,6 +176,7 @@ export class HomeController {
             groupsCount,
             tasksDueThisWeek,
             completedThisWeek,
+            pointsThisWeek,
             totalPoints,
             recentNotifications
           },

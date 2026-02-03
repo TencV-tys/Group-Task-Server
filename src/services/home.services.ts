@@ -162,8 +162,8 @@ export class HomeServices {
         take: 3
       });
 
-      // Calculate points earned this week - FIXED
-      const completedThisWeek = await prisma.assignment.findMany({
+      // Calculate points earned this week
+      const completedAssignmentsThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
@@ -180,7 +180,7 @@ export class HomeServices {
         }
       });
 
-      const pointsThisWeek = completedThisWeek.reduce((sum, assignment) => 
+      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
         sum + (assignment.task.points || 0), 0
       );
 
@@ -212,8 +212,8 @@ export class HomeServices {
       // Sort groups by activity
       groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
 
-      // Get leaderboard data
-      const completedAssignmentsForLeaderboard = await prisma.assignment.findMany({
+      // Get leaderboard data - get all completed assignments in user's groups this week
+      const allCompletedAssignments = await prisma.assignment.findMany({
         where: {
           completed: true,
           completedAt: {
@@ -241,9 +241,10 @@ export class HomeServices {
         }
       });
 
-      // Group by user and calculate points
+      // Group by user and calculate completed tasks and total points
       const leaderboardMap = new Map();
-      completedAssignmentsForLeaderboard.forEach(assignment => {
+      
+      allCompletedAssignments.forEach(assignment => {
         const userId = assignment.userId;
         if (!leaderboardMap.has(userId)) {
           leaderboardMap.set(userId, {
@@ -257,12 +258,14 @@ export class HomeServices {
         userData.totalPoints += assignment.task.points || 0;
       });
 
-      // Convert to array and sort by points
+      // Convert to array, sort by total points, and take top 5
       const leaderboard = Array.from(leaderboardMap.values())
         .sort((a, b) => b.totalPoints - a.totalPoints)
         .slice(0, 5)
         .map(item => ({
-          ...item,
+          user: item.user,
+          completedTasks: item.completedTasks,
+          totalPoints: item.totalPoints,
           isCurrentUser: item.user.id === userId
         }));
 
@@ -335,7 +338,7 @@ export class HomeServices {
     }
   }
 
-  // Helper to get total points for user - FIXED
+  // Helper to get total points for user
   static async getTotalPoints(userId: string): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
