@@ -282,7 +282,7 @@ static async getRotationSchedulePreview(req: UserAuthRequest, res: Response) {
                 message: result.message
             });
         }
-
+ 
         return res.json({
             success: true,
             message: result.message,
