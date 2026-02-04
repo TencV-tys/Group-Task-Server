@@ -82,7 +82,7 @@ export class GroupMembersController {
         return res.status(400).json({
           success: false,
           message: result.message
-        });
+        }); 
       }
 
       return res.json({
@@ -491,4 +491,98 @@ export class GroupMembersController {
       });
     }
   }
+
+  // Add this method to src/controllers/group.members.controller.ts
+static async updateGroup(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as { groupId: string };
+    const { name, description } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: "Group ID is required"
+      });
+    }
+
+    // Check if user is an admin of the group
+    const membership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can update group information"
+      });
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (name !== undefined && name.trim() !== '') {
+      updateData.name = name.trim();
+    }
+    if (description !== undefined) {
+      updateData.description = description.trim() || null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No data provided to update"
+      });
+    }
+
+    // Update the group
+    const updatedGroup = await prisma.group.update({
+      where: { id: groupId },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        inviteCode: true,
+        avatarUrl: true,
+        createdAt: true,
+        currentRotationWeek: true,
+        lastRotationUpdate: true
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: "Group updated successfully",
+      group: updatedGroup
+    });
+
+  } catch (error: any) {
+    console.error("GroupMembersController.updateGroup error:", error);
+    
+    // Handle specific Prisma errors
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: "Group not found"
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
 }

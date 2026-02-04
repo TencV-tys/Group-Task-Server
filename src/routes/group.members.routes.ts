@@ -12,7 +12,7 @@ router.get("/members", GroupMembersController.getGroupMembers);
 
 // Get group members with rotation details
 router.get("/members-rotation", GroupMembersController.getGroupMembersWithRotation);
-
+ 
 // Get group info (including invite code)
 router.get("/info", GroupMembersController.getGroupInfo);
 
@@ -24,6 +24,8 @@ router.put("/members/:memberId/role", GroupMembersController.updateMemberRole);
 
 // Update member rotation settings (admin only)
 router.put("/members/:memberId/rotation", GroupMembersController.updateMemberRotation);
+
+router.put("/update", GroupMembersController.updateGroup);
 
 // Reorder rotation sequence (admin only)
 router.post("/reorder-rotation", GroupMembersController.reorderRotationSequence);
