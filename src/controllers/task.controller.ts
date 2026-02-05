@@ -2,22 +2,11 @@
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { TaskService } from "../services/task.services";
-import { TaskExecutionFrequency, DayOfWeek } from '@prisma/client';
+import { TaskExecutionFrequency } from '@prisma/client';
+import { TaskHelpers } from "../helpers/task.helpers";
 
 export class TaskController {
   
-  // Helper method to validate selected days
-  private static validateSelectedDays(days: any): DayOfWeek[] | undefined {
-    if (!Array.isArray(days)) return undefined;
-    
-    const validDays = Object.values(DayOfWeek);
-    const filtered = days.filter((day: string) => 
-      validDays.includes(day as DayOfWeek)
-    );
-    
-    return filtered.length > 0 ? filtered as DayOfWeek[] : undefined;
-  }
-
   static async createTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -27,22 +16,14 @@ export class TaskController {
         description, 
         points = 1,
         category,
-        
-        // New fields
         executionFrequency = 'WEEKLY' as TaskExecutionFrequency,
         timeFormat = '12h',
         selectedDays,
         dayOfWeek,
         isRecurring = true,
-        
-        // NEW: Time slots array
         timeSlots = [],
-        
-        // Rotation settings
         rotationMemberIds,
         rotationOrder,
-
-        // Initial assignee
         initialAssigneeId
       } = req.body;
 
@@ -100,9 +81,7 @@ export class TaskController {
       }
 
       // Convert points to number safely
-      const pointsNumber = points !== undefined && points !== null 
-        ? parseInt(String(points)) 
-        : 1;
+      const pointsNumber = TaskHelpers.safeParseNumber(points, 1);
 
       // Create task data object
       const taskData = {
@@ -110,12 +89,12 @@ export class TaskController {
         points: Math.max(1, pointsNumber),
         executionFrequency,
         timeFormat,
-        timeSlots, // NEW: Include time slots
-        selectedDays: selectedDays ? TaskController.validateSelectedDays(selectedDays) : undefined,
+        timeSlots,
+        selectedDays: selectedDays ? TaskHelpers.validateSelectedDays(selectedDays) : undefined,
         dayOfWeek: dayOfWeek ?? undefined,
         isRecurring,
         rotationMemberIds: rotationMemberIds ?? undefined,
-        rotationOrder: rotationOrder !== undefined ? parseInt(String(rotationOrder)) : undefined,
+        rotationOrder: rotationOrder !== undefined ? TaskHelpers.safeParseNumber(rotationOrder) : undefined,
         description: description ? description.trim() : undefined,
         category: category ? category.trim() : undefined,
         initialAssigneeId: initialAssigneeId ?? undefined
@@ -169,7 +148,7 @@ export class TaskController {
         });
       }
 
-      const weekNumber = week !== undefined ? parseInt(String(week)) : undefined;
+      const weekNumber = week !== undefined ? TaskHelpers.safeParseNumber(week) : undefined;
       
       const result = await TaskService.getGroupTasks(
         groupId, 
@@ -223,7 +202,7 @@ export class TaskController {
         });
       }
 
-      const weekNumber = week !== undefined ? parseInt(String(week)) : undefined;
+      const weekNumber = week !== undefined ? TaskHelpers.safeParseNumber(week) : undefined;
       
       const result = await TaskService.getUserTasks(
         groupId,
@@ -370,13 +349,13 @@ export class TaskController {
         updateData.description = data.description?.trim() || undefined;
       }
       if (data.points !== undefined) {
-        const pointsValue = parseInt(String(data.points));
-        updateData.points = !isNaN(pointsValue) ? pointsValue : 1;
+        const pointsValue = TaskHelpers.safeParseNumber(data.points, 1);
+        updateData.points = pointsValue;
       }
       if (data.executionFrequency !== undefined) updateData.executionFrequency = data.executionFrequency;
       if (data.timeFormat !== undefined) updateData.timeFormat = data.timeFormat;
       if (data.selectedDays !== undefined) {
-        updateData.selectedDays = data.selectedDays ? TaskController.validateSelectedDays(data.selectedDays) : undefined;
+        updateData.selectedDays = data.selectedDays ? TaskHelpers.validateSelectedDays(data.selectedDays) : undefined;
       }
       if (data.dayOfWeek !== undefined) updateData.dayOfWeek = data.dayOfWeek;
       if (data.isRecurring !== undefined) updateData.isRecurring = data.isRecurring;
@@ -384,8 +363,8 @@ export class TaskController {
         updateData.category = data.category?.trim() || undefined;
       }
       if (data.rotationOrder !== undefined) {
-        const orderValue = parseInt(String(data.rotationOrder));
-        updateData.rotationOrder = !isNaN(orderValue) ? orderValue : undefined;
+        const orderValue = TaskHelpers.safeParseNumber(data.rotationOrder);
+        updateData.rotationOrder = orderValue;
       }
       if (data.rotationMemberIds !== undefined) updateData.rotationMemberIds = data.rotationMemberIds;
       if (data.timeSlots !== undefined) updateData.timeSlots = data.timeSlots;
@@ -481,13 +460,12 @@ export class TaskController {
         });
       }
 
-      const weeksValue = parseInt(String(weeks));
-      const weeksNumber = !isNaN(weeksValue) ? weeksValue : 4;
+      const weeksValue = TaskHelpers.safeParseNumber(weeks, 4);
       
       const result = await TaskService.getRotationSchedule(
         groupId, 
         userId,
-        weeksNumber
+        weeksValue
       );
 
       if (!result.success) {
@@ -507,6 +485,146 @@ export class TaskController {
 
     } catch (error: any) {
       console.error("TaskController.getRotationSchedule error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // NEW: Get task statistics
+  static async getTaskStatistics(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await TaskService.getTaskStatistics(groupId, userId);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        statistics: result.statistics
+      });
+
+    } catch (error: any) {
+      console.error("TaskController.getTaskStatistics error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // NEW: Get task points summary
+  static async getTaskPointsSummary(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { taskId } = req.params as { taskId: string };
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!taskId) {
+        return res.status(400).json({
+          success: false,
+          message: "Task ID is required"
+        });
+      }
+
+      const result = await TaskService.getTaskPointsSummary(taskId, userId);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        summary: result.summary
+      });
+
+    } catch (error: any) {
+      console.error("TaskController.getTaskPointsSummary error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // NEW: Reassign task manually
+  static async reassignTask(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { taskId } = req.params as { taskId: string };
+      const { targetUserId } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!taskId) {
+        return res.status(400).json({
+          success: false,
+          message: "Task ID is required"
+        });
+      }
+
+      if (!targetUserId) {
+        return res.status(400).json({
+          success: false,
+          message: "Target user ID is required"
+        });
+      }
+
+      const result = await TaskService.reassignTask(taskId, userId, targetUserId);
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        newAssignee: result.newAssignee
+      });
+
+    } catch (error: any) {
+      console.error("TaskController.reassignTask error:", error);
       return res.status(500).json({
         success: false,
         message: "Internal server error"
