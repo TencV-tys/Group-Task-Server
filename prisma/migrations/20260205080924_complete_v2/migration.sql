@@ -58,14 +58,18 @@ CREATE TABLE `tasks` (
     `title` VARCHAR(191) NOT NULL,
     `description` VARCHAR(191) NULL,
     `points` INTEGER NOT NULL DEFAULT 1,
-    `frequency` VARCHAR(191) NOT NULL DEFAULT 'WEEKLY',
-    `timeOfDay` ENUM('MORNING', 'AFTERNOON', 'EVENING', 'ANYTIME') NULL,
+    `executionFrequency` ENUM('DAILY', 'WEEKLY') NOT NULL DEFAULT 'WEEKLY',
+    `selectedDays` JSON NULL,
+    `scheduledTime` VARCHAR(191) NULL,
+    `timeFormat` VARCHAR(191) NULL DEFAULT '12h',
+    `timeOfDay` VARCHAR(191) NULL,
     `dayOfWeek` ENUM('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY') NULL,
     `isRecurring` BOOLEAN NOT NULL DEFAULT true,
     `category` VARCHAR(191) NULL,
     `rotationOrder` INTEGER NULL,
     `currentAssignee` VARCHAR(191) NULL,
     `lastAssignedAt` DATETIME(3) NULL,
+    `rotationMembers` JSON NULL,
     `groupId` VARCHAR(191) NOT NULL,
     `createdById` VARCHAR(191) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -87,6 +91,7 @@ CREATE TABLE `assignments` (
     `rotationWeek` INTEGER NOT NULL DEFAULT 0,
     `weekStart` DATETIME(3) NOT NULL,
     `weekEnd` DATETIME(3) NOT NULL,
+    `assignmentDay` ENUM('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY') NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `assignments_dueDate_idx`(`dueDate`),
@@ -94,6 +99,7 @@ CREATE TABLE `assignments` (
     INDEX `assignments_userId_completed_idx`(`userId`, `completed`),
     INDEX `assignments_rotationWeek_idx`(`rotationWeek`),
     INDEX `assignments_weekStart_weekEnd_idx`(`weekStart`, `weekEnd`),
+    INDEX `assignments_assignmentDay_idx`(`assignmentDay`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

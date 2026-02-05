@@ -1,4 +1,4 @@
-// Prisma v6 Schema
+// Prisma v6 Schema - UPDATED FOR SPECIFIC TIME
 generator client {
   provider = "prisma-client-js"
 }
@@ -45,13 +45,13 @@ enum Gender {
   PREFER_NOT_TO_SAY
 }
 
-// NEW: Time of day for task scheduling
-enum TimeOfDay {
-  MORNING     // 6 AM - 12 PM
-  AFTERNOON   // 12 PM - 6 PM
-  EVENING     // 6 PM - 10 PM
-  ANYTIME     // Anytime during the day
-}
+// REMOVED: TimeOfDay enum (not needed anymore)
+// enum TimeOfDay {
+//   MORNING     // 6 AM - 12 PM
+//   AFTERNOON   // 12 PM - 6 PM
+//   EVENING     // 6 PM - 10 PM
+//   ANYTIME     // Anytime during the day
+// }
 
 // NEW: Days of week for scheduling
 enum DayOfWeek {
@@ -62,6 +62,12 @@ enum DayOfWeek {
   FRIDAY
   SATURDAY
   SUNDAY
+}
+
+// NEW: Task Execution Frequency (How often task needs to be done)
+enum TaskExecutionFrequency {
+  DAILY
+  WEEKLY
 }
 
 // ============= CORE MODELS =============
@@ -110,12 +116,12 @@ model Group {
   inviteCode  String  @unique
   avatarUrl   String?
   settings    Json?   @default("{}")
-  
+
   createdById String
 
   // NEW: Rotation tracking
-  currentRotationWeek Int @default(0)  // Current week in rotation cycle
-  lastRotationUpdate  DateTime?        // When rotation was last updated
+  currentRotationWeek Int       @default(0) // Current week in rotation cycle
+  lastRotationUpdate  DateTime? // When rotation was last updated
 
   // Relationships
   members GroupMember[] @relation("GroupMembers")
@@ -135,8 +141,8 @@ model GroupMember {
   groupRole GroupMemberRole @default(MEMBER)
 
   // NEW: For rotation tracking
-  rotationOrder Int?    // Order in rotation sequence
-  isActive      Boolean @default(true)  // Whether member participates in rotation
+  rotationOrder Int? // Order in rotation sequence
+  isActive      Boolean @default(true) // Whether member participates in rotation
 
   // Relationships
   user  User  @relation("UserGroups", fields: [userId], references: [id], onDelete: Cascade)
@@ -153,18 +159,32 @@ model Task {
   title       String
   description String?
   points      Int     @default(1)
-  frequency   String  @default("WEEKLY")  // Changed default to WEEKLY for rotation
 
-  // NEW: Scheduling fields
-  timeOfDay   TimeOfDay?  // When the task should be done
-  dayOfWeek   DayOfWeek?  // Which day of the week
-  isRecurring Boolean     @default(true)  // If task repeats weekly
+  // NEW: Task Execution Frequency (DAILY or WEEKLY)
+  executionFrequency TaskExecutionFrequency @default(WEEKLY)
+
+  // NEW: For WEEKLY tasks: Store multiple days in JSON
+  selectedDays Json? // JSON array of DayOfWeek enum values: ["MONDAY", "WEDNESDAY", "FRIDAY"]
+
+  // NEW: Specific time for the task (store as string "HH:MM" format)
+  scheduledTime String? // e.g., "09:00", "14:30", "18:45"
+
+  // NEW: AM/PM or 24-hour format
+  timeFormat String? @default("12h") // "12h" or "24h"
+
+  // LEGACY: Keep for backward compatibility
+  timeOfDay   String? // Deprecated: Can store "MORNING", "AFTERNOON", "EVENING" if needed
+  dayOfWeek   DayOfWeek? // Legacy single day (use selectedDays for multiple)
+  isRecurring Boolean    @default(true) // If task repeats weekly
   category    String?
 
   // NEW: Rotation tracking
-  rotationOrder   Int?      // Order in the rotation sequence
-  currentAssignee String?   // Current user assigned (for easier querying)
+  rotationOrder   Int? // Order in the rotation sequence
+  currentAssignee String? // Current user assigned (for easier querying)
   lastAssignedAt  DateTime? // When it was last assigned to someone
+
+  // NEW: Store which members are in rotation for this specific task
+  rotationMembers Json? // JSON array: [{userId: "uuid", fullName: "John Doe", rotationOrder: 1}]
 
   // Foreign keys
   groupId     String
@@ -192,9 +212,12 @@ model Assignment {
   photoUrl    String?
 
   // NEW: Rotation tracking
-  rotationWeek Int @default(0)  // Which week in rotation this assignment is for
-  weekStart    DateTime         // Start of the week for this assignment
-  weekEnd      DateTime         // End of the week for this assignment
+  rotationWeek Int      @default(0) // Which week in rotation this assignment is for
+  weekStart    DateTime // Start of the week for this assignment
+  weekEnd      DateTime // End of the week for this assignment
+
+  // NEW: For tracking which day this assignment is for (for weekly tasks with multiple days)
+  assignmentDay DayOfWeek? // Which specific day this assignment represents
 
   // Relationships
   task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
@@ -208,6 +231,7 @@ model Assignment {
   @@index([userId, completed])
   @@index([rotationWeek])
   @@index([weekStart, weekEnd])
+  @@index([assignmentDay])
   @@map("assignments")
 }
 
@@ -218,7 +242,7 @@ model SwapRequest {
   status       String  @default("PENDING")
 
   // NEW: For tracking swaps
-  requestedBy  String  // User who requested the swap
+  requestedBy  String // User who requested the swap
   targetUserId String? // User to swap with (if null, anyone can accept)
   expiresAt    DateTime? // When swap request expires
 
@@ -271,14 +295,14 @@ model UserNotification {
 
 // For WEB ADMIN DASHBOARD
 model AdminNotification {
-  id       String      @id @default(uuid())
+  id       String  @id @default(uuid())
   adminId  String?
   type     String
   title    String
   message  String
   data     Json?
-  read     Boolean     @default(false)
-  priority String      @default("NORMAL")
+  read     Boolean @default(false)
+  priority String  @default("NORMAL")
 
   admin SystemAdmin? @relation(fields: [adminId], references: [id], onDelete: Cascade)
 

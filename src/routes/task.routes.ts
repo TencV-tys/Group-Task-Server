@@ -24,7 +24,7 @@ router.post('/group/:groupId/rotate', TaskController.rotateTasks);
 router.get('/group/:groupId/schedule', TaskController.getRotationSchedule);
 
 // ============= INDIVIDUAL TASK ROUTES =============
-// Get single task details
+// Get single task details 
 router.get('/:taskId', TaskController.getTaskDetails);
 
 // Update a task
