@@ -1,4 +1,4 @@
-// Prisma v6 Schema - UPDATED FOR MULTIPLE TIME SLOTS
+// Prisma v6 Schema - UPDATED WITH TIME SLOT POINTS
 generator client {
   provider = "prisma-client-js"
 }
@@ -158,10 +158,10 @@ model Task {
   // For WEEKLY tasks: Store multiple days in JSON
   selectedDays Json? // JSON array of DayOfWeek enum values: ["MONDAY", "WEDNESDAY", "FRIDAY"]
 
-  // ✅ NEW: Multiple time slots relationship
+  // ✅ UPDATED: Multiple time slots relationship
   timeSlots   TimeSlot[] @relation("TaskTimeSlots")
 
-  // ✅ NEW: For quick access, store primary time slot
+  // ✅ UPDATED: For quick access, store primary time slot
   primaryTimeSlotId String? @unique
 
   // Keep for backward compatibility
@@ -198,13 +198,16 @@ model Task {
   @@map("tasks")
 }
 
-// ✅ NEW: TimeSlot model for multiple time selections
+// ✅ FIXED: TimeSlot model - remove @default(null) from points
 model TimeSlot {
   id        String   @id @default(uuid())
   taskId    String
   startTime String   // e.g., "08:00"
   endTime   String   // e.g., "10:00"
   label     String?  // Optional: "Morning", "Afternoon", "Evening", "Breakfast", "Lunch", "Dinner"
+  
+  // ✅ FIXED: Points for this specific time slot (null = use task points)
+  points    Int?     // REMOVED: @default(null)
   
   // For ordering time slots
   sortOrder Int      @default(0)
@@ -214,11 +217,7 @@ model TimeSlot {
   
   // Relationships
   task      Task     @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
-  
-  // ✅ ADDED: Relation back to Task for primaryTimeSlot
   primaryForTask Task? @relation("TaskPrimaryTimeSlot")
-  
-  // ✅ ADDED: Relation to assignments
   assignments Assignment[] @relation("TimeSlotAssignments")
   
   createdAt DateTime @default(now())
@@ -235,12 +234,16 @@ model Assignment {
   taskId      String
   userId      String
   dueDate     DateTime
+  
+  // ✅ FIXED: Points awarded for this specific assignment
+  points      Int       @default(1)
+  
   completed   Boolean   @default(false)
   completedAt DateTime?
   verified    Boolean   @default(false)
   photoUrl    String?
 
-  // ✅ NEW: Track which specific time slot this assignment is for
+  // ✅ FIXED: Track which specific time slot this assignment is for
   timeSlotId  String?
 
   // Rotation tracking
@@ -255,7 +258,7 @@ model Assignment {
   task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
   user        User         @relation("UserAssignments", fields: [userId], references: [id])
   swapRequest SwapRequest? @relation("AssignmentSwapRequest")
-  timeSlot    TimeSlot?    @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id]) // ✅ FIXED: Added relation name
+  timeSlot    TimeSlot?    @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
 
   createdAt DateTime @default(now())
 
