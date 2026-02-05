@@ -24,4 +24,4 @@ router.get('/:groupId/rotation-preview', GroupController.getRotationSchedulePrev
 // This must come AFTER the main routes to avoid conflicts
 router.use('/:groupId', GroupMemberRoutes);
 
-export default router;
+export default router; 

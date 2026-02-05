@@ -1,4 +1,4 @@
-// controllers/task.controller.ts
+// controllers/task.controller.ts - UPDATED VERSION
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { TaskService } from "../services/task.services";
@@ -6,6 +6,18 @@ import { TaskExecutionFrequency, DayOfWeek } from '@prisma/client';
 
 export class TaskController {
   
+  // Helper method to validate selected days
+  private static validateSelectedDays(days: any): DayOfWeek[] | undefined {
+    if (!Array.isArray(days)) return undefined;
+    
+    const validDays = Object.values(DayOfWeek);
+    const filtered = days.filter((day: string) => 
+      validDays.includes(day as DayOfWeek)
+    );
+    
+    return filtered.length > 0 ? filtered as DayOfWeek[] : undefined;
+  }
+
   static async createTask(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -28,7 +40,10 @@ export class TaskController {
         
         // Rotation settings
         rotationMemberIds,
-        rotationOrder
+        rotationOrder,
+
+        // Initial assignee
+        initialAssigneeId
       } = req.body;
 
       if (!userId) {
@@ -96,13 +111,14 @@ export class TaskController {
         executionFrequency,
         timeFormat,
         timeSlots, // NEW: Include time slots
-        selectedDays: selectedDays ? this.validateSelectedDays(selectedDays) : undefined,
+        selectedDays: selectedDays ? TaskController.validateSelectedDays(selectedDays) : undefined,
         dayOfWeek: dayOfWeek ?? undefined,
         isRecurring,
         rotationMemberIds: rotationMemberIds ?? undefined,
         rotationOrder: rotationOrder !== undefined ? parseInt(String(rotationOrder)) : undefined,
         description: description ? description.trim() : undefined,
-        category: category ? category.trim() : undefined
+        category: category ? category.trim() : undefined,
+        initialAssigneeId: initialAssigneeId ?? undefined
       };
 
       const result = await TaskService.createTask(
@@ -131,18 +147,6 @@ export class TaskController {
         message: "Internal server error"
       });
     }
-  }
-
-  // Helper method to validate selected days
-  private static validateSelectedDays(days: any): DayOfWeek[] | undefined {
-    if (!Array.isArray(days)) return undefined;
-    
-    const validDays = Object.values(DayOfWeek);
-    const filtered = days.filter((day: string) => 
-      validDays.includes(day as DayOfWeek)
-    );
-    
-    return filtered.length > 0 ? filtered as DayOfWeek[] : undefined;
   }
 
   static async getGroupTasks(req: UserAuthRequest, res: Response) {
@@ -363,7 +367,7 @@ export class TaskController {
       // Add fields only if they are explicitly provided (not undefined)
       if (data.title !== undefined) updateData.title = data.title.trim();
       if (data.description !== undefined) {
-        updateData.description = data.description?.trim() || undefined; // FIX: null -> undefined
+        updateData.description = data.description?.trim() || undefined;
       }
       if (data.points !== undefined) {
         const pointsValue = parseInt(String(data.points));
@@ -372,21 +376,20 @@ export class TaskController {
       if (data.executionFrequency !== undefined) updateData.executionFrequency = data.executionFrequency;
       if (data.timeFormat !== undefined) updateData.timeFormat = data.timeFormat;
       if (data.selectedDays !== undefined) {
-        updateData.selectedDays = data.selectedDays ? this.validateSelectedDays(data.selectedDays) : undefined;
+        updateData.selectedDays = data.selectedDays ? TaskController.validateSelectedDays(data.selectedDays) : undefined;
       }
       if (data.dayOfWeek !== undefined) updateData.dayOfWeek = data.dayOfWeek;
       if (data.isRecurring !== undefined) updateData.isRecurring = data.isRecurring;
       if (data.category !== undefined) {
-        updateData.category = data.category?.trim() || undefined; // FIX: null -> undefined
+        updateData.category = data.category?.trim() || undefined;
       }
       if (data.rotationOrder !== undefined) {
         const orderValue = parseInt(String(data.rotationOrder));
         updateData.rotationOrder = !isNaN(orderValue) ? orderValue : undefined;
       }
       if (data.rotationMemberIds !== undefined) updateData.rotationMemberIds = data.rotationMemberIds;
-      
-      // Handle time slots update if provided
       if (data.timeSlots !== undefined) updateData.timeSlots = data.timeSlots;
+      if (data.initialAssigneeId !== undefined) updateData.initialAssigneeId = data.initialAssigneeId;
 
       const result = await TaskService.updateTask(userId, taskId, updateData);
 
