@@ -12,7 +12,7 @@ dotenv.config();
 
 const svr = express();
 
-svr.use(express.json());
+svr.use(express.json()); 
 svr.use(cors({
     origin:true,
     credentials:true
@@ -28,10 +28,12 @@ svr.use('/api/home',HomeRoute);
 svr.use('/api/tasks',TaskRoutes);
 
 const COMPUTER_IP = '10.219.65.2';
+const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
 svr.listen(PORT,()=>
     {
-        console.log(`Server running at http://localhost:${PORT}`)
-            console.log(`   http://${COMPUTER_IP}:${PORT}`);    
+        console.log(`Server running at http://localhost:${PORT}`)             
+        console.log(`http://${COMPUTER_IP}:${PORT}\n`);
+        console.log(`http://${Wifi}:${PORT}`);    
     }
 );
