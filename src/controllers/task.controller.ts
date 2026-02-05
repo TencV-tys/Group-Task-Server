@@ -1,3 +1,4 @@
+// controllers/task.controller.ts
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { TaskService } from "../services/task.services";
@@ -17,11 +18,13 @@ export class TaskController {
         
         // New fields
         executionFrequency = 'WEEKLY' as TaskExecutionFrequency,
-        scheduledTime,
         timeFormat = '12h',
         selectedDays,
         dayOfWeek,
         isRecurring = true,
+        
+        // NEW: Time slots array
+        timeSlots = [],
         
         // Rotation settings
         rotationMemberIds,
@@ -49,6 +52,38 @@ export class TaskController {
         });
       }
 
+      // Validate time slots if provided
+      if (timeSlots && timeSlots.length > 0) {
+        const validSlots = timeSlots.filter((slot: any) => 
+          slot.startTime && slot.endTime
+        );
+        if (validSlots.length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid time slots are required"
+          });
+        }
+      }
+
+      // For WEEKLY tasks: need days
+      if (executionFrequency === 'WEEKLY' && 
+          !selectedDays?.length && 
+          !dayOfWeek) {
+        return res.status(400).json({
+          success: false,
+          message: "Weekly tasks require at least one day selection"
+        });
+      }
+
+      // For DAILY tasks: need time slots
+      if (executionFrequency === 'DAILY' && 
+          (!timeSlots || timeSlots.length === 0)) {
+        return res.status(400).json({
+          success: false,
+          message: "Daily tasks require time slots"
+        });
+      }
+
       // Convert points to number safely
       const pointsNumber = points !== undefined && points !== null 
         ? parseInt(String(points)) 
@@ -59,8 +94,8 @@ export class TaskController {
         title: title.trim(),
         points: Math.max(1, pointsNumber),
         executionFrequency,
-        scheduledTime: scheduledTime ?? undefined,
         timeFormat,
+        timeSlots, // NEW: Include time slots
         selectedDays: selectedDays ? this.validateSelectedDays(selectedDays) : undefined,
         dayOfWeek: dayOfWeek ?? undefined,
         isRecurring,
@@ -328,28 +363,30 @@ export class TaskController {
       // Add fields only if they are explicitly provided (not undefined)
       if (data.title !== undefined) updateData.title = data.title.trim();
       if (data.description !== undefined) {
-        updateData.description = data.description?.trim() || null;
+        updateData.description = data.description?.trim() || undefined; // FIX: null -> undefined
       }
       if (data.points !== undefined) {
         const pointsValue = parseInt(String(data.points));
         updateData.points = !isNaN(pointsValue) ? pointsValue : 1;
       }
       if (data.executionFrequency !== undefined) updateData.executionFrequency = data.executionFrequency;
-      if (data.scheduledTime !== undefined) updateData.scheduledTime = data.scheduledTime;
       if (data.timeFormat !== undefined) updateData.timeFormat = data.timeFormat;
       if (data.selectedDays !== undefined) {
-        updateData.selectedDays = data.selectedDays ? this.validateSelectedDays(data.selectedDays) : null;
+        updateData.selectedDays = data.selectedDays ? this.validateSelectedDays(data.selectedDays) : undefined;
       }
       if (data.dayOfWeek !== undefined) updateData.dayOfWeek = data.dayOfWeek;
       if (data.isRecurring !== undefined) updateData.isRecurring = data.isRecurring;
       if (data.category !== undefined) {
-        updateData.category = data.category?.trim() || null;
+        updateData.category = data.category?.trim() || undefined; // FIX: null -> undefined
       }
       if (data.rotationOrder !== undefined) {
         const orderValue = parseInt(String(data.rotationOrder));
         updateData.rotationOrder = !isNaN(orderValue) ? orderValue : undefined;
       }
       if (data.rotationMemberIds !== undefined) updateData.rotationMemberIds = data.rotationMemberIds;
+      
+      // Handle time slots update if provided
+      if (data.timeSlots !== undefined) updateData.timeSlots = data.timeSlots;
 
       const result = await TaskService.updateTask(userId, taskId, updateData);
 
