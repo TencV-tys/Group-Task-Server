@@ -1,4 +1,4 @@
-// Prisma v6 Schema - UPDATED FOR SPECIFIC TIME
+// Prisma v6 Schema - UPDATED FOR MULTIPLE TIME SLOTS
 generator client {
   provider = "prisma-client-js"
 }
@@ -45,15 +45,7 @@ enum Gender {
   PREFER_NOT_TO_SAY
 }
 
-// REMOVED: TimeOfDay enum (not needed anymore)
-// enum TimeOfDay {
-//   MORNING     // 6 AM - 12 PM
-//   AFTERNOON   // 12 PM - 6 PM
-//   EVENING     // 6 PM - 10 PM
-//   ANYTIME     // Anytime during the day
-// }
-
-// NEW: Days of week for scheduling
+// Days of week for scheduling
 enum DayOfWeek {
   MONDAY
   TUESDAY
@@ -64,7 +56,7 @@ enum DayOfWeek {
   SUNDAY
 }
 
-// NEW: Task Execution Frequency (How often task needs to be done)
+// Task Execution Frequency (How often task needs to be done)
 enum TaskExecutionFrequency {
   DAILY
   WEEKLY
@@ -119,7 +111,7 @@ model Group {
 
   createdById String
 
-  // NEW: Rotation tracking
+  // Rotation tracking
   currentRotationWeek Int       @default(0) // Current week in rotation cycle
   lastRotationUpdate  DateTime? // When rotation was last updated
 
@@ -140,7 +132,7 @@ model GroupMember {
   groupId   String
   groupRole GroupMemberRole @default(MEMBER)
 
-  // NEW: For rotation tracking
+  // For rotation tracking
   rotationOrder Int? // Order in rotation sequence
   isActive      Boolean @default(true) // Whether member participates in rotation
 
@@ -160,30 +152,34 @@ model Task {
   description String?
   points      Int     @default(1)
 
-  // NEW: Task Execution Frequency (DAILY or WEEKLY)
+  // Task Execution Frequency (DAILY or WEEKLY)
   executionFrequency TaskExecutionFrequency @default(WEEKLY)
 
-  // NEW: For WEEKLY tasks: Store multiple days in JSON
+  // For WEEKLY tasks: Store multiple days in JSON
   selectedDays Json? // JSON array of DayOfWeek enum values: ["MONDAY", "WEDNESDAY", "FRIDAY"]
 
-  // NEW: Specific time for the task (store as string "HH:MM" format)
-  scheduledTime String? // e.g., "09:00", "14:30", "18:45"
+  // ✅ NEW: Multiple time slots relationship
+  timeSlots   TimeSlot[] @relation("TaskTimeSlots")
 
-  // NEW: AM/PM or 24-hour format
-  timeFormat String? @default("12h") // "12h" or "24h"
+  // ✅ NEW: For quick access, store primary time slot
+  primaryTimeSlotId String? @unique
 
-  // LEGACY: Keep for backward compatibility
-  timeOfDay   String? // Deprecated: Can store "MORNING", "AFTERNOON", "EVENING" if needed
-  dayOfWeek   DayOfWeek? // Legacy single day (use selectedDays for multiple)
-  isRecurring Boolean    @default(true) // If task repeats weekly
+  // Keep for backward compatibility
+  scheduledTime String? // Legacy single time (e.g., "09:00", "14:30", "18:45")
+  timeFormat    String? @default("12h") // "12h" or "24h"
+
+  // Legacy fields
+  timeOfDay   String? // Deprecated
+  dayOfWeek   DayOfWeek? // Legacy single day
+  isRecurring Boolean    @default(true)
   category    String?
 
-  // NEW: Rotation tracking
+  // Rotation tracking
   rotationOrder   Int? // Order in the rotation sequence
   currentAssignee String? // Current user assigned (for easier querying)
   lastAssignedAt  DateTime? // When it was last assigned to someone
 
-  // NEW: Store which members are in rotation for this specific task
+  // Store which members are in rotation for this specific task
   rotationMembers Json? // JSON array: [{userId: "uuid", fullName: "John Doe", rotationOrder: 1}]
 
   // Foreign keys
@@ -194,11 +190,44 @@ model Task {
   group       Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
   creator     User         @relation("TaskCreator", fields: [createdById], references: [id])
   assignments Assignment[] @relation("TaskAssignments")
+  primaryTimeSlot TimeSlot? @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("tasks")
+}
+
+// ✅ NEW: TimeSlot model for multiple time selections
+model TimeSlot {
+  id        String   @id @default(uuid())
+  taskId    String
+  startTime String   // e.g., "08:00"
+  endTime   String   // e.g., "10:00"
+  label     String?  // Optional: "Morning", "Afternoon", "Evening", "Breakfast", "Lunch", "Dinner"
+  
+  // For ordering time slots
+  sortOrder Int      @default(0)
+  
+  // Whether this is the primary/default time slot
+  isPrimary Boolean  @default(false)
+  
+  // Relationships
+  task      Task     @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
+  
+  // ✅ ADDED: Relation back to Task for primaryTimeSlot
+  primaryForTask Task? @relation("TaskPrimaryTimeSlot")
+  
+  // ✅ ADDED: Relation to assignments
+  assignments Assignment[] @relation("TimeSlotAssignments")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([taskId])
+  @@index([sortOrder])
+  @@index([isPrimary])
+  @@map("time_slots")
 }
 
 model Assignment {
@@ -211,18 +240,22 @@ model Assignment {
   verified    Boolean   @default(false)
   photoUrl    String?
 
-  // NEW: Rotation tracking
+  // ✅ NEW: Track which specific time slot this assignment is for
+  timeSlotId  String?
+
+  // Rotation tracking
   rotationWeek Int      @default(0) // Which week in rotation this assignment is for
   weekStart    DateTime // Start of the week for this assignment
   weekEnd      DateTime // End of the week for this assignment
 
-  // NEW: For tracking which day this assignment is for (for weekly tasks with multiple days)
+  // For tracking which day this assignment is for (for weekly tasks with multiple days)
   assignmentDay DayOfWeek? // Which specific day this assignment represents
 
   // Relationships
   task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
   user        User         @relation("UserAssignments", fields: [userId], references: [id])
   swapRequest SwapRequest? @relation("AssignmentSwapRequest")
+  timeSlot    TimeSlot?    @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id]) // ✅ FIXED: Added relation name
 
   createdAt DateTime @default(now())
 
@@ -232,6 +265,7 @@ model Assignment {
   @@index([rotationWeek])
   @@index([weekStart, weekEnd])
   @@index([assignmentDay])
+  @@index([timeSlotId])
   @@map("assignments")
 }
 
@@ -241,7 +275,7 @@ model SwapRequest {
   reason       String?
   status       String  @default("PENDING")
 
-  // NEW: For tracking swaps
+  // For tracking swaps
   requestedBy  String // User who requested the swap
   targetUserId String? // User to swap with (if null, anyone can accept)
   expiresAt    DateTime? // When swap request expires
@@ -253,8 +287,6 @@ model SwapRequest {
 
   @@map("swap_requests")
 }
-
-// ... rest of the models remain the same ...
 
 model Feedback {
   id      String @id @default(uuid())

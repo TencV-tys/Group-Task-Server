@@ -60,6 +60,7 @@ CREATE TABLE `tasks` (
     `points` INTEGER NOT NULL DEFAULT 1,
     `executionFrequency` ENUM('DAILY', 'WEEKLY') NOT NULL DEFAULT 'WEEKLY',
     `selectedDays` JSON NULL,
+    `primaryTimeSlotId` VARCHAR(191) NULL,
     `scheduledTime` VARCHAR(191) NULL,
     `timeFormat` VARCHAR(191) NULL DEFAULT '12h',
     `timeOfDay` VARCHAR(191) NULL,
@@ -75,6 +76,25 @@ CREATE TABLE `tasks` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
+    UNIQUE INDEX `tasks_primaryTimeSlotId_key`(`primaryTimeSlotId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `time_slots` (
+    `id` VARCHAR(191) NOT NULL,
+    `taskId` VARCHAR(191) NOT NULL,
+    `startTime` VARCHAR(191) NOT NULL,
+    `endTime` VARCHAR(191) NOT NULL,
+    `label` VARCHAR(191) NULL,
+    `sortOrder` INTEGER NOT NULL DEFAULT 0,
+    `isPrimary` BOOLEAN NOT NULL DEFAULT false,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `time_slots_taskId_idx`(`taskId`),
+    INDEX `time_slots_sortOrder_idx`(`sortOrder`),
+    INDEX `time_slots_isPrimary_idx`(`isPrimary`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -88,6 +108,7 @@ CREATE TABLE `assignments` (
     `completedAt` DATETIME(3) NULL,
     `verified` BOOLEAN NOT NULL DEFAULT false,
     `photoUrl` VARCHAR(191) NULL,
+    `timeSlotId` VARCHAR(191) NULL,
     `rotationWeek` INTEGER NOT NULL DEFAULT 0,
     `weekStart` DATETIME(3) NOT NULL,
     `weekEnd` DATETIME(3) NOT NULL,
@@ -100,6 +121,7 @@ CREATE TABLE `assignments` (
     INDEX `assignments_rotationWeek_idx`(`rotationWeek`),
     INDEX `assignments_weekStart_weekEnd_idx`(`weekStart`, `weekEnd`),
     INDEX `assignments_assignmentDay_idx`(`assignmentDay`),
+    INDEX `assignments_timeSlotId_idx`(`timeSlotId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -255,10 +277,19 @@ ALTER TABLE `tasks` ADD CONSTRAINT `tasks_groupId_fkey` FOREIGN KEY (`groupId`) 
 ALTER TABLE `tasks` ADD CONSTRAINT `tasks_createdById_fkey` FOREIGN KEY (`createdById`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE `tasks` ADD CONSTRAINT `tasks_primaryTimeSlotId_fkey` FOREIGN KEY (`primaryTimeSlotId`) REFERENCES `time_slots`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `time_slots` ADD CONSTRAINT `time_slots_taskId_fkey` FOREIGN KEY (`taskId`) REFERENCES `tasks`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE `assignments` ADD CONSTRAINT `assignments_taskId_fkey` FOREIGN KEY (`taskId`) REFERENCES `tasks`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `assignments` ADD CONSTRAINT `assignments_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `assignments` ADD CONSTRAINT `assignments_timeSlotId_fkey` FOREIGN KEY (`timeSlotId`) REFERENCES `time_slots`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `swap_requests` ADD CONSTRAINT `swap_requests_assignmentId_fkey` FOREIGN KEY (`assignmentId`) REFERENCES `assignments`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
