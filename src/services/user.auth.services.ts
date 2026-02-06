@@ -20,7 +20,7 @@ static async signup(
     try {
     
         
-        if (!email || !password || !confirmPassword || !fullName) {
+        if (!email || !password || !confirmPassword || !fullName ) {
             console.log("Validation failed: Missing fields");
             return {
                 success: false,
