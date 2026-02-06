@@ -1,4 +1,4 @@
-// src/controllers/uploadController.ts
+// src/controllers/uploadController.ts - COMPLETELY FIXED
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -90,7 +90,7 @@ export class UploadController {
 
       // Get file info
       const filename = req.file.filename;
-      const fileUrl = this.getFileUrl(req, filename, 'user_avatar');
+      const fileUrl = UploadController.getFileUrl(req, filename, 'user_avatar'); // FIXED
 
       console.log('New user avatar URL:', fileUrl);
 
@@ -109,7 +109,7 @@ export class UploadController {
       // Delete old avatar if exists
       if (existingUser.avatarUrl) {
         console.log('Deleting old user avatar:', existingUser.avatarUrl);
-        this.deleteOldFile(existingUser.avatarUrl);
+        UploadController.deleteOldFile(existingUser.avatarUrl); // FIXED
       }
 
       // Update user with new avatar URL
@@ -208,7 +208,7 @@ export class UploadController {
 
       // Get file URL
       const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const fileUrl = `${baseUrl}/uploads/user-avatars/${filename}`;
+      const fileUrl = UploadController.getFileUrl(req, filename, 'user_avatar'); // FIXED
 
       console.log('User avatar URL:', fileUrl);
 
@@ -220,7 +220,7 @@ export class UploadController {
 
       if (user?.avatarUrl) {
         console.log('Deleting old user avatar:', user.avatarUrl);
-        this.deleteOldFile(user.avatarUrl);
+        UploadController.deleteOldFile(user.avatarUrl); // FIXED
       }
 
       // Update user with new avatar URL
@@ -295,8 +295,7 @@ export class UploadController {
       }
 
       const filename = req.file.filename;
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const fileUrl = `${baseUrl}/uploads/group-avatars/${filename}`;
+      const fileUrl = UploadController.getFileUrl(req, filename, 'group_avatar'); // FIXED
 
       console.log('New group avatar URL:', fileUrl);
 
@@ -316,7 +315,7 @@ export class UploadController {
       // Delete old avatar if exists
       if (existingGroup.avatarUrl) {
         console.log('Deleting old group avatar:', existingGroup.avatarUrl);
-        this.deleteOldFile(existingGroup.avatarUrl);
+        UploadController.deleteOldFile(existingGroup.avatarUrl); // FIXED
       }
 
       // Update group with new avatar URL
@@ -349,7 +348,7 @@ export class UploadController {
     }
   }
 
-  // Upload group avatar (base64)
+  // Upload group avatar (base64) - FIXED VERSION
   static async uploadGroupAvatarBase64(req: UserAuthRequest, res: Response) {
     try {
       console.log('Base64 group avatar upload request received');
@@ -424,7 +423,7 @@ export class UploadController {
 
       // Get file URL
       const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const fileUrl = `${baseUrl}/uploads/group-avatars/${filename}`;
+      const fileUrl = UploadController.getFileUrl(req, filename, 'group_avatar'); // FIXED
 
       // Get current group to check for old avatar
       const existingGroup = await prisma.group.findUnique({
@@ -432,9 +431,9 @@ export class UploadController {
         select: { avatarUrl: true }
       });
 
-      // Delete old avatar if exists
+      // Delete old avatar if exists - FIXED
       if (existingGroup?.avatarUrl) {
-        this.deleteOldFile(existingGroup.avatarUrl);
+        UploadController.deleteOldFile(existingGroup.avatarUrl);
       }
 
       // Update group with new avatar URL
@@ -500,8 +499,8 @@ export class UploadController {
 
       console.log('Deleting user avatar:', user.avatarUrl);
       
-      // Delete file from server
-      this.deleteOldFile(user.avatarUrl);
+      // Delete file from server - FIXED
+      UploadController.deleteOldFile(user.avatarUrl);
 
       // Update user to remove avatar URL
       await prisma.user.update({
@@ -523,7 +522,7 @@ export class UploadController {
     }
   }
 
-  // Delete group avatar
+  // Delete group avatar 
   static async deleteGroupAvatar(req: UserAuthRequest, res: Response) {
     try {
       const { groupId } = req.params as {groupId: string};
@@ -573,8 +572,8 @@ export class UploadController {
 
       console.log('Deleting group avatar:', group.avatarUrl);
       
-      // Delete file from server
-      this.deleteOldFile(group.avatarUrl);
+      // Delete file from server - FIXED
+      UploadController.deleteOldFile(group.avatarUrl);
 
       // Update group to remove avatar URL
       await prisma.group.update({
@@ -621,7 +620,7 @@ export class UploadController {
       }
 
       const filename = req.file.filename;
-      const fileUrl = this.getFileUrl(req, filename, 'task_photo');
+      const fileUrl = UploadController.getFileUrl(req, filename, 'task_photo'); // FIXED
 
       console.log('New photo URL:', fileUrl);
 
@@ -649,7 +648,7 @@ export class UploadController {
       // Delete old photo if exists
       if (assignment.photoUrl) {
         console.log('Deleting old photo:', assignment.photoUrl);
-        this.deleteOldFile(assignment.photoUrl);
+        UploadController.deleteOldFile(assignment.photoUrl); // FIXED
       }
 
       // Update assignment with photo URL

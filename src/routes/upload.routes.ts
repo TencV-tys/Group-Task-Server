@@ -12,7 +12,7 @@ router.post(
   (req, res, next) => {
     // Set upload type in body
     req.body.uploadType = 'avatar';
-    next();
+    next(); 
   },
   singleUpload,
   UploadController.uploadAvatar
@@ -47,8 +47,8 @@ router.delete(
 router.post(
   '/group/:groupId/avatar',
   UserAuthMiddleware,
-  (req, res, next) => {
-    req.body.uploadType = 'avatar';
+  (req, res, next) => { 
+    req.body.uploadType = 'group_avatar';
     next();
   },
   singleUpload,
@@ -62,5 +62,10 @@ router.post(
   UploadController.uploadGroupAvatarBase64
 );
 
+router.delete(
+  '/group/:groupId/avatar',
+  UserAuthMiddleware,
+  UploadController.deleteGroupAvatar
+);
 
 export default router;
