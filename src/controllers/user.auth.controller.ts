@@ -18,7 +18,7 @@ export class UserAuthController{
         console.log("Request body:", req.body);
         
         const { fullName, email, password, confirmPassword, avatarUrl, gender } = req.body;
-        
+         
         console.log("Calling UserServices.signup...");
         const result = await UserServices.signup(email, fullName, password, confirmPassword, avatarUrl, gender);
         

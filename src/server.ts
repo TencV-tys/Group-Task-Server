@@ -2,38 +2,75 @@ import  express  from "express";
 import dotenv from "dotenv";
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import UserAuthRoutes from './routes/user.auth.routes';
 import AdminAuthRoutes from './routes/admin.auth.routes';
 import GroupRoutes from './routes/group.routes';
 import HomeRoute from './routes/home.routes';
 import TaskRoutes from './routes/task.routes';
+import UploadRoutes from './routes/upload.routes'; // Add this import
 
 dotenv.config(); 
 
 const svr = express();
 
-svr.use(express.json()); 
+// ========== CRITICAL UPDATES START ==========
+
+// 1. Serve static files from uploads directory
+svr.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// 2. Create uploads directories if they don't exist
+const createUploadsDirectories = () => {
+  const directories = [
+    path.join(__dirname, '../uploads'),
+    path.join(__dirname, '../uploads/avatars'),
+    path.join(__dirname, '../uploads/task-photos')
+  ];
+
+  directories.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`📁 Created directory: ${dir}`);
+    }
+  });
+};
+
+createUploadsDirectories();
+
+// 3. Increase payload size limit for file uploads
+svr.use(express.json({ limit: '10mb' })); 
+svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ========== CRITICAL UPDATES END ==========
+
 svr.use(cors({
-    origin:true,
-    credentials:true
+    origin: true,
+    credentials: true
 }));
 svr.use(cookieParser());
-svr.use(express.urlencoded({extended:true}));
 
-
-svr.use('/api/auth/users',UserAuthRoutes);
-svr.use('/api/auth/admins',AdminAuthRoutes);
-svr.use('/api/group',GroupRoutes);
-svr.use('/api/home',HomeRoute);
-svr.use('/api/tasks',TaskRoutes);
+// Routes
+svr.use('/api/auth/users', UserAuthRoutes);
+svr.use('/api/auth/admins', AdminAuthRoutes);
+svr.use('/api/group', GroupRoutes);
+svr.use('/api/home', HomeRoute);
+svr.use('/api/tasks', TaskRoutes);
+svr.use('/api/uploads', UploadRoutes); // Add this line
 
 const COMPUTER_IP = '10.219.65.2';
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
-svr.listen(PORT,()=>
-    {
-        console.log(`Server running at http://localhost:${PORT}`)             
-        console.log(`http://${COMPUTER_IP}:${PORT}\n`);
-        console.log(`http://${Wifi}:${PORT}`);    
-    }
-);
+
+svr.listen(PORT, () => {
+    console.log(`
+🚀 Server running at http://localhost:${PORT}
+📱 http://${COMPUTER_IP}:${PORT}
+📶 http://${Wifi}:${PORT}
+
+📁 Upload directories created:
+   ${path.join(__dirname, '../uploads')}
+   ${path.join(__dirname, '../uploads/avatars')}
+   ${path.join(__dirname, '../uploads/task-photos')}
+    `);
+});
