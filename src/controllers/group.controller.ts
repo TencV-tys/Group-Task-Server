@@ -302,4 +302,66 @@ static async getRotationSchedulePreview(req: UserAuthRequest, res: Response) {
 }
 
 
+static async getGroupInfo(req: UserAuthRequest, res: Response) {
+    try {
+      const { groupId } = req.params as {groupId:string};
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const result = await GroupServices.getGroupInfo(groupId, userId);
+      
+      if (result.success) {
+        return res.status(200).json(result);
+      } else {
+        return res.status(400).json(result);
+      }
+    } catch (error: any) {
+      console.error('Group info error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Error getting group info'
+      });
+    }
+  }
+
+  // Update group (name, description) - keep this
+  static async updateGroup(req: UserAuthRequest, res: Response) {
+    try {
+      const { groupId } = req.params as {groupId:string};
+      const userId = req.user?.id;
+      const { name, description } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const result = await GroupServices.updateGroup(groupId, userId, {
+        name,
+        description
+      });
+      
+      if (result.success) {
+        return res.status(200).json(result);
+      } else {
+        return res.status(400).json(result);
+      }
+    } catch (error: any) {
+      console.error('Update group error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Error updating group'
+      });
+    }
+  }
+
+
 }

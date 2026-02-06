@@ -4,7 +4,7 @@ export class GroupServices {
 
     static async createGroup(userId: string, groupName: string, description?: string | null) {
         
-        try {
+        try { 
             // Create the group with rotation fields
             const group = await prisma.group.create({
                 data: {
@@ -500,4 +500,164 @@ export class GroupServices {
             };
         }
     }
+     
+    static async getGroupInfo(groupId: string, userId: string) {
+  try {
+    // Check if user is a member of the group
+    const userMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId
+      }
+    });
+
+    if (!userMembership) {
+      return {
+        success: false,
+        message: "You are not a member of this group"
+      };
+    }
+
+    // Get group info with avatar
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: {
+        members: {
+          where: { groupRole: "ADMIN" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!group) {
+      return {
+        success: false,
+        message: "Group not found"
+      };
+    }
+
+    // Get member count
+    const memberCount = await prisma.groupMember.count({
+      where: { groupId: groupId }
+    });
+
+    // Get admin count
+    const adminCount = await prisma.groupMember.count({
+      where: {
+        groupId: groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    // Format response
+    const formattedGroup = {
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      avatarUrl: group.avatarUrl,
+      inviteCode: group.inviteCode,
+      currentRotationWeek: group.currentRotationWeek,
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+      memberCount: memberCount,
+      adminCount: adminCount,
+      admins: group.members.map(member => ({
+        id: member.user.id,
+        fullName: member.user.fullName,
+        avatarUrl: member.user.avatarUrl
+      }))
+    };
+
+    return {
+      success: true,
+      message: "Group info retrieved successfully",
+      group: formattedGroup,
+      userRole: userMembership.groupRole
+    };
+
+  } catch (error: any) {
+    console.error("GroupServices.getGroupInfo error:", error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving group info"
+    };
+  }
+}
+
+// Update group info (name, description)
+static async updateGroup(groupId: string, userId: string, updateData: { name?: string, description?: string }) {
+  try {
+    // Check if user is admin
+    const userMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    if (!userMembership) {
+      return {
+        success: false,
+        message: "Only admins can update group info"
+      };
+    }
+
+    // Validate data
+    if (updateData.name && updateData.name.trim().length === 0) {
+      return {
+        success: false,
+        message: "Group name cannot be empty"
+      };
+    }
+
+    if (updateData.description && updateData.description.trim().length > 500) {
+      return {
+        success: false,
+        message: "Description cannot exceed 500 characters"
+      };
+    }
+
+    // Update group
+    const updatedGroup = await prisma.group.update({
+      where: { id: groupId },
+      data: {
+        name: updateData.name?.trim(),
+        description: updateData.description?.trim()
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        avatarUrl: true,
+        inviteCode: true,
+        currentRotationWeek: true
+      }
+    });
+
+    return {
+      success: true,
+      message: "Group updated successfully",
+      group: updatedGroup
+    };
+
+  } catch (error: any) {
+    console.error("GroupServices.updateGroup error:", error);
+    return {
+      success: false,
+      message: error.message || "Error updating group"
+    };
+  }
+}
+
+
+
 }

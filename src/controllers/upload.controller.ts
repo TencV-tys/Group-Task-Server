@@ -6,18 +6,23 @@ import prisma from '../prisma';
 import { UserAuthRequest } from '../middlewares/user.auth.middleware';
 
 export class UploadController {
-  // Helper to get public URL for file
+  // Helper to get public URL for file with separate directories
   static getFileUrl(req: UserAuthRequest, filename: string, uploadType: string): string {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    if (uploadType === 'avatar') {
-      return `${baseUrl}/uploads/avatars/${filename}`;
-    } else if (uploadType === 'task_photo') {
-      return `${baseUrl}/uploads/task-photos/${filename}`;
+    
+    switch (uploadType) {
+      case 'user_avatar':
+        return `${baseUrl}/uploads/user-avatars/${filename}`;
+      case 'group_avatar':
+        return `${baseUrl}/uploads/group-avatars/${filename}`;
+      case 'task_photo':
+        return `${baseUrl}/uploads/task-photos/${filename}`;
+      default:
+        return `${baseUrl}/uploads/${filename}`;
     }
-    return `${baseUrl}/uploads/${filename}`;
   }
 
-  // Helper to delete old file - FIXED
+  // Helper to delete old file
   static deleteOldFile(oldUrl: string | null): void {
     if (!oldUrl) return;
     
@@ -60,10 +65,10 @@ export class UploadController {
     }
   }
 
-  // Upload avatar - FIXED with better error handling
+  // Upload user avatar (file upload)
   static async uploadAvatar(req: UserAuthRequest, res: Response) {
     try {
-      console.log('Upload avatar request received');
+      console.log('Upload user avatar request received');
       
       const userId = req.user?.id;
       if (!userId) {
@@ -85,9 +90,9 @@ export class UploadController {
 
       // Get file info
       const filename = req.file.filename;
-      const fileUrl = this.getFileUrl(req, filename, 'avatar');
+      const fileUrl = this.getFileUrl(req, filename, 'user_avatar');
 
-      console.log('New file URL:', fileUrl);
+      console.log('New user avatar URL:', fileUrl);
 
       // Check if user exists
       const existingUser = await prisma.user.findUnique({
@@ -103,7 +108,7 @@ export class UploadController {
 
       // Delete old avatar if exists
       if (existingUser.avatarUrl) {
-        console.log('Deleting old avatar:', existingUser.avatarUrl);
+        console.log('Deleting old user avatar:', existingUser.avatarUrl);
         this.deleteOldFile(existingUser.avatarUrl);
       }
 
@@ -140,12 +145,463 @@ export class UploadController {
     }
   }
 
-  // Upload task completion photo - FIXED
+  // Upload user avatar (base64)
+  static async uploadAvatarBase64(req: UserAuthRequest, res: Response) {
+    try {
+      console.log('Base64 user avatar upload request received');
+      
+      const userId = req.user?.id;
+      const { avatarBase64 } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      if (!avatarBase64) {
+        return res.status(400).json({
+          success: false,
+          message: 'No base64 image provided'
+        });
+      }
+
+      console.log('Base64 string length:', avatarBase64.length);
+
+      // Decode base64 and save as file
+      const matches = avatarBase64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid base64 image format. Expected format: data:image/type;base64,...'
+        });
+      }
+
+      const imageType = matches[1].toLowerCase(); // jpeg, png, etc
+      const imageBuffer = Buffer.from(matches[2], 'base64');
+
+      // Check file size (max 5MB)
+      if (imageBuffer.length > 5 * 1024 * 1024) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image size exceeds 5MB limit'
+        });
+      }
+
+      // Ensure user-avatars directory exists
+      const avatarsDir = path.join(__dirname, '../../uploads/user-avatars');
+      if (!fs.existsSync(avatarsDir)) {
+        fs.mkdirSync(avatarsDir, { recursive: true });
+        console.log('Created user-avatars directory:', avatarsDir);
+      }
+
+      // Generate filename
+      const timestamp = Date.now();
+      const filename = `${userId}-${timestamp}.${imageType}`;
+      const filePath = path.join(avatarsDir, filename);
+
+      console.log('Saving user avatar to:', filePath);
+
+      // Save file
+      fs.writeFileSync(filePath, imageBuffer);
+
+      // Get file URL
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const fileUrl = `${baseUrl}/uploads/user-avatars/${filename}`;
+
+      console.log('User avatar URL:', fileUrl);
+
+      // Delete old avatar if exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true }
+      });
+
+      if (user?.avatarUrl) {
+        console.log('Deleting old user avatar:', user.avatarUrl);
+        this.deleteOldFile(user.avatarUrl);
+      }
+
+      // Update user with new avatar URL
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: fileUrl },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          avatarUrl: true,
+          gender: true
+        }
+      });
+
+      console.log('User updated successfully');
+
+      return res.status(200).json({
+        success: true,
+        message: 'Avatar uploaded successfully',
+        data: {
+          avatarUrl: fileUrl,
+          user: updatedUser
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Base64 avatar upload error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to upload avatar'
+      });
+    }
+  }
+
+  // Upload group avatar (file upload)
+  static async uploadGroupAvatar(req: UserAuthRequest, res: Response) {
+    try {
+      console.log('Upload group avatar request received');
+      
+      const { groupId } = req.params as {groupId: string};
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Check if user is admin of this group
+      const groupMember = await prisma.groupMember.findFirst({
+        where: {
+          groupId: groupId,
+          userId: userId,
+          groupRole: 'ADMIN'
+        }
+      });
+
+      if (!groupMember) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only group admins can update group avatar'
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No file uploaded'
+        });
+      }
+
+      const filename = req.file.filename;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const fileUrl = `${baseUrl}/uploads/group-avatars/${filename}`;
+
+      console.log('New group avatar URL:', fileUrl);
+
+      // Get current group to check for old avatar
+      const existingGroup = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { avatarUrl: true }
+      });
+
+      if (!existingGroup) {
+        return res.status(404).json({
+          success: false,
+          message: 'Group not found'
+        });
+      }
+
+      // Delete old avatar if exists
+      if (existingGroup.avatarUrl) {
+        console.log('Deleting old group avatar:', existingGroup.avatarUrl);
+        this.deleteOldFile(existingGroup.avatarUrl);
+      }
+
+      // Update group with new avatar URL
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: { avatarUrl: fileUrl },
+        select: {
+          id: true,
+          name: true,
+          avatarUrl: true,
+          description: true
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group avatar uploaded successfully',
+        data: {
+          avatarUrl: fileUrl,
+          group: updatedGroup
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Group avatar upload error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to upload group avatar'
+      });
+    }
+  }
+
+  // Upload group avatar (base64)
+  static async uploadGroupAvatarBase64(req: UserAuthRequest, res: Response) {
+    try {
+      console.log('Base64 group avatar upload request received');
+      
+      const { groupId } = req.params as {groupId: string};
+      const userId = req.user?.id;
+      const { avatarBase64 } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Check if user is admin of this group
+      const groupMember = await prisma.groupMember.findFirst({
+        where: {
+          groupId: groupId,
+          userId: userId,
+          groupRole: 'ADMIN'
+        }
+      });
+
+      if (!groupMember) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only group admins can update group avatar'
+        });
+      }
+
+      if (!avatarBase64) {
+        return res.status(400).json({
+          success: false,
+          message: 'No base64 image provided'
+        });
+      }
+
+      // Decode base64 and save as file
+      const matches = avatarBase64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid base64 image format'
+        });
+      }
+
+      const imageType = matches[1].toLowerCase();
+      const imageBuffer = Buffer.from(matches[2], 'base64');
+
+      // Check file size (max 5MB)
+      if (imageBuffer.length > 5 * 1024 * 1024) {
+        return res.status(400).json({
+          success: false,
+          message: 'Image size exceeds 5MB limit'
+        });
+      }
+
+      // Ensure group-avatars directory exists
+      const avatarsDir = path.join(__dirname, '../../uploads/group-avatars');
+      if (!fs.existsSync(avatarsDir)) {
+        fs.mkdirSync(avatarsDir, { recursive: true });
+      }
+
+      // Generate filename with group ID
+      const timestamp = Date.now();
+      const filename = `group-${groupId}-${timestamp}.${imageType}`;
+      const filePath = path.join(avatarsDir, filename);
+
+      // Save file
+      fs.writeFileSync(filePath, imageBuffer);
+
+      // Get file URL
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const fileUrl = `${baseUrl}/uploads/group-avatars/${filename}`;
+
+      // Get current group to check for old avatar
+      const existingGroup = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { avatarUrl: true }
+      });
+
+      // Delete old avatar if exists
+      if (existingGroup?.avatarUrl) {
+        this.deleteOldFile(existingGroup.avatarUrl);
+      }
+
+      // Update group with new avatar URL
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: { avatarUrl: fileUrl },
+        select: {
+          id: true,
+          name: true,
+          avatarUrl: true,
+          description: true
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group avatar uploaded successfully',
+        data: {
+          avatarUrl: fileUrl,
+          group: updatedGroup
+        }
+      });
+
+    } catch (error: any) {
+      console.error('Base64 group avatar upload error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to upload group avatar'
+      });
+    }
+  }
+
+  // Delete user avatar
+  static async deleteAvatar(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true }
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      if (!user.avatarUrl) {
+        return res.status(404).json({
+          success: false,
+          message: 'No avatar found to delete'
+        });
+      }
+
+      console.log('Deleting user avatar:', user.avatarUrl);
+      
+      // Delete file from server
+      this.deleteOldFile(user.avatarUrl);
+
+      // Update user to remove avatar URL
+      await prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: null }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Avatar deleted successfully'
+      });
+
+    } catch (error: any) {
+      console.error('Delete avatar error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to delete avatar'
+      });
+    }
+  }
+
+  // Delete group avatar
+  static async deleteGroupAvatar(req: UserAuthRequest, res: Response) {
+    try {
+      const { groupId } = req.params as {groupId: string};
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized'
+        });
+      }
+
+      // Check if user is admin of this group
+      const groupMember = await prisma.groupMember.findFirst({
+        where: {
+          groupId: groupId,
+          userId: userId,
+          groupRole: 'ADMIN'
+        }
+      });
+
+      if (!groupMember) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only group admins can delete group avatar'
+        });
+      }
+
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { avatarUrl: true }
+      });
+
+      if (!group) {
+        return res.status(404).json({
+          success: false,
+          message: 'Group not found'
+        });
+      }
+
+      if (!group.avatarUrl) {
+        return res.status(404).json({
+          success: false,
+          message: 'Group has no avatar to delete'
+        });
+      }
+
+      console.log('Deleting group avatar:', group.avatarUrl);
+      
+      // Delete file from server
+      this.deleteOldFile(group.avatarUrl);
+
+      // Update group to remove avatar URL
+      await prisma.group.update({
+        where: { id: groupId },
+        data: { avatarUrl: null }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group avatar deleted successfully'
+      });
+
+    } catch (error: any) {
+      console.error('Delete group avatar error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to delete group avatar'
+      });
+    }
+  }
+
+  // Upload task completion photo
   static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
     try {
       console.log('Upload task photo request received');
       
-      const { taskId } = req.params as {taskId:string};
+      const { taskId } = req.params as {taskId: string};
       const userId = req.user?.id;
 
       if (!userId) {
@@ -225,173 +681,6 @@ export class UploadController {
       return res.status(500).json({
         success: false,
         message: error.message || 'Failed to upload task photo'
-      });
-    }
-  }
-
-  // Delete avatar - FIXED
-  static async deleteAvatar(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Unauthorized'
-        });
-      }
-
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { avatarUrl: true }
-      });
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
-      if (!user.avatarUrl) {
-        return res.status(404).json({
-          success: false,
-          message: 'No avatar found to delete'
-        });
-      }
-
-      console.log('Deleting avatar:', user.avatarUrl);
-      
-      // Delete file from server
-      this.deleteOldFile(user.avatarUrl);
-
-      // Update user to remove avatar URL
-      await prisma.user.update({
-        where: { id: userId },
-        data: { avatarUrl: null }
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: 'Avatar deleted successfully'
-      });
-
-    } catch (error: any) {
-      console.error('Delete avatar error:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to delete avatar'
-      });
-    }
-  }
-
-  // Upload from base64 - FIXED with directory creation
-  static async uploadAvatarBase64(req: UserAuthRequest, res: Response) {
-    try {
-      console.log('Base64 avatar upload request received');
-      
-      const userId = req.user?.id;
-      const { avatarBase64 } = req.body;
-
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Unauthorized'
-        });
-      }
-
-      if (!avatarBase64) {
-        return res.status(400).json({
-          success: false,
-          message: 'No base64 image provided'
-        });
-      }
-
-      console.log('Base64 string length:', avatarBase64.length);
-
-      // Decode base64 and save as file
-      const matches = avatarBase64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
-      if (!matches || matches.length !== 3) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid base64 image format. Expected format: data:image/type;base64,...'
-        });
-      }
-
-      const imageType = matches[1].toLowerCase(); // jpeg, png, etc
-      const imageBuffer = Buffer.from(matches[2], 'base64');
-
-      // Check file size (max 5MB)
-      if (imageBuffer.length > 5 * 1024 * 1024) {
-        return res.status(400).json({
-          success: false,
-          message: 'Image size exceeds 5MB limit'
-        });
-      }
-
-      // Ensure avatars directory exists
-      const avatarsDir = path.join(__dirname, '../../uploads/avatars');
-      if (!fs.existsSync(avatarsDir)) {
-        fs.mkdirSync(avatarsDir, { recursive: true });
-        console.log('Created avatars directory:', avatarsDir);
-      }
-
-      // Generate filename
-      const timestamp = Date.now();
-      const filename = `${userId}-${timestamp}.${imageType}`;
-      const filePath = path.join(avatarsDir, filename);
-
-      console.log('Saving file to:', filePath);
-
-      // Save file
-      fs.writeFileSync(filePath, imageBuffer);
-
-      // Get file URL
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const fileUrl = `${baseUrl}/uploads/avatars/${filename}`;
-
-      console.log('File URL:', fileUrl);
-
-      // Delete old avatar if exists
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { avatarUrl: true }
-      });
-
-      if (user?.avatarUrl) {
-        console.log('Deleting old avatar:', user.avatarUrl);
-        this.deleteOldFile(user.avatarUrl);
-      }
-
-      // Update user with new avatar URL
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: { avatarUrl: fileUrl },
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          avatarUrl: true,
-          gender: true
-        }
-      });
-
-      console.log('User updated successfully');
-
-      return res.status(200).json({
-        success: true,
-        message: 'Avatar uploaded successfully',
-        data: {
-          avatarUrl: fileUrl,
-          user: updatedUser
-        }
-      });
-
-    } catch (error: any) {
-      console.error('Base64 avatar upload error:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to upload avatar'
       });
     }
   }

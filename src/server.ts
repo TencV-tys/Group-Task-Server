@@ -25,6 +25,7 @@ const createUploadsDirectories = () => {
   const directories = [
     path.join(__dirname, '../uploads'),
     path.join(__dirname, '../uploads/avatars'),
+        path.join(__dirname, '../uploads/group-avatars'), 
     path.join(__dirname, '../uploads/task-photos')
   ];
 
@@ -72,5 +73,6 @@ svr.listen(PORT, () => {
    ${path.join(__dirname, '../uploads')}
    ${path.join(__dirname, '../uploads/avatars')}
    ${path.join(__dirname, '../uploads/task-photos')}
+     ${path.join(__dirname, '../uploads/group-avatars')}
     `);
 });

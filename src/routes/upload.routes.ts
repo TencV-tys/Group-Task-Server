@@ -44,4 +44,23 @@ router.delete(
   UploadController.deleteAvatar
 );
 
+router.post(
+  '/group/:groupId/avatar',
+  UserAuthMiddleware,
+  (req, res, next) => {
+    req.body.uploadType = 'avatar';
+    next();
+  },
+  singleUpload,
+  UploadController.uploadGroupAvatar
+);
+ 
+// Group avatar upload (base64)
+router.post(
+  '/group/:groupId/avatar/base64',
+  UserAuthMiddleware,
+  UploadController.uploadGroupAvatarBase64
+);
+
+
 export default router;
