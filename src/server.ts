@@ -9,7 +9,7 @@ import AdminAuthRoutes from './routes/admin.auth.routes';
 import GroupRoutes from './routes/group.routes';
 import HomeRoute from './routes/home.routes';
 import TaskRoutes from './routes/task.routes';
-import UploadRoutes from './routes/upload.routes'; // Add this import
+import UploadRoutes from './routes/upload.routes';
 
 dotenv.config(); 
 

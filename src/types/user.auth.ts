@@ -11,6 +11,7 @@ user?:{
     email:string;
     passwordHash:string;
     avatarUrl?:string | null;
+    avatarBase64?: string | null; 
     gender?:Gender | string | null;
     role:UserRole;
     roleStatus:UserRoleStatus;

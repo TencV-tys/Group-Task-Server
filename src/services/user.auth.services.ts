@@ -1,125 +1,195 @@
-
-
+// In src/services/user.auth.services.ts
 import { UserJwtUtils } from './../utils/user.jwtutils';
-
-import { UserRole, UserRoleStatus,Gender } from "@prisma/client";
+import { UserRole, UserRoleStatus, Gender } from "@prisma/client";
 import prisma from "../prisma";
 import { UserSignUpAuthTypes, UserLoginAuthTypes } from "../types/user.auth";
 import { comparePassword, hashedPassword } from "../utils/shared.bcrypt";
-export class UserServices{
+import fs from 'fs';
+import path from 'path';
 
-
-static async signup(
+export class UserServices {
+  static async signup(
     email: string,
     fullName: string,
     password: string,
     confirmPassword: string,
-    avatarUrl?: string | null,
+    avatarData?: string | null, // Changed from avatarUrl to avatarData (can be URL or base64)
     gender?: string | null
-): Promise<UserSignUpAuthTypes> {
+  ): Promise<UserSignUpAuthTypes> {
     try {
-    
-        
-        if (!email || !password || !confirmPassword || !fullName ) {
-            console.log("Validation failed: Missing fields");
-            return {
-                success: false,
-                message: "All fields are required"
-            };
-        }
-
-        if (password !== confirmPassword) {
-            console.log("Validation failed: Passwords don't match");
-            return {
-                success: false,
-                message: "Please confirm your password"
-            };
-        }
-
-        // Validate gender if provided
-        let genderEnum: Gender | null = null;
-        if (gender) {
-            const upperGender = gender.toUpperCase();
-            const validGenders = Object.values(Gender) as string[];
-        
-            
-            if (validGenders.includes(upperGender)) {
-                genderEnum = upperGender as Gender;
-           
-            } else {
-           
-                return {
-                    success: false,
-                    message: `Invalid gender. Must be one of: ${validGenders.join(', ')}`
-                };
-            }
-        } else {
-            console.log("No gender provided");
-        }
-
-        
-        const existingUser = await prisma.user.findUnique({
-            where: { email }
-        });
-
-        if (existingUser) {
-            console.log("Email already exists");
-            return {
-                success: false,
-                message: "Email already registered"
-            };
-        }
-
-    
-        const passwordHashed = await hashedPassword(password, 10);
-
+      console.log("UserServices.signup called with avatarData:", avatarData?.substring(0, 50) + "...");
       
-        const user = await prisma.user.create({
-            data: {
-                fullName: fullName,
-                email: email,
-                passwordHash: passwordHashed,
-                avatarUrl: avatarUrl ?? null,
-                gender: genderEnum,
-                role: UserRole.USER,
-                roleStatus: UserRoleStatus.ACTIVE
-            }
-        });
-
-        
-        const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
-
+      if (!email || !password || !confirmPassword || !fullName) {
+        console.log("Validation failed: Missing fields");
         return {
-            success: true,
-            message: "Sign up successfully",
-            token,
-            user: {
-                id: user.id,
-                fullName: user.fullName,
-                email: user.email,
-                passwordHash: user.passwordHash,
-                avatarUrl: user.avatarUrl,
-                gender: user.gender as Gender | null,
-                role: user.role,
-                roleStatus: user.roleStatus
-            }
+          success: false,
+          message: "All fields are required"
         };
+      }
+
+      if (password !== confirmPassword) {
+        console.log("Validation failed: Passwords don't match");
+        return {
+          success: false,
+          message: "Please confirm your password"
+        };
+      }
+
+      // Validate gender if provided
+      let genderEnum: Gender | null = null;
+      if (gender) {
+        const upperGender = gender.toUpperCase();
+        const validGenders = Object.values(Gender) as string[];
+        
+        if (validGenders.includes(upperGender)) {
+          genderEnum = upperGender as Gender;
+        } else {
+          return {
+            success: false,
+            message: `Invalid gender. Must be one of: ${validGenders.join(', ')}`
+          };
+        }
+      }
+
+      // Check if user already exists
+      const existingUser = await prisma.user.findUnique({
+        where: { email }
+      });
+
+      if (existingUser) {
+        console.log("Email already exists");
+        return {
+          success: false,
+          message: "Email already registered"
+        };
+      }
+
+      // Process avatar if provided
+      let avatarUrl: string | null = null;
+      
+      if (avatarData) {
+        try {
+          // Check if it's a base64 string
+          if (avatarData.startsWith('data:image')) {
+            console.log("Processing base64 avatar...");
+            avatarUrl = await this.saveBase64Image(avatarData, email);
+          } else if (avatarData.startsWith('http')) {
+            // It's already a URL (maybe from social login)
+            console.log("Using existing avatar URL...");
+            avatarUrl = avatarData;
+          } else {
+            console.log("Invalid avatar data format");
+          }
+        } catch (avatarError: any) {
+          console.error("Avatar processing failed:", avatarError.message);
+          // Continue with signup even if avatar fails
+        }
+      }
+
+      // Hash password
+      const passwordHashed = await hashedPassword(password, 10);
+
+      // Create user
+      const user = await prisma.user.create({
+        data: {
+          fullName: fullName,
+          email: email,
+          passwordHash: passwordHashed,
+          avatarUrl: avatarUrl,
+          gender: genderEnum,
+          role: UserRole.USER,
+          roleStatus: UserRoleStatus.ACTIVE
+        }
+      });
+
+      // Generate token
+      const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
+
+      return {
+        success: true,
+        message: "Sign up successfully",
+        token,
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          passwordHash: user.passwordHash,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender as Gender | null,
+          role: user.role,
+          roleStatus: user.roleStatus
+        }
+      };
 
     } catch (e: any) {
-     
-        // Check for specific Prisma errors
-        if (e.code) {
-            console.error("Prisma error code:", e.code);
-        }
-        
-        return {
-            success: false,
-            message: "Sign up failed: " + e.message,
-            error: e.message
-        };
+      console.error("Signup error:", e);
+      
+      // Check for specific Prisma errors
+      if (e.code) {
+        console.error("Prisma error code:", e.code);
+      }
+      
+      return {
+        success: false,
+        message: "Sign up failed: " + e.message,
+        error: e.message
+      };
     } 
-}
+  }
 
+  // Helper method to save base64 image to local storage
+private static async saveBase64Image(base64String: string, email: string): Promise<string | null> {
+  try {
+    // Create uploads directory if it doesn't exist
+    const uploadsDir = path.join(__dirname, '../../uploads/avatars');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      console.log("Created avatars directory:", uploadsDir);
+    }
+
+    // Parse base64 string
+    const matches = base64String.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      console.log("Invalid base64 format");
+      return null;
+    }
+
+    // Extract matches with validation
+    const imageType = matches[1]?.toLowerCase(); // jpeg, png, etc
+    const base64Data = matches[2];
+    
+    // Validate extracted data
+    if (!imageType || !base64Data) {
+      console.log("Invalid base64 data format");
+      return null;
+    }
+
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+
+    // Check file size (max 5MB)
+    if (imageBuffer.length > 5 * 1024 * 1024) {
+      console.log("Image too large:", imageBuffer.length);
+      return null;
+    }
+
+    // Generate filename (email-timestamp)
+    const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, '_');
+    const timestamp = Date.now();
+    const filename = `${sanitizedEmail}-${timestamp}.${imageType}`;
+    const filePath = path.join(uploadsDir, filename);
+
+    // Save file
+    fs.writeFileSync(filePath, imageBuffer);
+    console.log("Avatar saved to:", filePath);
+
+    // Return relative URL
+    return `/uploads/avatars/${filename}`;
+
+  } catch (error: any) {
+    console.error("Error saving base64 image:", error.message);
+    return null;
+  }
+}
 
  static async login(email:string,password:string):Promise<UserLoginAuthTypes>{
      try{

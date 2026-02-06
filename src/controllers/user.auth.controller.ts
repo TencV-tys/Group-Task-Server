@@ -17,20 +17,23 @@ export class UserAuthController{
         console.log("=== CONTROLLER SIGNUP ===");
         console.log("Request body:", req.body);
         
-        const { fullName, email, password, confirmPassword, avatarUrl, gender } = req.body;
+        const { fullName, email, password, confirmPassword, avatarUrl,avatarBase64, gender } = req.body;
          
+         const avatarData = avatarBase64 || avatarUrl;
         console.log("Calling UserServices.signup...");
-        const result = await UserServices.signup(email, fullName, password, confirmPassword, avatarUrl, gender);
+        const result = await UserServices.signup(email, fullName, password, confirmPassword,avatarData, gender);
         
         console.log("UserServices result:", result);
         
+        
+
         if (!result.success || !result.user) {
             console.log("Signup failed in controller");
             return res.status(400).json({
                 success: false,
                 message: result.message || 'Authentication Failed'
             });
-        }
+        } 
 
         console.log("Signup successful, setting cookies...");
         const user = result.user;
