@@ -16,6 +16,13 @@ export class AssignmentService {
       const assignment = await prisma.assignment.findUnique({
         where: { id: assignmentId },
         include: {
+          user: { // ADD THIS: Include the user relation
+            select: { 
+              id: true, 
+              fullName: true, 
+              avatarUrl: true 
+            }
+          },
           task: {
             include: {
               group: true
@@ -84,7 +91,7 @@ export class AssignmentService {
             userId: admin.userId,
             type: "ASSIGNMENT_COMPLETED",
             title: "Task Completed",
-            message: `${assignment.user?.fullName || "A user"} completed "${assignment.task.title}"`,
+            message: `${assignment.user.fullName || "A user"} completed "${assignment.task.title}"`, // FIXED: now assignment.user exists
             data: {
               assignmentId: assignment.id,
               taskId: assignment.taskId,
@@ -96,7 +103,7 @@ export class AssignmentService {
             read: false
           }
         });
-      } 
+      }
 
       return {
         success: true,
@@ -109,7 +116,6 @@ export class AssignmentService {
       return { success: false, message: error.message || "Error completing assignment" };
     }
   }
-
   static async verifyAssignment(
     assignmentId: string,
     userId: string,
