@@ -10,6 +10,7 @@ import GroupRoutes from './routes/group.routes';
 import HomeRoute from './routes/home.routes';
 import TaskRoutes from './routes/task.routes';
 import UploadRoutes from './routes/upload.routes';
+import AssignmentRoutes from './routes/assignment.routes';
 
 dotenv.config(); 
 
@@ -57,7 +58,8 @@ svr.use('/api/auth/admins', AdminAuthRoutes);
 svr.use('/api/group', GroupRoutes);
 svr.use('/api/home', HomeRoute);
 svr.use('/api/tasks', TaskRoutes);
-svr.use('/api/uploads', UploadRoutes); // Add this line
+svr.use('/api/uploads', UploadRoutes); 
+svr.use('/api/assignments',AssignmentRoutes);
 
 const COMPUTER_IP = '10.219.65.2';
 const Wifi = '192.168.1.29';

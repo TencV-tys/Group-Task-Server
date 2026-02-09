@@ -399,12 +399,12 @@ export class TaskController {
       const userId = req.user?.id;
       const { groupId } = req.params as { groupId: string };
 
-      if (!userId) {
+      if (!userId) { 
         return res.status(401).json({
           success: false,
           message: "User not authenticated"
         });
-      }
+      } 
 
       if (!groupId) {
         return res.status(400).json({
@@ -490,7 +490,7 @@ export class TaskController {
         message: "Internal server error"
       });
     }
-  }
+  } 
 
   // NEW: Get task statistics
   static async getTaskStatistics(req: UserAuthRequest, res: Response) {

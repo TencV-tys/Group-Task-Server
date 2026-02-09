@@ -242,17 +242,21 @@ model Assignment {
   completedAt DateTime?
   verified    Boolean   @default(false)
   photoUrl    String?
+  
+  // ✅ NEW: User notes when completing task
+  notes       String?
+  
+  // ✅ NEW: Admin notes when verifying
+  adminNotes  String?
 
   // ✅ FIXED: Track which specific time slot this assignment is for
   timeSlotId  String?
 
   // Rotation tracking
-  rotationWeek Int      @default(0) // Which week in rotation this assignment is for
-  weekStart    DateTime // Start of the week for this assignment
-  weekEnd      DateTime // End of the week for this assignment
-
-  // For tracking which day this assignment is for (for weekly tasks with multiple days)
-  assignmentDay DayOfWeek? // Which specific day this assignment represents
+  rotationWeek Int      @default(0)
+  weekStart    DateTime
+  weekEnd      DateTime
+  assignmentDay DayOfWeek?
 
   // Relationships
   task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
@@ -261,6 +265,7 @@ model Assignment {
   timeSlot    TimeSlot?    @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([dueDate])
   @@index([completed])
