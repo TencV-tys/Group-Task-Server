@@ -595,92 +595,54 @@ export class UploadController {
     }
   }
 
-  // Upload task completion photo
-  static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
-    try {
-      console.log('Upload task photo request received');
-      
-      const { taskId } = req.params as {taskId: string};
-      const userId = req.user?.id;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: 'Unauthorized'
-        });
-      }
+static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
+  try {
+    console.log('Upload task photo request received');
+    
+    const { taskId } = req.params as {taskId: string};
+    const userId = req.user?.id;
 
-      console.log('Task ID:', taskId, 'User ID:', userId);
-
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'No photo uploaded'
-        });
-      }
-
-      const filename = req.file.filename;
-      const fileUrl = UploadController.getFileUrl(req, filename, 'task_photo'); // FIXED
-
-      console.log('New photo URL:', fileUrl);
-
-      // Find the latest assignment for this task and user
-      const assignment = await prisma.assignment.findFirst({
-        where: {
-          taskId: taskId,
-          userId: userId,
-          completed: false
-        },
-        orderBy: {
-          dueDate: 'desc'
-        }
-      });
-
-      if (!assignment) {
-        return res.status(404).json({
-          success: false,
-          message: 'No active assignment found for this task'
-        });
-      }
-
-      console.log('Found assignment:', assignment.id);
-
-      // Delete old photo if exists
-      if (assignment.photoUrl) {
-        console.log('Deleting old photo:', assignment.photoUrl);
-        UploadController.deleteOldFile(assignment.photoUrl); // FIXED
-      }
-
-      // Update assignment with photo URL
-      const updatedAssignment = await prisma.assignment.update({
-        where: { id: assignment.id },
-        data: { 
-          photoUrl: fileUrl,
-          verified: true
-        }
-      });
-
-      console.log('Assignment updated successfully');
-
-      return res.status(200).json({
-        success: true,
-        message: 'Task photo uploaded successfully',
-        data: {
-          photoUrl: fileUrl,
-          assignment: {
-            id: updatedAssignment.id,
-            verified: updatedAssignment.verified,
-            completed: updatedAssignment.completed
-          }
-        }
-      });
-
-    } catch (error: any) {
-      console.error('Task photo upload error:', error);
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: error.message || 'Failed to upload task photo'
+        message: 'Unauthorized'
       });
     }
+
+    console.log('Task ID:', taskId, 'User ID:', userId);
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No photo uploaded'
+      });
+    }
+
+    const filename = req.file.filename;
+    const fileUrl = UploadController.getFileUrl(req, filename, 'task_photo');
+
+    console.log('New photo URL:', fileUrl);
+
+    // Just return the URL, don't update assignment here
+    // The assignment will be updated in the completeAssignment endpoint
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Task photo uploaded successfully',
+      data: {
+        photoUrl: fileUrl
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Task photo upload error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to upload task photo'
+    });
   }
+}
+  
+
 }

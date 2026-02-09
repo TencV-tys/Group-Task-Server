@@ -68,4 +68,6 @@ router.delete(
   UploadController.deleteGroupAvatar
 );
 
+router.post('/task/:taskId/photo', singleUpload, UploadController.uploadTaskPhoto);
+
 export default router;
