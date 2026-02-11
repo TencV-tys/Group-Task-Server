@@ -2,14 +2,14 @@
 import prisma from "../prisma";
 import { TaskExecutionFrequency, Prisma,DayOfWeek } from '@prisma/client';
 import { TaskHelpers } from "../helpers/task.helpers";
-
+import { TimeHelpers } from "../helpers/time.helpers";
 export class TaskService {
   
   // Create task with distributed points across time slots
   static async createTask(
     userId: string,
     groupId: string,
-    data: {
+    data: { 
       title: string;
       description?: string;
       points?: number; // TOTAL task points to be distributed
@@ -1561,6 +1561,104 @@ export class TaskService {
       return { success: false, message: error.message || "Error retrieving task statistics" };
     }
   }
+  
+  // services/task.services.ts - ADD this method to your TaskService class
+static async getCurrentTimeSlotInfo(taskId: string, userId: string) {
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        timeSlots: {
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        },
+        assignments: {
+          where: {
+            userId,
+            rotationWeek: {
+              gte: 1 // Get current and future assignments
+            }
+          },
+          include: {
+            timeSlot: true
+          },
+          orderBy: { dueDate: 'asc' }
+        }
+      }
+    });
 
+    if (!task) {
+      return { success: false, message: "Task not found" };
+    }
+
+    const now = new Date();
+    const today = now.toDateString();
+    
+    // Find today's assignment
+    const todaysAssignment = task.assignments.find(assignment => {
+      const dueDate = new Date(assignment.dueDate);
+      return dueDate.toDateString() === today;
+    });
+
+    let currentSlot = null;
+    let nextSlot = null;
+    let isSubmittable = false;
+    let timeLeft = null;
+    let submissionInfo = null;
+
+    if (todaysAssignment?.timeSlot) {
+      // Check time validation for today's assignment
+      const validation = TimeHelpers.canSubmitAssignment(todaysAssignment, now);
+      currentSlot = todaysAssignment.timeSlot;
+      isSubmittable = validation.allowed;
+      timeLeft = validation.timeLeft;
+      submissionInfo = validation;
+    } else if (task.timeSlots && task.timeSlots.length > 0) {
+      // Check if current time is within any time slot
+      currentSlot = TimeHelpers.isWithinAnyTimeSlot(task.timeSlots, now);
+      
+      if (currentSlot) {
+        // Create a mock assignment for validation
+        const mockAssignment = {
+          dueDate: now,
+          timeSlot: currentSlot
+        };
+        const validation = TimeHelpers.canSubmitAssignment(mockAssignment, now);
+        isSubmittable = validation.allowed;
+        timeLeft = validation.timeLeft;
+        submissionInfo = validation;
+      }
+      
+      // Get next upcoming slot
+      nextSlot = TimeHelpers.getNextTimeSlot(task.timeSlots, now);
+    }
+
+    return {
+      success: true,
+      message: "Time slot information retrieved",
+      data: {
+        hasAssignmentToday: !!todaysAssignment,
+        assignment: todaysAssignment,
+        currentTimeSlot: currentSlot,
+        nextTimeSlot: nextSlot,
+        isSubmittable,
+        timeLeft,
+        timeLeftText: timeLeft ? TimeHelpers.getTimeLeftText(timeLeft) : null,
+        submissionInfo,
+        currentTime: now
+      }
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.getCurrentTimeSlotInfo error:", error);
+    return { success: false, message: error.message || "Error retrieving time slot info" };
+  }
+}
 
 }

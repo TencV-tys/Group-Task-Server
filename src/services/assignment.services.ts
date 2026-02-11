@@ -1,10 +1,10 @@
 // services/assignment.services.ts - NEW FILE
 import prisma from "../prisma";
 import { AssignmentHelpers } from "../helpers/assignment.helpers";
-
+import { TimeHelpers } from "../helpers/time.helpers";
 export class AssignmentService {
   
-  static async completeAssignment(
+     static async completeAssignment(
     assignmentId: string,
     userId: string,
     data: {
@@ -12,11 +12,14 @@ export class AssignmentService {
       notes?: string;
     }
   ) {
+    // Declare timeValidation here so it's available in the whole function
+    let timeValidation;
+    
     try {
       const assignment = await prisma.assignment.findUnique({
         where: { id: assignmentId },
         include: {
-          user: { // ADD THIS: Include the user relation
+          user: {
             select: { 
               id: true, 
               fullName: true, 
@@ -25,9 +28,13 @@ export class AssignmentService {
           },
           task: {
             include: {
-              group: true
+              group: true,
+              timeSlots: {
+                orderBy: { sortOrder: 'asc' }
+              }
             }
-          }
+          },
+          timeSlot: true
         }
       });
 
@@ -47,8 +54,45 @@ export class AssignmentService {
 
       // Validate due date
       const now = new Date();
-      if (assignment.dueDate < now) {
-        return { success: false, message: "Cannot complete past due assignments" };
+      const dueDate = new Date(assignment.dueDate);
+      
+      // Check if it's the correct day
+      if (now.toDateString() !== dueDate.toDateString()) {
+        return { 
+          success: false, 
+          message: `Cannot complete assignment on this date. It's due on ${dueDate.toLocaleDateString()}`
+        };
+      }
+
+      // TIME VALIDATION LOGIC
+      if (assignment.timeSlot) {
+        timeValidation = TimeHelpers.canSubmitAssignment(assignment, now);
+        
+        if (!timeValidation.allowed) {
+          let errorMessage = "Cannot submit assignment at this time.";
+          
+          if (timeValidation.reason === 'Submission not open yet') {
+            const timeUntilStart = timeValidation.opensIn || 0;
+            const timeSlot = assignment.timeSlot;
+            errorMessage = `Submission opens ${timeUntilStart} minutes before ${timeSlot.endTime}. Please wait until then.`;
+          } else if (timeValidation.reason === 'Submission window closed') {
+            errorMessage = `Submission window has closed. The grace period ended at ${timeValidation.gracePeriodEnd?.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}.`;
+          } else if (timeValidation.reason === 'Not due date') {
+            errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
+          }
+          
+          return { 
+            success: false, 
+            message: errorMessage,
+            validation: timeValidation
+          };
+        }
+        
+        // If validation passed, we have timeLeft
+        console.log(`Assignment ${assignmentId} submitted with ${timeValidation.timeLeft} seconds remaining`);
+      } else {
+        // No time slot, just check if it's the due date
+        console.log(`Assignment ${assignmentId} submitted (no time slot)`);
       }
 
       // Update assignment
@@ -91,14 +135,17 @@ export class AssignmentService {
             userId: admin.userId,
             type: "ASSIGNMENT_COMPLETED",
             title: "Task Completed",
-            message: `${assignment.user.fullName || "A user"} completed "${assignment.task.title}"`, // FIXED: now assignment.user exists
+            message: `${assignment.user.fullName || "A user"} completed "${assignment.task.title}"`,
             data: {
               assignmentId: assignment.id,
               taskId: assignment.taskId,
               groupId: assignment.task.groupId,
               userId: assignment.userId,
               photoUrl: data.photoUrl,
-              notes: data.notes
+              notes: data.notes,
+              completedAt: new Date(),
+              // FIXED: timeValidation is now properly scoped
+              timeLeft: assignment.timeSlot && timeValidation ? timeValidation.timeLeft : undefined
             },
             read: false
           }
@@ -116,6 +163,7 @@ export class AssignmentService {
       return { success: false, message: error.message || "Error completing assignment" };
     }
   }
+ 
   static async verifyAssignment(
     assignmentId: string,
     userId: string,
