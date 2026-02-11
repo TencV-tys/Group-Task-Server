@@ -29,5 +29,5 @@ router.get('/group/:groupId/assignments', AssignmentController.getGroupAssignmen
 
 // NEW: Get upcoming assignments with time info
 router.get('/upcoming/assignments', AssignmentController.getUpcomingAssignments);
-
+router.get('/group/:groupId/stats', AssignmentController.getAssignmentStats);
 export default router;

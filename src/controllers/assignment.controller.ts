@@ -411,4 +411,224 @@ export class AssignmentController {
     }
   }
 
+    // Get assignment statistics for a group
+  static async getAssignmentStats(req: UserAuthRequest, res: Response) {
+    try {
+      const { groupId } = req.params as {groupId:string};
+      const userId = req.user?.id;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: "Authentication required" 
+        });
+      }
+      
+      // Check if user is member of group
+      const membership = await prisma.groupMember.findFirst({
+        where: { userId, groupId }
+      });
+      
+      if (!membership) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "You are not a member of this group" 
+        });
+      }
+      
+      const now = new Date();
+      const currentWeek = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { currentRotationWeek: true }
+      });
+      
+      if (!currentWeek) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Group not found" 
+        });
+      }
+      
+      // Get all assignments for current week
+      const assignments = await prisma.assignment.findMany({
+        where: {
+          task: { groupId },
+          rotationWeek: currentWeek.currentRotationWeek
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true
+            }
+          },
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true
+            }
+          },
+          timeSlot: true
+        }
+      });
+      
+      // Calculate statistics
+      const totalAssignments = assignments.length;
+      const completedAssignments = assignments.filter(a => a.completed).length;
+      const pendingAssignments = totalAssignments - completedAssignments;
+      
+      const verifiedAssignments = assignments.filter(a => a.verified === true).length;
+      const rejectedAssignments = assignments.filter(a => a.verified === false).length;
+      const pendingVerification = assignments.filter(a => a.completed && a.verified === null).length;
+      
+      // Calculate points
+      const totalPoints = assignments.reduce((sum, a) => sum + a.points, 0);
+      const completedPoints = assignments
+        .filter(a => a.completed)
+        .reduce((sum, a) => sum + a.points, 0);
+      const pendingPoints = totalPoints - completedPoints;
+      
+      // Group by user
+      const userStats: Record<string, any> = {};
+      assignments.forEach(assignment => {
+        const userId = assignment.userId;
+        if (!userStats[userId]) {
+          userStats[userId] = {
+            userId,
+            userName: assignment.user.fullName,
+            avatarUrl: assignment.user.avatarUrl,
+            totalAssignments: 0,
+            completedAssignments: 0,
+            totalPoints: 0,
+            completedPoints: 0
+          };
+        }
+        
+        userStats[userId].totalAssignments++;
+        userStats[userId].totalPoints += assignment.points;
+        
+        if (assignment.completed) {
+          userStats[userId].completedAssignments++;
+          userStats[userId].completedPoints += assignment.points;
+        }
+      });
+      
+      return res.status(200).json({
+        success: true,
+        message: "Assignment statistics retrieved",
+        data: {
+          groupId,
+          currentWeek: currentWeek.currentRotationWeek,
+          summary: {
+            totalAssignments,
+            completedAssignments,
+            pendingAssignments,
+            verifiedAssignments,
+            rejectedAssignments,
+            pendingVerification,
+            totalPoints,
+            completedPoints,
+            pendingPoints
+          },
+          userStats: Object.values(userStats),
+          assignments: assignments.slice(0, 10) // Return first 10 for preview
+        }
+      });
+      
+    } catch (error: any) {
+      console.error("AssignmentController.getAssignmentStats error:", error);
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message || "Error retrieving assignment statistics" 
+      });
+    }
+  }
+  
+  static async getTodayAssignments(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.query;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: "Authentication required" 
+        });
+      }
+      
+      const now = new Date();
+      const today = now.toDateString();
+      
+      const assignments = await prisma.assignment.findMany({
+        where: {
+          userId,
+          task: groupId ? { groupId: String(groupId) } : undefined,
+          completed: false
+        },
+        include: {
+          timeSlot: true,
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              executionFrequency: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        }
+      });
+      
+      // Filter for today's assignments
+      const todayAssignments = assignments.filter(assignment => {
+        const dueDate = new Date(assignment.dueDate);
+        return dueDate.toDateString() === today;
+      });
+      
+      // Add time validation info
+      const assignmentsWithTimeInfo = todayAssignments.map(assignment => {
+        const validation = TimeHelpers.canSubmitAssignment(assignment, now);
+        
+        return {
+          id: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.task.title,
+          taskPoints: assignment.task.points,
+          group: assignment.task.group,
+          dueDate: assignment.dueDate,
+          canSubmit: validation.allowed,
+          timeLeft: validation.timeLeft,
+          timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+          reason: validation.reason,
+          timeSlot: assignment.timeSlot
+        };
+      });
+      
+      return res.status(200).json({
+        success: true,
+        message: "Today's assignments retrieved",
+        data: {
+          assignments: assignmentsWithTimeInfo,
+          currentTime: now,
+          total: assignmentsWithTimeInfo.length
+        }
+      });
+      
+    } catch (error: any) {
+      console.error("AssignmentController.getTodayAssignments error:", error);
+      return res.status(500).json({ 
+        success: false, 
+        message: error.message || "Error retrieving today's assignments" 
+      });
+    }
+  }
+
+
 }
