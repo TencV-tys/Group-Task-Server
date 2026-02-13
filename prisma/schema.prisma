@@ -284,9 +284,14 @@ model SwapRequest {
   status       String  @default("PENDING")
 
   // For tracking swaps
-  requestedBy  String // User who requested the swap
-  targetUserId String? // User to swap with (if null, anyone can accept)
-  expiresAt    DateTime? // When swap request expires
+  requestedBy  String
+  targetUserId String?
+  expiresAt    DateTime?
+
+  // ✅ NEW: Swap scope fields
+  scope        String? @default("week") // "week" or "day"
+  selectedDay  String? // "MONDAY", "TUESDAY", etc. - only if scope is "day"
+  selectedTimeSlotId String? // Specific time slot ID - optional
 
   assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
 

@@ -1,9 +1,9 @@
 import prisma from "../prisma";
-import { Prisma } from '@prisma/client';
+import { Prisma, DayOfWeek } from '@prisma/client';
 
 export class SwapRequestService {
   
-  // CREATE: Create a new swap request
+  // CREATE: Create a new swap request with scope support
   static async createSwapRequest(
     userId: string,
     assignmentId: string,
@@ -11,6 +11,9 @@ export class SwapRequestService {
       reason?: string;
       targetUserId?: string;
       expiresAt?: Date;
+      scope?: 'week' | 'day'; // ✅ NEW
+      selectedDay?: string;    // ✅ NEW
+      selectedTimeSlotId?: string; // ✅ NEW
     }
   ) {
     try {
@@ -100,6 +103,27 @@ export class SwapRequestService {
         };
       }
 
+      // Validate scope selection
+      if (data.scope === 'day' && !data.selectedDay) {
+        return { 
+          success: false, 
+          message: "Please select a day to swap" 
+        };
+      }
+
+      // For daily tasks with time slots, validate if time slot exists
+      if (data.scope === 'day' && data.selectedTimeSlotId) {
+        const timeSlotExists = assignment.task.timeSlots.some(
+          slot => slot.id === data.selectedTimeSlotId
+        );
+        if (!timeSlotExists) {
+          return { 
+            success: false, 
+            message: "Selected time slot does not exist for this task" 
+          };
+        }
+      }
+
       // Set default expiry if not provided (48 hours from now)
       let expiresAt = data.expiresAt;
       if (!expiresAt) {
@@ -107,7 +131,7 @@ export class SwapRequestService {
         expiresAt.setHours(expiresAt.getHours() + 48);
       }
 
-      // Create swap request - only using fields that exist in schema
+      // Create swap request with scope fields
       const swapRequest = await prisma.swapRequest.create({
         data: {
           assignmentId,
@@ -115,7 +139,11 @@ export class SwapRequestService {
           status: "PENDING",
           requestedBy: userId,
           targetUserId: data.targetUserId,
-          expiresAt
+          expiresAt,
+          // ✅ NEW: Add scope fields
+          scope: data.scope || 'week',
+          selectedDay: data.selectedDay,
+          selectedTimeSlotId: data.selectedTimeSlotId
         }
       });
 
@@ -130,7 +158,15 @@ export class SwapRequestService {
                   id: true,
                   title: true,
                   executionFrequency: true,
-                  points: true
+                  points: true,
+                  timeSlots: {
+                    select: {
+                      id: true,
+                      startTime: true,
+                      endTime: true,
+                      label: true
+                    }
+                  }
                 }
               },
               timeSlot: true,
@@ -156,6 +192,18 @@ export class SwapRequestService {
         }
       });
 
+      // Create notification with scope info
+      const getSwapDescription = () => {
+        if (data.scope === 'day') {
+          if (data.selectedTimeSlotId) {
+            const timeSlot = assignment.task.timeSlots.find(s => s.id === data.selectedTimeSlotId);
+            return `for ${data.selectedDay} at ${timeSlot?.startTime || 'selected time'}`;
+          }
+          return `for ${data.selectedDay}`;
+        }
+        return 'for the entire week';
+      };
+
       // Create notification for target user if specified
       if (data.targetUserId) {
         await prisma.userNotification.create({
@@ -163,7 +211,7 @@ export class SwapRequestService {
             userId: data.targetUserId,
             type: "SWAP_REQUEST",
             title: "Swap Request",
-            message: `${assignment.user.fullName || "A user"} wants to swap "${assignment.task.title}" with you`,
+            message: `${assignment.user.fullName || "A user"} wants to swap "${assignment.task.title}" ${getSwapDescription()} with you`,
             data: {
               swapRequestId: swapRequest.id,
               assignmentId,
@@ -171,7 +219,10 @@ export class SwapRequestService {
               groupId: assignment.task.groupId,
               requesterId: userId,
               requesterName: assignment.user.fullName,
-              dueDate: assignment.dueDate
+              dueDate: assignment.dueDate,
+              scope: data.scope,
+              selectedDay: data.selectedDay,
+              selectedTimeSlotId: data.selectedTimeSlotId
             }
           }
         });
@@ -192,7 +243,7 @@ export class SwapRequestService {
               userId: member.userId,
               type: "SWAP_REQUEST",
               title: "Swap Request Available",
-              message: `${assignment.user.fullName || "A user"} is looking to swap "${assignment.task.title}"`,
+              message: `${assignment.user.fullName || "A user"} is looking to swap "${assignment.task.title}" ${getSwapDescription()}`,
               data: {
                 swapRequestId: swapRequest.id,
                 assignmentId,
@@ -200,7 +251,10 @@ export class SwapRequestService {
                 groupId: assignment.task.groupId,
                 requesterId: userId,
                 requesterName: assignment.user.fullName,
-                dueDate: assignment.dueDate
+                dueDate: assignment.dueDate,
+                scope: data.scope,
+                selectedDay: data.selectedDay,
+                selectedTimeSlotId: data.selectedTimeSlotId
               }
             }
           });
@@ -209,7 +263,9 @@ export class SwapRequestService {
 
       return {
         success: true,
-        message: "Swap request created successfully",
+        message: data.scope === 'day' 
+          ? `Swap request created for ${data.selectedDay}!` 
+          : "Swap request created for the entire week!",
         swapRequest: {
           ...swapRequestWithDetails,
           requester // Add requester info manually
@@ -266,6 +322,14 @@ export class SwapRequestService {
                         id: true,
                         name: true
                       }
+                    },
+                    timeSlots: {
+                      select: {
+                        id: true,
+                        startTime: true,
+                        endTime: true,
+                        label: true
+                      }
                     }
                   }
                 },
@@ -311,10 +375,19 @@ export class SwapRequestService {
             });
           }
 
+          // Get selected time slot details if exists
+          let selectedTimeSlot = null;
+          if (request.selectedTimeSlotId && request.assignment?.task?.timeSlots) {
+            selectedTimeSlot = request.assignment.task.timeSlots.find(
+              (slot: any) => slot.id === request.selectedTimeSlotId
+            );
+          }
+
           return {
             ...request,
             requester,
-            targetUser
+            targetUser,
+            selectedTimeSlot
           };
         })
       );
@@ -380,6 +453,14 @@ export class SwapRequestService {
                         id: true,
                         name: true
                       }
+                    },
+                    timeSlots: {
+                      select: {
+                        id: true,
+                        startTime: true,
+                        endTime: true,
+                        label: true
+                      }
                     }
                   }
                 },
@@ -425,10 +506,19 @@ export class SwapRequestService {
             });
           }
 
+          // Get selected time slot details if exists
+          let selectedTimeSlot = null;
+          if (request.selectedTimeSlotId && request.assignment?.task?.timeSlots) {
+            selectedTimeSlot = request.assignment.task.timeSlots.find(
+              (slot: any) => slot.id === request.selectedTimeSlotId
+            );
+          }
+
           return {
             ...request,
             requester,
-            targetUser
+            targetUser,
+            selectedTimeSlot
           };
         })
       );
@@ -494,7 +584,15 @@ export class SwapRequestService {
                     id: true,
                     title: true,
                     points: true,
-                    executionFrequency: true
+                    executionFrequency: true,
+                    timeSlots: {
+                      select: {
+                        id: true,
+                        startTime: true,
+                        endTime: true,
+                        label: true
+                      }
+                    }
                   }
                 },
                 timeSlot: true,
@@ -539,10 +637,19 @@ export class SwapRequestService {
             });
           }
 
+          // Get selected time slot details if exists
+          let selectedTimeSlot = null;
+          if (request.selectedTimeSlotId && request.assignment?.task?.timeSlots) {
+            selectedTimeSlot = request.assignment.task.timeSlots.find(
+              (slot: any) => slot.id === request.selectedTimeSlotId
+            );
+          }
+
           return {
             ...request,
             requester,
-            targetUser
+            targetUser,
+            selectedTimeSlot
           };
         })
       );
@@ -622,10 +729,19 @@ export class SwapRequestService {
         });
       }
 
+      // Get selected time slot details if exists
+      let selectedTimeSlot = null;
+      if (swapRequest.selectedTimeSlotId && swapRequest.assignment?.task?.timeSlots) {
+        selectedTimeSlot = swapRequest.assignment.task.timeSlots.find(
+          (slot: any) => slot.id === swapRequest.selectedTimeSlotId
+        );
+      }
+
       const swapRequestWithDetails = {
         ...swapRequest,
         requester,
-        targetUser
+        targetUser,
+        selectedTimeSlot
       };
 
       // Check if user has permission to view
@@ -659,7 +775,7 @@ export class SwapRequestService {
     }
   }
 
-  // UPDATE: Accept a swap request
+  // UPDATE: Accept a swap request with scope support
   static async acceptSwapRequest(requestId: string, userId: string) {
     try {
       // Get swap request
@@ -744,6 +860,7 @@ export class SwapRequestService {
 
       const assignment = swapRequest.assignment;
       const task = assignment.task;
+      const currentWeek = task.group.currentRotationWeek;
 
       // Start transaction
       const result = await prisma.$transaction(async (prisma) => {
@@ -752,49 +869,134 @@ export class SwapRequestService {
           where: { id: requestId },
           data: { 
             status: "ACCEPTED",
-            targetUserId: userId // Set the actual acceptor as target
+            targetUserId: userId
           }
         });
 
-        // 2. Delete original assignment
-        await prisma.assignment.delete({
-          where: { id: assignment.id }
-        });
-
-        // 3. Create new assignment for the acceptor
-        const newAssignment = await prisma.assignment.create({
-          data: {
+        // ✅ Handle different swap scopes
+        if (swapRequest.scope === 'day' && swapRequest.selectedDay) {
+          // SWAP SPECIFIC DAY ONLY
+          
+          // Build where clause for assignments to transfer
+          const whereClause: any = {
             taskId: task.id,
-            userId: userId,
-            dueDate: assignment.dueDate,
-            points: assignment.points,
-            rotationWeek: assignment.rotationWeek,
-            weekStart: assignment.weekStart,
-            weekEnd: assignment.weekEnd,
-            assignmentDay: assignment.assignmentDay,
-            completed: false,
-            verified: false,
-            timeSlotId: assignment.timeSlotId,
-            // Add swap tracking info
-            notes: assignment.notes ? 
-              `${assignment.notes}\n[Swapped from ${assignment.user.fullName} on ${new Date().toISOString()}]` : 
-              `[Swapped from ${assignment.user.fullName} on ${new Date().toISOString()}]`
-          }
-        });
+            userId: assignment.userId,
+            rotationWeek: currentWeek,
+            assignmentDay: swapRequest.selectedDay as DayOfWeek
+          };
 
-        // 4. Update task's current assignee if this is the current week
-        if (assignment.rotationWeek === task.group.currentRotationWeek) {
-          await prisma.task.update({
-            where: { id: task.id },
-            data: {
-              currentAssignee: userId,
-              lastAssignedAt: new Date()
+          // Add time slot filter if specified
+          if (swapRequest.selectedTimeSlotId) {
+            whereClause.timeSlotId = swapRequest.selectedTimeSlotId;
+          }
+
+          // Get the assignments to transfer
+          const assignmentsToTransfer = await prisma.assignment.findMany({
+            where: whereClause
+          });
+
+          if (assignmentsToTransfer.length === 0) {
+            throw new Error("No assignments found for the selected day/time slot");
+          }
+
+          // Delete original assignments
+          await prisma.assignment.deleteMany({
+            where: whereClause
+          });
+
+          // Create new assignments for the acceptor
+          for (const original of assignmentsToTransfer) {
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: userId,
+                dueDate: original.dueDate,
+                points: original.points,
+                rotationWeek: currentWeek,
+                weekStart: original.weekStart,
+                weekEnd: original.weekEnd,
+                assignmentDay: original.assignmentDay,
+                completed: false,
+                verified: false,
+                timeSlotId: original.timeSlotId,
+                notes: `[Swapped from ${assignment.user.fullName} for ${original.assignmentDay} on ${new Date().toISOString()}]`
+              }
+            });
+          }
+
+          // Log the swap
+          console.log(`Day swap completed: ${assignmentsToTransfer.length} assignments transferred for ${swapRequest.selectedDay}`);
+
+        } else {
+          // SWAP ENTIRE WEEK (default behavior)
+          
+          // Delete ALL assignments for the week
+          await prisma.assignment.deleteMany({
+            where: {
+              taskId: task.id,
+              userId: assignment.userId,
+              rotationWeek: currentWeek
             }
           });
+
+          // Get all original assignments for this task/week
+          const originalAssignments = await prisma.assignment.findMany({
+            where: {
+              taskId: task.id,
+              userId: assignment.userId,
+              rotationWeek: currentWeek
+            }
+          });
+
+          // Create new assignments for the acceptor for the entire week
+          for (const original of originalAssignments) {
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: userId,
+                dueDate: original.dueDate,
+                points: original.points,
+                rotationWeek: currentWeek,
+                weekStart: original.weekStart,
+                weekEnd: original.weekEnd,
+                assignmentDay: original.assignmentDay,
+                completed: false,
+                verified: false,
+                timeSlotId: original.timeSlotId,
+                notes: original.notes ? 
+                  `${original.notes}\n[Swapped from ${assignment.user.fullName} on ${new Date().toISOString()}]` : 
+                  `[Swapped from ${assignment.user.fullName} on ${new Date().toISOString()}]`
+              }
+            });
+          }
+
+          // Update task's current assignee only for full week swaps
+          if (currentWeek === task.group.currentRotationWeek) {
+            await prisma.task.update({
+              where: { id: task.id },
+              data: {
+                currentAssignee: userId,
+                lastAssignedAt: new Date()
+              }
+            });
+          }
         }
 
-        return { updatedRequest, newAssignment };
+        return { updatedRequest };
       });
+
+      // Create success message based on scope
+      let successMessage = "";
+      if (swapRequest.scope === 'day') {
+        if (swapRequest.selectedTimeSlotId) {
+          const timeSlot = task.timeSlots.find(s => s.id === swapRequest.selectedTimeSlotId);
+          successMessage = `Swap request accepted! You've taken over ${swapRequest.selectedDay}'s ${timeSlot?.startTime || ''} slot.`;
+        } else {
+          successMessage = `Swap request accepted! You've taken over ${swapRequest.selectedDay}'s assignments.`;
+        }
+      } else {
+        successMessage = "Swap request accepted successfully! The entire week's assignment has been transferred to you.";
+      }
 
       // Create notifications
       // Notify requester that their request was accepted
@@ -803,14 +1005,18 @@ export class SwapRequestService {
           userId: swapRequest.requestedBy,
           type: "SWAP_ACCEPTED",
           title: "Swap Request Accepted",
-          message: `${memberDetails?.fullName || "A user"} accepted your swap request for "${task.title}"`,
+          message: `${memberDetails?.fullName || "A user"} accepted your swap request for "${task.title}"${
+            swapRequest.scope === 'day' ? ` on ${swapRequest.selectedDay}` : ''
+          }`,
           data: {
             swapRequestId: requestId,
-            assignmentId: result.newAssignment.id,
             taskId: task.id,
             groupId: task.groupId,
             acceptorId: userId,
-            acceptorName: memberDetails?.fullName
+            acceptorName: memberDetails?.fullName,
+            scope: swapRequest.scope,
+            selectedDay: swapRequest.selectedDay,
+            selectedTimeSlotId: swapRequest.selectedTimeSlotId
           }
         }
       });
@@ -821,14 +1027,18 @@ export class SwapRequestService {
           userId,
           type: "SWAP_COMPLETED",
           title: "Swap Completed",
-          message: `You have successfully swapped assignments with ${requesterDetails?.fullName || "another user"} for "${task.title}"`,
+          message: `You have successfully swapped assignments with ${requesterDetails?.fullName || "another user"} for "${task.title}"${
+            swapRequest.scope === 'day' ? ` on ${swapRequest.selectedDay}` : ''
+          }`,
           data: {
             swapRequestId: requestId,
-            assignmentId: result.newAssignment.id,
             taskId: task.id,
             groupId: task.groupId,
             requesterId: swapRequest.requestedBy,
-            requesterName: requesterDetails?.fullName
+            requesterName: requesterDetails?.fullName,
+            scope: swapRequest.scope,
+            selectedDay: swapRequest.selectedDay,
+            selectedTimeSlotId: swapRequest.selectedTimeSlotId
           }
         }
       });
@@ -849,7 +1059,9 @@ export class SwapRequestService {
             userId: admin.userId,
             type: "SWAP_ADMIN_NOTIFICATION",
             title: "Task Swapped",
-            message: `${requesterDetails?.fullName || "A user"} and ${memberDetails?.fullName || "another user"} swapped "${task.title}"`,
+            message: `${requesterDetails?.fullName || "A user"} and ${memberDetails?.fullName || "another user"} swapped "${task.title}"${
+              swapRequest.scope === 'day' ? ` on ${swapRequest.selectedDay}` : ''
+            }`,
             data: {
               swapRequestId: requestId,
               taskId: task.id,
@@ -858,7 +1070,9 @@ export class SwapRequestService {
               toUserId: userId,
               fromUserName: requesterDetails?.fullName,
               toUserName: memberDetails?.fullName,
-              assignmentId: result.newAssignment.id
+              scope: swapRequest.scope,
+              selectedDay: swapRequest.selectedDay,
+              selectedTimeSlotId: swapRequest.selectedTimeSlotId
             }
           }
         });
@@ -889,13 +1103,12 @@ export class SwapRequestService {
 
       return {
         success: true,
-        message: "Swap request accepted successfully",
+        message: successMessage,
         swapRequest: {
           ...updatedSwapRequest,
           requester: requesterDetails,
           targetUser: memberDetails
         },
-        newAssignment: result.newAssignment,
         previousAssignee: {
           id: assignment.userId,
           name: assignment.user.fullName
@@ -975,14 +1188,18 @@ export class SwapRequestService {
             userId: swapRequest.requestedBy,
             type: "SWAP_REJECTED",
             title: "Swap Request Rejected",
-            message: `${userDetails?.fullName || "A user"} rejected your swap request for "${swapRequest.assignment.task.title}"`,
+            message: `${userDetails?.fullName || "A user"} rejected your swap request for "${swapRequest.assignment.task.title}"${
+              swapRequest.scope === 'day' ? ` on ${swapRequest.selectedDay}` : ''
+            }`,
             data: {
               swapRequestId: requestId,
               assignmentId: swapRequest.assignmentId,
               taskId: swapRequest.assignment.taskId,
               groupId: swapRequest.assignment.task.groupId,
               rejectedBy: userId,
-              reason: reason
+              reason: reason,
+              scope: swapRequest.scope,
+              selectedDay: swapRequest.selectedDay
             }
           }
         });
