@@ -555,7 +555,7 @@ export class AssignmentController {
         return res.status(401).json({ 
           success: false, 
           message: "Authentication required" 
-        });
+        }); 
       }
       
       const now = new Date();
