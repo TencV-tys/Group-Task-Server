@@ -13,7 +13,10 @@ export class SwapRequestController {
         assignmentId, 
         reason, 
         targetUserId, 
-        expiresAt 
+        expiresAt,
+        scope,
+        selectedDay,
+        selectedTimeSlotId
       } = req.body;
 
       if (!userId) {
@@ -36,7 +39,10 @@ export class SwapRequestController {
         {
           reason,
           targetUserId,
-          expiresAt: expiresAt ? new Date(expiresAt) : undefined
+          expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+          scope,
+          selectedDay,
+          selectedTimeSlotId
         }
       );
 
@@ -273,7 +279,7 @@ export class SwapRequestController {
     }
   }
 
-  // UPDATE: Accept a swap request
+  // UPDATE: Accept a swap request - FIXED VERSION
   static async acceptSwapRequest(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -305,14 +311,33 @@ export class SwapRequestController {
         });
       }
 
+      // ✅ Build response dynamically based on scope
+      const responseData: any = {
+        swapRequest: result.swapRequest,
+        previousAssignee: result.previousAssignee,
+        scope: result.scope,
+        selectedDay: result.selectedDay,
+        selectedTimeSlotId: result.selectedTimeSlotId
+      };
+
+      // ✅ Add scope-specific fields - ONLY if they exist
+      if (result.scope === 'week' && result.newAssignment) {
+        responseData.newAssignment = result.newAssignment;
+      }
+
+      if (result.scope === 'day') {
+        if (result.newAssignments) {
+          responseData.newAssignments = result.newAssignments;
+        }
+        if (result.transferredCount !== undefined) {
+          responseData.transferredCount = result.transferredCount;
+        }
+      }
+
       return res.json({
         success: true,
         message: result.message,
-        data: {
-          swapRequest: result.swapRequest,
-          newAssignment: result.newAssignment,
-          previousAssignee: result.previousAssignee
-        }
+        data: responseData
       });
 
     } catch (error: any) {
