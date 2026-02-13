@@ -11,6 +11,8 @@ import HomeRoute from './routes/home.routes';
 import TaskRoutes from './routes/task.routes';
 import UploadRoutes from './routes/upload.routes';
 import AssignmentRoutes from './routes/assignment.routes';
+import SwapRequestRoutes from './routes/swapRequest.routes';
+import { initSwapRequestCron } from "./cron/swapRequest.cron";
 
 dotenv.config(); 
 
@@ -60,7 +62,10 @@ svr.use('/api/home', HomeRoute);
 svr.use('/api/tasks', TaskRoutes);
 svr.use('/api/uploads', UploadRoutes); 
 svr.use('/api/assignments',AssignmentRoutes);
+svr.use('/api/swap-requests', SwapRequestRoutes);
 
+
+initSwapRequestCron();
 const COMPUTER_IP = '10.219.65.2';
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;

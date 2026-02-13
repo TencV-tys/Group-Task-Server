@@ -1,0 +1,517 @@
+import { Response } from "express";
+import { UserAuthRequest } from "../middlewares/user.auth.middleware";
+import { SwapRequestService } from "../services/swapRequest.services";
+import prisma from "../prisma";
+
+export class SwapRequestController {
+  
+  // CREATE: Request to swap an assignment
+  static async createSwapRequest(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { 
+        assignmentId, 
+        reason, 
+        targetUserId, 
+        expiresAt 
+      } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!assignmentId) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignment ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.createSwapRequest(
+        userId,
+        assignmentId,
+        {
+          reason,
+          targetUserId,
+          expiresAt: expiresAt ? new Date(expiresAt) : undefined
+        }
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: result.message,
+        data: result.swapRequest
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.createSwapRequest error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // GET: Get swap requests created by current user
+  static async getMySwapRequests(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { 
+        status, 
+        groupId,
+        limit = 20, 
+        offset = 0 
+      } = req.query;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      const result = await SwapRequestService.getUserSwapRequests(
+        userId,
+        {
+          status: status as string,
+          groupId: groupId as string,
+          limit: Number(limit),
+          offset: Number(offset)
+        }
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: {
+          requests: result.requests,
+          total: result.total
+        }
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.getMySwapRequests error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // GET: Get pending swap requests for current user (to accept/reject)
+  static async getPendingForMe(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { 
+        groupId,
+        limit = 20, 
+        offset = 0 
+      } = req.query;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      const result = await SwapRequestService.getPendingSwapRequestsForUser(
+        userId,
+        {
+          groupId: groupId as string,
+          limit: Number(limit),
+          offset: Number(offset)
+        }
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: {
+          requests: result.requests,
+          total: result.total
+        }
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.getPendingForMe error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // GET: Get all swap requests for a group (admin only)
+  static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as {groupId:string};
+      const { 
+        status,
+        limit = 50, 
+        offset = 0 
+      } = req.query;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.getGroupSwapRequests(
+        groupId,
+        userId,
+        {
+          status: status as string,
+          limit: Number(limit),
+          offset: Number(offset)
+        }
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: {
+          requests: result.requests,
+          total: result.total
+        }
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.getGroupSwapRequests error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // GET: Get single swap request details
+  static async getSwapRequestDetails(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { requestId } = req.params as {requestId:string};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          message: "Request ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.getSwapRequestDetails(
+        requestId,
+        userId
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: result.swapRequest
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.getSwapRequestDetails error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // UPDATE: Accept a swap request
+  static async acceptSwapRequest(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { requestId } = req.params as {requestId:string};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          message: "Request ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.acceptSwapRequest(
+        requestId,
+        userId
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: {
+          swapRequest: result.swapRequest,
+          newAssignment: result.newAssignment,
+          previousAssignee: result.previousAssignee
+        }
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.acceptSwapRequest error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // UPDATE: Reject a swap request
+  static async rejectSwapRequest(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { requestId } = req.params as {requestId:string};
+      const { reason } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          message: "Request ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.rejectSwapRequest(
+        requestId,
+        userId,
+        reason
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: result.swapRequest
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.rejectSwapRequest error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // UPDATE: Cancel a swap request (only by requester)
+  static async cancelSwapRequest(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { requestId } = req.params as {requestId:string};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!requestId) {
+        return res.status(400).json({
+          success: false,
+          message: "Request ID is required"
+        });
+      }
+
+      const result = await SwapRequestService.cancelSwapRequest(
+        requestId,
+        userId
+      );
+
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: result.message,
+        data: result.swapRequest
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.cancelSwapRequest error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // GET: Check if user can swap assignment
+  static async checkCanSwap(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { assignmentId } = req.params as {assignmentId:string};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!assignmentId) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignment ID is required"
+        });
+      }
+
+      const assignment = await prisma.assignment.findUnique({
+        where: { id: assignmentId },
+        include: {
+          task: true
+        }
+      });
+
+      if (!assignment) {
+        return res.status(404).json({
+          success: false,
+          message: "Assignment not found"
+        });
+      }
+
+      // Check if assignment belongs to user
+      if (assignment.userId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only request swap for your own assignments"
+        });
+      }
+
+      // Check if already completed
+      if (assignment.completed) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot swap completed assignments"
+        });
+      }
+
+      // Check if there's already a pending swap request
+      const existingRequest = await prisma.swapRequest.findFirst({
+        where: {
+          assignmentId,
+          status: "PENDING"
+        }
+      });
+
+      if (existingRequest) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "A pending swap request already exists for this assignment",
+          existingRequestId: existingRequest.id
+        });
+      }
+
+      // Check 24 hour rule
+      const now = new Date();
+      const dueDate = new Date(assignment.dueDate);
+      const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+      if (hoursUntilDue < 24) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot swap assignments less than 24 hours before due date"
+        });
+      }
+
+      return res.json({
+        success: true,
+        canSwap: true
+      });
+
+    } catch (error: any) {
+      console.error("SwapRequestController.checkCanSwap error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+}
