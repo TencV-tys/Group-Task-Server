@@ -62,6 +62,25 @@ enum TaskExecutionFrequency {
   WEEKLY
 }
 
+// Feedback Types
+enum FeedbackType {
+  BUG
+  FEATURE_REQUEST
+  GENERAL
+  SUGGESTION
+  COMPLAINT
+  QUESTION
+  OTHER
+}
+
+// Feedback Status
+enum FeedbackStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
 // ============= CORE MODELS =============
 
 model User {
@@ -301,18 +320,27 @@ model SwapRequest {
   @@map("swap_requests")
 }
 
+// ============= UPDATED FEEDBACK MODEL =============
 model Feedback {
-  id      String @id @default(uuid())
+  id      String   @id @default(uuid())
   userId  String
-  type    String
-  message String
-  status  String @default("OPEN")
-
-  user User @relation("UserFeedback", fields: [userId], references: [id])
+  type    String   // Will store FeedbackType enum as string: "BUG", "FEATURE_REQUEST", "GENERAL", etc.
+  message String   // The actual feedback text
+  status  String   @default("OPEN") // Will store FeedbackStatus enum as string: "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"
+  
+  // Optional category for better organization
+  category String? // e.g., "UI", "Performance", "Task", "Group", "Auth", "Other"
+  
+  // Relationships
+  user User @relation("UserFeedback", fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
   @@map("feedback")
 }
 

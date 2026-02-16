@@ -156,9 +156,14 @@ CREATE TABLE `feedback` (
     `type` VARCHAR(191) NOT NULL,
     `message` VARCHAR(191) NOT NULL,
     `status` VARCHAR(191) NOT NULL DEFAULT 'OPEN',
+    `category` VARCHAR(191) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
+    INDEX `feedback_userId_idx`(`userId`),
+    INDEX `feedback_status_idx`(`status`),
+    INDEX `feedback_type_idx`(`type`),
+    INDEX `feedback_createdAt_idx`(`createdAt`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -303,7 +308,7 @@ ALTER TABLE `assignments` ADD CONSTRAINT `assignments_timeSlotId_fkey` FOREIGN K
 ALTER TABLE `swap_requests` ADD CONSTRAINT `swap_requests_assignmentId_fkey` FOREIGN KEY (`assignmentId`) REFERENCES `assignments`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `feedback` ADD CONSTRAINT `feedback_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `feedback` ADD CONSTRAINT `feedback_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `user_notifications` ADD CONSTRAINT `user_notifications_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

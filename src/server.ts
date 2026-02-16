@@ -13,6 +13,8 @@ import UploadRoutes from './routes/upload.routes';
 import AssignmentRoutes from './routes/assignment.routes';
 import SwapRequestRoutes from './routes/swapRequest.routes';
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
+import UserNotificationRoutes from './routes/user.notification.routes';
+import FeedbackRoutes from './routes/feedback.routes';
 
 dotenv.config(); 
 
@@ -63,6 +65,8 @@ svr.use('/api/tasks', TaskRoutes);
 svr.use('/api/uploads', UploadRoutes); 
 svr.use('/api/assignments',AssignmentRoutes);
 svr.use('/api/swap-requests', SwapRequestRoutes);
+svr.use('/api/notifications', UserNotificationRoutes);
+svr.use('/api/feedback', FeedbackRoutes);
 
 
 initSwapRequestCron();
