@@ -1,4 +1,3 @@
-// src/services/group.members.services.ts
 import prisma from "../prisma";
 
 export class GroupMembersService {
@@ -396,7 +395,7 @@ export class GroupMembersService {
     }
   }
 
-  // NEW: Update member rotation settings
+  // Update member rotation settings
   static async updateMemberRotation(
     groupId: string,
     memberId: string,
@@ -504,7 +503,7 @@ export class GroupMembersService {
     }
   }
 
-  // NEW: Reorder rotation sequence
+  // Reorder rotation sequence
   static async reorderRotationSequence(groupId: string, adminId: string, newOrder: Array<{ memberId: string, rotationOrder: number }>) {
     try {
       // Check if admin is actually admin
@@ -552,6 +551,398 @@ export class GroupMembersService {
       return {
         success: false,
         message: error.message || "Error reordering rotation sequence"
+      };
+    }
+  }
+
+  // ✅ NEW: Update group information (name, description) - admin only
+  static async updateGroup(groupId: string, userId: string, updateData: { name?: string, description?: string }) {
+    try {
+      // Check if user is admin
+      const userMembership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+      if (!userMembership) {
+        return {
+          success: false,
+          message: "Only admins can update group information"
+        };
+      }
+
+      // Validate data
+      if (updateData.name !== undefined && updateData.name.trim().length === 0) {
+        return {
+          success: false,
+          message: "Group name cannot be empty"
+        };
+      }
+
+      if (updateData.description !== undefined && updateData.description.length > 500) {
+        return {
+          success: false,
+          message: "Description cannot exceed 500 characters"
+        };
+      }
+
+      // Prepare update data
+      const data: any = {};
+      if (updateData.name !== undefined) {
+        data.name = updateData.name.trim();
+      }
+      if (updateData.description !== undefined) {
+        data.description = updateData.description.trim() || null;
+      }
+
+      if (Object.keys(data).length === 0) {
+        return {
+          success: false,
+          message: "No data provided to update"
+        };
+      }
+
+      // Update group
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: data,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          avatarUrl: true,
+          inviteCode: true,
+          currentRotationWeek: true,
+          createdAt: true
+        }
+      });
+
+      return {
+        success: true,
+        message: "Group updated successfully",
+        group: updatedGroup
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.updateGroup error:", error);
+      
+      if (error.code === 'P2025') {
+        return {
+          success: false,
+          message: "Group not found"
+        };
+      }
+
+      return {
+        success: false,
+        message: error.message || "Error updating group"
+      };
+    }
+  }
+
+  // ✅ NEW: Delete group avatar
+  static async deleteGroupAvatar(groupId: string, userId: string) {
+    try {
+      // Check if user is admin
+      const userMembership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+      if (!userMembership) {
+        return {
+          success: false,
+          message: "Only admins can delete group avatar"
+        };
+      }
+
+      // Update group to remove avatar
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: { avatarUrl: null },
+        select: {
+          id: true,
+          name: true,
+          avatarUrl: true
+        }
+      });
+
+      return {
+        success: true,
+        message: "Group avatar deleted successfully",
+        group: updatedGroup
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.deleteGroupAvatar error:", error);
+      return {
+        success: false,
+        message: error.message || "Error deleting group avatar"
+      };
+    }
+  }
+
+  // ✅ NEW: Get group settings (full details for admin)
+  static async getGroupSettings(groupId: string, userId: string) {
+    try {
+      // Check if user is a member
+      const userMembership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId
+        }
+      });
+
+      if (!userMembership) {
+        return {
+          success: false,
+          message: "You are not a member of this group"
+        };
+      }
+
+      // Get group with all details
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        include: {
+          members: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
+                  avatarUrl: true
+                }
+              }
+            },
+            orderBy: [
+              { rotationOrder: 'asc' },
+              { joinedAt: 'asc' }
+            ]
+          }
+        }
+      });
+
+      if (!group) {
+        return {
+          success: false,
+          message: "Group not found"
+        };
+      }
+
+      // Get task counts
+      const taskCount = await prisma.task.count({
+        where: { groupId: groupId }
+      });
+
+      const recurringTaskCount = await prisma.task.count({
+        where: { 
+          groupId: groupId,
+          isRecurring: true 
+        }
+      });
+
+      // Format response
+      const formattedGroup = {
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        avatarUrl: group.avatarUrl,
+        inviteCode: userMembership.groupRole === "ADMIN" ? group.inviteCode : undefined, // Only admins see invite code
+        currentRotationWeek: group.currentRotationWeek,
+        lastRotationUpdate: group.lastRotationUpdate,
+        createdAt: group.createdAt,
+        updatedAt: group.updatedAt,
+        stats: {
+          totalMembers: group.members.length,
+          activeMembers: group.members.filter(m => m.isActive).length,
+          admins: group.members.filter(m => m.groupRole === "ADMIN").length,
+          totalTasks: taskCount,
+          recurringTasks: recurringTaskCount
+        },
+        members: group.members.map(m => ({
+          id: m.id,
+          userId: m.userId,
+          fullName: m.user.fullName,
+          email: m.user.email,
+          avatarUrl: m.user.avatarUrl,
+          role: m.groupRole,
+          rotationOrder: m.rotationOrder,
+          isActive: m.isActive,
+          joinedAt: m.joinedAt
+        })),
+        userRole: userMembership.groupRole
+      };
+
+      return {
+        success: true,
+        message: "Group settings retrieved successfully",
+        group: formattedGroup
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.getGroupSettings error:", error);
+      return {
+        success: false,
+        message: error.message || "Error retrieving group settings"
+      };
+    }
+  }
+
+  // ✅ NEW: Transfer ownership
+  static async transferOwnership(groupId: string, currentAdminId: string, newAdminId: string) {
+    try {
+      // Check if current user is admin
+      const currentAdmin = await prisma.groupMember.findFirst({
+        where: {
+          userId: currentAdminId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+      if (!currentAdmin) {
+        return {
+          success: false,
+          message: "Only admins can transfer ownership"
+        };
+      }
+
+      // Check if new admin is a member
+      const newAdmin = await prisma.groupMember.findFirst({
+        where: {
+          userId: newAdminId,
+          groupId: groupId
+        }
+      });
+
+      if (!newAdmin) {
+        return {
+          success: false,
+          message: "New admin is not a member of this group"
+        };
+      }
+
+      // Transaction to swap roles
+      await prisma.$transaction([
+        // Demote current admin to MEMBER
+        prisma.groupMember.update({
+          where: { id: currentAdmin.id },
+          data: { groupRole: "MEMBER" }
+        }),
+        // Promote new admin to ADMIN
+        prisma.groupMember.update({
+          where: { id: newAdmin.id },
+          data: { groupRole: "ADMIN" }
+        })
+      ]);
+
+      return {
+        success: true,
+        message: "Ownership transferred successfully"
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.transferOwnership error:", error);
+      return {
+        success: false,
+        message: error.message || "Error transferring ownership"
+      };
+    }
+  }
+
+  // ✅ NEW: Regenerate invite code
+  static async regenerateInviteCode(groupId: string, userId: string) {
+    try {
+      // Check if user is admin
+      const userMembership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+      if (!userMembership) {
+        return {
+          success: false,
+          message: "Only admins can regenerate invite code"
+        };
+      }
+
+      // Generate new invite code
+      const newInviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      // Update group
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: { inviteCode: newInviteCode },
+        select: { inviteCode: true }
+      });
+
+      return {
+        success: true,
+        message: "Invite code regenerated successfully",
+        inviteCode: updatedGroup.inviteCode
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.regenerateInviteCode error:", error);
+      return {
+        success: false,
+        message: error.message || "Error regenerating invite code"
+      };
+    }
+  }
+
+  // ✅ NEW: Delete group (admin only)
+  static async deleteGroup(groupId: string, userId: string) {
+    try {
+      // Check if user is admin
+      const userMembership = await prisma.groupMember.findFirst({
+        where: {
+          userId: userId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+
+      if (!userMembership) {
+        return {
+          success: false,
+          message: "Only admins can delete the group"
+        };
+      }
+
+      // Delete the group (cascades to members, tasks, assignments)
+      await prisma.group.delete({
+        where: { id: groupId }
+      });
+
+      return {
+        success: true,
+        message: "Group deleted successfully"
+      };
+
+    } catch (error: any) {
+      console.error("GroupMembersService.deleteGroup error:", error);
+      
+      if (error.code === 'P2025') {
+        return {
+          success: false,
+          message: "Group not found"
+        };
+      }
+
+      return {
+        success: false,
+        message: error.message || "Error deleting group"
       };
     }
   }
