@@ -657,7 +657,7 @@ export class TaskService {
 
       if (!task) {
         return { success: false, message: "Task not found" };
-      }
+      } 
 
       const membership = await prisma.groupMember.findFirst({
         where: { userId, groupId: task.groupId, groupRole: "ADMIN" }
@@ -1098,100 +1098,118 @@ export class TaskService {
     }
   }
 
-  // Get rotation schedule - FIXED: Add type safety
-  static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
+// Get rotation schedule - FIXED to show ACTUAL assignments
+static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
 
-      if (!membership) {
-        return { success: false, message: "You are not a member in this group" };
-      }
-
-      const group = await prisma.group.findUnique({ where: { id: groupId } });
-      if (!group) {
-        return { success: false, message: "Group not found" };
-      }
-
-      const tasks = await prisma.task.findMany({
-        where: { groupId, isRecurring: true },
-        include: {
-          timeSlots: { 
-            orderBy: { sortOrder: 'asc' },
-            select: { 
-              id: true, 
-              startTime: true, 
-              endTime: true, 
-              label: true,
-              points: true 
-            }
-          }
-        },
-        orderBy: { rotationOrder: 'asc' }
-      });
-
-      const schedule = [];
-
-      for (let weekOffset = 0; weekOffset < weeks; weekOffset++) {
-        const weekNumber = group.currentRotationWeek + weekOffset;
-        const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
-
-        const weekSchedule: any = {
-          week: weekNumber,
-          weekStart,
-          weekEnd,
-          tasks: []
-        };
-
-        for (const task of tasks) {
-          const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
-          
-          if (rotationMembers.length === 0) continue;
-
-          const rotationOrderValue = task.rotationOrder !== null && task.rotationOrder !== undefined 
-            ? Number(task.rotationOrder) 
-            : 1;
-          const taskRotationOrder = Math.max(1, rotationOrderValue);
-          const taskIndex = Math.max(0, taskRotationOrder - 1);
-          const assigneeIndex = (taskIndex + weekOffset) % rotationMembers.length;
-          const assignee = rotationMembers[assigneeIndex];
-
-          // FIXED: Proper type handling for selectedDays
-          const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
-                               (task.dayOfWeek ? [task.dayOfWeek] : []);
-
-          weekSchedule.tasks.push({
-            taskId: task.id,
-            taskTitle: task.title,
-            executionFrequency: task.executionFrequency,
-            timeSlots: task.timeSlots || [],
-            selectedDays: selectedDays,
-            assignee: assignee ? {
-              id: assignee.userId,
-              name: assignee.fullName,
-              avatarUrl: assignee.avatarUrl
-            } : null,
-            points: task.points
-          });
-        }
-
-        schedule.push(weekSchedule);
-      }
-
-      return {
-        success: true,
-        message: "Rotation schedule retrieved",
-        schedule,
-        currentWeek: group.currentRotationWeek,
-        totalTasks: tasks.length
-      };
- 
-    } catch (error: any) {
-      console.error("TaskService.getRotationSchedule error:", error);
-      return { success: false, message: error.message || "Error retrieving rotation schedule" };
+    if (!membership) {
+      return { success: false, message: "You are not a member in this group" };
     }
+
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
+
+    // Get all recurring tasks
+    const tasks = await prisma.task.findMany({
+      where: { groupId, isRecurring: true },
+      include: {
+        timeSlots: { 
+          orderBy: { sortOrder: 'asc' },
+          select: { 
+            id: true, 
+            startTime: true, 
+            endTime: true, 
+            label: true,
+            points: true 
+          }
+        }
+      },
+      orderBy: { rotationOrder: 'asc' }
+    });
+
+    const schedule = [];
+
+    // Show only current and past weeks (no future weeks)
+    for (let weekOffset = 0; weekOffset < weeks; weekOffset++) {
+      const weekNumber = group.currentRotationWeek - weekOffset; // Go backwards from current week
+      
+      // Stop if we go below week 1
+      if (weekNumber < 1) continue;
+      
+      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(-weekOffset); // Negative offset for past weeks
+
+      const weekSchedule: any = {
+        week: weekNumber,
+        weekStart,
+        weekEnd,
+        tasks: []
+      };
+
+      // For each task, get the ACTUAL assignments for this week
+      for (const task of tasks) {
+        // Get the actual assignment for this specific week
+        const actualAssignment = await prisma.assignment.findFirst({
+          where: {
+            taskId: task.id,
+            rotationWeek: weekNumber
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true
+              }
+            },
+            timeSlot: true
+          }
+        });
+
+        // Get selected days
+        const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
+                             (task.dayOfWeek ? [task.dayOfWeek] : []);
+
+        weekSchedule.tasks.push({
+          taskId: task.id,
+          taskTitle: task.title,
+          executionFrequency: task.executionFrequency,
+          timeSlots: task.timeSlots || [],
+          selectedDays: selectedDays,
+          // Use ACTUAL assignment data, not projected
+          assignee: actualAssignment?.user ? {
+            id: actualAssignment.user.id,
+            name: actualAssignment.user.fullName,
+            avatarUrl: actualAssignment.user.avatarUrl
+          } : null,
+          // If no assignment exists for this week, it means the task wasn't assigned
+          // (either task was created after this week or no assignment was created)
+          points: actualAssignment?.points || task.points,
+          completed: actualAssignment?.completed || false,
+          actualAssignment: !!actualAssignment // Flag to indicate if this is an actual assignment
+        });
+      }
+
+      schedule.push(weekSchedule);
+    }
+
+    return {
+      success: true,
+      message: "Rotation schedule retrieved",
+      schedule,
+      currentWeek: group.currentRotationWeek,
+      totalTasks: tasks.length
+    };
+ 
+  } catch (error: any) {
+    console.error("TaskService.getRotationSchedule error:", error);
+    return { success: false, message: error.message || "Error retrieving rotation schedule" };
   }
+}
 
   // ... reassignTask method - FIXED: Add type safety
   static async reassignTask(taskId: string, userId: string, targetUserId: string) {
