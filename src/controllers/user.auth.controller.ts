@@ -189,7 +189,7 @@ export class UserAuthController{
             })
           }
 
-
+ 
      }
 
      static async logout(req:Request, res:Response){

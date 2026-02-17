@@ -82,7 +82,6 @@ enum FeedbackStatus {
 }
 
 // ============= CORE MODELS =============
-
 model User {
   id           String  @id @default(uuid())
   email        String  @unique
@@ -99,6 +98,10 @@ model User {
   roleStatusReason    String?
 
   settings Json? @default("{}")
+
+  // Password Reset Fields
+  resetPasswordToken   String?   @unique
+  resetPasswordExpires DateTime?
 
   // Relationships
   groups            GroupMember[]      @relation("UserGroups")
@@ -178,7 +181,7 @@ model Task {
   selectedDays Json? // JSON array of DayOfWeek enum values: ["MONDAY", "WEDNESDAY", "FRIDAY"]
 
   // ✅ UPDATED: Multiple time slots relationship
-  timeSlots   TimeSlot[] @relation("TaskTimeSlots")
+  timeSlots TimeSlot[] @relation("TaskTimeSlots")
 
   // ✅ UPDATED: For quick access, store primary time slot
   primaryTimeSlotId String? @unique
@@ -206,10 +209,10 @@ model Task {
   createdById String
 
   // Relationships
-  group       Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
-  creator     User         @relation("TaskCreator", fields: [createdById], references: [id])
-  assignments Assignment[] @relation("TaskAssignments")
-  primaryTimeSlot TimeSlot? @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id])
+  group           Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
+  creator         User         @relation("TaskCreator", fields: [createdById], references: [id])
+  assignments     Assignment[] @relation("TaskAssignments")
+  primaryTimeSlot TimeSlot?    @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -219,29 +222,29 @@ model Task {
 
 // ✅ FIXED: TimeSlot model - remove @default(null) from points
 model TimeSlot {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   taskId    String
-  startTime String   // e.g., "08:00"
-  endTime   String   // e.g., "10:00"
-  label     String?  // Optional: "Morning", "Afternoon", "Evening", "Breakfast", "Lunch", "Dinner"
-  
+  startTime String // e.g., "08:00"
+  endTime   String // e.g., "10:00"
+  label     String? // Optional: "Morning", "Afternoon", "Evening", "Breakfast", "Lunch", "Dinner"
+
   // ✅ FIXED: Points for this specific time slot (null = use task points)
-  points    Int?     // REMOVED: @default(null)
-  
+  points Int? // REMOVED: @default(null)
+
   // For ordering time slots
-  sortOrder Int      @default(0)
-  
+  sortOrder Int @default(0)
+
   // Whether this is the primary/default time slot
-  isPrimary Boolean  @default(false)
-  
+  isPrimary Boolean @default(false)
+
   // Relationships
-  task      Task     @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
-  primaryForTask Task? @relation("TaskPrimaryTimeSlot")
-  assignments Assignment[] @relation("TimeSlotAssignments")
-  
+  task           Task         @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
+  primaryForTask Task?        @relation("TaskPrimaryTimeSlot")
+  assignments    Assignment[] @relation("TimeSlotAssignments")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([taskId])
   @@index([sortOrder])
   @@index([isPrimary])
@@ -249,32 +252,32 @@ model TimeSlot {
 }
 
 model Assignment {
-  id          String    @id @default(uuid())
-  taskId      String
-  userId      String
-  dueDate     DateTime
-  
+  id      String   @id @default(uuid())
+  taskId  String
+  userId  String
+  dueDate DateTime
+
   // ✅ FIXED: Points awarded for this specific assignment
-  points      Int       @default(1)
-  
+  points Int @default(1)
+
   completed   Boolean   @default(false)
   completedAt DateTime?
   verified    Boolean   @default(false)
   photoUrl    String?
-  
+
   // ✅ NEW: User notes when completing task
-  notes       String?
-  
+  notes String?
+
   // ✅ NEW: Admin notes when verifying
-  adminNotes  String?
+  adminNotes String?
 
   // ✅ FIXED: Track which specific time slot this assignment is for
-  timeSlotId  String?
+  timeSlotId String?
 
   // Rotation tracking
-  rotationWeek Int      @default(0)
-  weekStart    DateTime
-  weekEnd      DateTime
+  rotationWeek  Int        @default(0)
+  weekStart     DateTime
+  weekEnd       DateTime
   assignmentDay DayOfWeek?
 
   // Relationships
@@ -308,8 +311,8 @@ model SwapRequest {
   expiresAt    DateTime?
 
   // ✅ NEW: Swap scope fields
-  scope        String? @default("week") // "week" or "day"
-  selectedDay  String? // "MONDAY", "TUESDAY", etc. - only if scope is "day"
+  scope              String? @default("week") // "week" or "day"
+  selectedDay        String? // "MONDAY", "TUESDAY", etc. - only if scope is "day"
   selectedTimeSlotId String? // Specific time slot ID - optional
 
   assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
@@ -322,15 +325,15 @@ model SwapRequest {
 
 // ============= UPDATED FEEDBACK MODEL =============
 model Feedback {
-  id      String   @id @default(uuid())
+  id      String @id @default(uuid())
   userId  String
-  type    String   // Will store FeedbackType enum as string: "BUG", "FEATURE_REQUEST", "GENERAL", etc.
-  message String   // The actual feedback text
-  status  String   @default("OPEN") // Will store FeedbackStatus enum as string: "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"
-  
+  type    String // Will store FeedbackType enum as string: "BUG", "FEATURE_REQUEST", "GENERAL", etc.
+  message String // The actual feedback text
+  status  String @default("OPEN") // Will store FeedbackStatus enum as string: "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"
+
   // Optional category for better organization
   category String? // e.g., "UI", "Performance", "Task", "Group", "Auth", "Other"
-  
+
   // Relationships
   user User @relation("UserFeedback", fields: [userId], references: [id], onDelete: Cascade)
 
