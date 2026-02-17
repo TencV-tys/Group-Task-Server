@@ -64,11 +64,11 @@ export class UserPasswordResetService {
           resetPasswordExpires: resetTokenExpiry
         }
       });
-
+ 
       console.log("Reset token stored in database");
 
       // Create reset URL
-      const resetUrl = `${process.env.APP_URL}:5000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+      const resetUrl = `http://192.168.1.29:5000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
       console.log("Reset URL generated:", resetUrl);
 
       // Email content
