@@ -162,50 +162,97 @@ export class UserPasswordResetService {
   }
 
   // Verify reset token
-  static async verifyResetToken(token: string, email: string) {
-    try {
-      if (!token || !email) {
-        return {
-          success: false,
-          message: "Token and email are required"
-        };
+static async verifyResetToken(token: string, email: string) {
+  console.log("========== BACKEND VERIFY TOKEN ==========");
+  console.log("📧 Email:", email);
+  console.log("🔑 Raw token:", token);
+  
+  try {
+    if (!token || !email) {
+      console.log("❌ Missing token or email");
+      return {
+        success: false,
+        message: "Token and email are required"
+      };
+    }
+
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+    
+    console.log("🔐 Hashed token:", hashedToken);
+    console.log("⏰ Current time:", new Date().toISOString());
+
+    const user = await prisma.user.findFirst({
+      where: {
+        email,
+        resetPasswordToken: hashedToken,
+        resetPasswordExpires: {
+          gt: new Date()
+        }
       }
+    });
 
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(token)
-        .digest('hex');
-
-      const user = await prisma.user.findFirst({
+    if (!user) {
+      console.log("❌ No user found with valid token");
+      
+      // Check if token exists but is expired
+      const expiredUser = await prisma.user.findFirst({
         where: {
           email,
           resetPasswordToken: hashedToken,
           resetPasswordExpires: {
-            gt: new Date()
+            lt: new Date()
           }
         }
       });
-
-      if (!user) {
+      
+      if (expiredUser) {
+        console.log("⏰ Token found but EXPIRED at:", expiredUser.resetPasswordExpires);
         return {
           success: false,
-          message: "Invalid or expired reset token"
+          message: "Reset link has expired. Please request a new one."
         };
       }
-
-      return {
-        success: true,
-        message: "Token is valid",
-        userId: user.id
-      };
-
-    } catch (error: any) {
+      
+      // Check if email exists at all
+      const existingUser = await prisma.user.findUnique({
+        where: { email }
+      });
+      
+      if (!existingUser) {
+        console.log("❌ No user found with email:", email);
+        return {
+          success: false,
+          message: "Invalid reset token"
+        };
+      }
+      
+      console.log("❌ Token doesn't match for this user");
       return {
         success: false,
-        message: "Failed to verify token"
+        message: "Invalid reset token"
       };
     }
+
+    console.log("✅ Token is valid for user:", user.id);
+    console.log("⏰ Token expires at:", user.resetPasswordExpires);
+    
+    return {
+      success: true,
+      message: "Token is valid",
+      userId: user.id
+    };
+
+  } catch (error: any) {
+    console.error("❌ Error in verifyResetToken:", error);
+    return {
+      success: false,
+      message: "Failed to verify token"
+    };
   }
+}
 
   // Reset password
   static async resetPassword(token: string, email: string, newPassword: string, confirmPassword: string) {

@@ -3,7 +3,7 @@ import { UserAuthController } from "../controllers/user.auth.controller";
 import { UserAuthMiddleware } from "../middlewares/user.auth.middleware";
 import { UserPasswordResetController } from "../controllers/user.passwordreset.controller"; 
 
-const router = Router();
+const router = Router(); 
 
 // Auth routes
 router.post('/login', UserAuthController.login);
