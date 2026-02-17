@@ -24,6 +24,7 @@ const svr = express();
 
 // 1. Serve static files from uploads directory
 svr.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+svr.use(express.static(path.join(__dirname, '../public')));
 
 // 2. Create uploads directories if they don't exist
 const createUploadsDirectories = () => {
@@ -68,6 +69,10 @@ svr.use('/api/swap-requests', SwapRequestRoutes);
 svr.use('/api/notifications', UserNotificationRoutes);
 svr.use('/api/feedback', FeedbackRoutes);
 
+
+svr.get('/reset-password', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/reset-password.html'));
+});
 
 initSwapRequestCron();
 const COMPUTER_IP = '10.219.65.2';

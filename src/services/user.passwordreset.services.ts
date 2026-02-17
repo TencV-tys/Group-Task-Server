@@ -68,8 +68,7 @@ export class UserPasswordResetService {
       console.log("Reset token stored in database");
 
       // Create reset URL
-      const resetUrl = `${process.env.APP_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-      
+      const resetUrl = `${process.env.APP_URL}:5000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
       console.log("Reset URL generated:", resetUrl);
 
       // Email content
