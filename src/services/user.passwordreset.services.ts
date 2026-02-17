@@ -3,27 +3,32 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { hashedPassword } from "../utils/shared.bcrypt";
 
-// Create transporter for sending emails
+// Create transporter with your Gmail settings
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false,
+  secure: false, // true for 465, false for 587
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
+    pass: process.env.SMTP_PASS,
+  },
+  // Add these for better debugging
+  tls: {
+    rejectUnauthorized: false // Only for development
   }
 });
 
 export class UserPasswordResetService {
   
-  // Generate reset token and send email
   static async requestPasswordReset(email: string) {
     try {
+      console.log("📧 Password reset requested for:", email);
+      
       if (!email) {
         return {
           success: false,
           message: "Email is required"
-        }; 
+        };
       }
 
       // Find user
@@ -32,18 +37,20 @@ export class UserPasswordResetService {
       });
 
       if (!user) {
-        // For security, don't reveal if user exists
+        console.log("User not found, but returning success for security");
         return {
           success: true,
           message: "If your email is registered, you will receive a password reset link"
         };
       }
 
+      console.log("User found:", user.email);
+
       // Generate reset token
       const resetToken = crypto.randomBytes(32).toString('hex');
-      const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour from now
+      const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
 
-      // Hash token before storing (for security)
+      // Hash token before storing
       const hashedToken = crypto
         .createHash('sha256')
         .update(resetToken)
@@ -58,30 +65,80 @@ export class UserPasswordResetService {
         }
       });
 
-      // Create reset URL (you'll need to handle this in your app)
-      const resetUrl = `${process.env.APP_URL || 'exp://localhost:19000'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+      console.log("Reset token stored in database");
 
-      // Send email
+      // Create reset URL
+      const resetUrl = `${process.env.APP_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+      
+      console.log("Reset URL generated:", resetUrl);
+
+      // Email content
       const mailOptions = {
-        from: `"Your App Name" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+        from: `"GroupTask App" <${process.env.SMTP_USER}>`, // Use your Gmail as sender
         to: email,
-        subject: "Password Reset Request",
+        subject: "🔐 Password Reset Request - GroupTask",
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2>Password Reset Request</h2>
-            <p>Hello ${user.fullName},</p>
-            <p>You requested to reset your password. Click the button below to proceed:</p>
-            <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #007AFF; color: white; text-decoration: none; border-radius: 6px; margin: 20px 0;">Reset Password</a>
-            <p>Or copy this link: ${resetUrl}</p>
-            <p>This link will expire in 1 hour.</p>
-            <p>If you didn't request this, please ignore this email.</p>
-            <hr>
-            <p style="color: #666; font-size: 12px;">This is an automated message, please do not reply.</p>
-          </div>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px;">
+            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+              
+              <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #333; margin: 0;">🔄 Password Reset</h1>
+              </div>
+              
+              <p style="font-size: 16px; color: #555; line-height: 1.5;">Hello <strong>${user.fullName}</strong>,</p>
+              
+              <p style="font-size: 16px; color: #555; line-height: 1.5;">We received a request to reset your password for your GroupTask account. Click the button below to proceed:</p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${resetUrl}" style="background-color: #007AFF; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block;">Reset Password</a>
+              </div>
+              
+              <p style="font-size: 14px; color: #777; line-height: 1.5;">Or copy this link to your browser:</p>
+              <p style="font-size: 12px; color: #999; word-break: break-all; background-color: #f8f9fa; padding: 10px; border-radius: 5px;">${resetUrl}</p>
+              
+              <div style="border-top: 1px solid #eee; margin: 30px 0 20px; padding-top: 20px;">
+                <p style="font-size: 13px; color: #999; margin: 5px 0;">⏰ This link will expire in <strong>1 hour</strong>.</p>
+                <p style="font-size: 13px; color: #999; margin: 5px 0;">⚠️ If you didn't request this, please ignore this email or contact support.</p>
+                <p style="font-size: 13px; color: #999; margin: 5px 0;">📍 This is an automated message, please do not reply.</p>
+              </div>
+              
+              <div style="text-align: center; margin-top: 20px;">
+                <p style="font-size: 12px; color: #aaa;">© ${new Date().getFullYear()} GroupTask. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        // Plain text version for email clients that don't support HTML
+        text: `
+          Password Reset Request
+          
+          Hello ${user.fullName},
+          
+          We received a request to reset your password.
+          
+          Click this link to reset: ${resetUrl}
+          
+          This link expires in 1 hour.
+          
+          If you didn't request this, please ignore this email.
         `
       };
 
-      await transporter.sendMail(mailOptions);
+      console.log("Attempting to send email...");
+
+      // Send email
+      const info = await transporter.sendMail(mailOptions);
+      
+      console.log("✅ Email sent successfully!");
+      console.log("Message ID:", info.messageId);
+      console.log("Response:", info.response);
 
       return {
         success: true,
@@ -89,10 +146,18 @@ export class UserPasswordResetService {
       };
 
     } catch (error: any) {
-      console.error("Password reset request error:", error);
+      console.error("❌ Password reset request error:", error);
+      
+      // More detailed error logging
+      if (error.code === 'EAUTH') {
+        console.error("Authentication failed - check your Gmail app password");
+      } else if (error.code === 'ESOCKET') {
+        console.error("Socket error - check your network connection");
+      }
+      
       return {
         success: false,
-        message: "Failed to process password reset request"
+        message: "Failed to process password reset request. Please try again later."
       };
     }
   }
