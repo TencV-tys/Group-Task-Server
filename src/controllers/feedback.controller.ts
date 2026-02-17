@@ -152,8 +152,8 @@ export class FeedbackController {
         success: false,
         message: "Internal server error"
       });
-    }
-  }
+    } 
+  } 
 
   // Get my feedback stats
   static async getMyFeedbackStats(req: UserAuthRequest, res: Response) {
@@ -189,4 +189,56 @@ export class FeedbackController {
       });
     }
   }
+
+  // Add this to your FeedbackController class
+
+// Update my feedback
+static async updateMyFeedback(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { feedbackId } = req.params as { feedbackId: string };
+    const { type, message, category } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated"
+      });
+    }
+
+    if (!feedbackId) {
+      return res.status(400).json({
+        success: false,
+        message: "Feedback ID is required"
+      });
+    }
+
+    const result = await FeedbackService.updateFeedback(feedbackId, userId, {
+      type,
+      message,
+      category
+    });
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      feedback: result.feedback
+    });
+
+  } catch (error: any) {
+    console.error("Error in updateMyFeedback:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
 }

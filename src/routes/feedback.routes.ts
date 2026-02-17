@@ -19,6 +19,9 @@ router.get('/my-stats', FeedbackController.getMyFeedbackStats);
 // Get single feedback
 router.get('/:feedbackId', FeedbackController.getFeedbackDetails);
 
+// UPDATE feedback - NEW ROUTE
+router.put('/:feedbackId', FeedbackController.updateMyFeedback);
+
 // Delete feedback
 router.delete('/:feedbackId', FeedbackController.deleteMyFeedback);
 

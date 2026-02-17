@@ -10,7 +10,7 @@ export class FeedbackService {
       type: string;
       message: string;
       category?: string;
-    }
+    } 
   ) {
     try {
       // Validate
@@ -241,4 +241,98 @@ export class FeedbackService {
     };
   }
 }
+// Add this to your FeedbackService class
+
+// Update feedback (user can update their own feedback)
+static async updateFeedback(
+  feedbackId: string,
+  userId: string,
+  data: {
+    type?: string;
+    message?: string;
+    category?: string | null;
+  }
+) {
+  try {
+    // Check if feedback exists and belongs to user
+    const existingFeedback = await prisma.feedback.findFirst({
+      where: {
+        id: feedbackId,
+        userId
+      }
+    });
+
+    if (!existingFeedback) {
+      return {
+        success: false,
+        message: "Feedback not found or you don't have permission to update it"
+      };
+    }
+
+    // Don't allow updating if feedback is already RESOLVED or CLOSED
+    if (existingFeedback.status === "RESOLVED" || existingFeedback.status === "CLOSED") {
+      return {
+        success: false,
+        message: "Cannot update feedback that is already resolved or closed"
+      };
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    
+    if (data.type !== undefined) {
+      if (!data.type) {
+        return { success: false, message: "Feedback type cannot be empty" };
+      }
+      updateData.type = data.type;
+    }
+    
+    if (data.message !== undefined) {
+      if (!data.message?.trim()) {
+        return { success: false, message: "Feedback message cannot be empty" };
+      }
+      updateData.message = data.message.trim();
+    }
+    
+    if (data.category !== undefined) {
+      updateData.category = data.category?.trim() || null;
+    }
+
+    // If nothing to update
+    if (Object.keys(updateData).length === 0) {
+      return {
+        success: false,
+        message: "No data to update"
+      };
+    }
+
+    // Update feedback
+    const updatedFeedback = await prisma.feedback.update({
+      where: { id: feedbackId },
+      data: updateData
+    });
+
+    return {
+      success: true,
+      message: "Feedback updated successfully",
+      feedback: {
+        id: updatedFeedback.id,
+        type: updatedFeedback.type,
+        message: updatedFeedback.message,
+        status: updatedFeedback.status,
+        category: updatedFeedback.category,
+        createdAt: updatedFeedback.createdAt,
+        updatedAt: updatedFeedback.updatedAt
+      }
+    };
+
+  } catch (error: any) {
+    console.error("FeedbackService.updateFeedback error:", error);
+    return {
+      success: false,
+      message: error.message || "Error updating feedback"
+    };
+  }
+}
+
 }
