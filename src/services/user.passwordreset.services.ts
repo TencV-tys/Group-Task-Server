@@ -68,7 +68,7 @@ export class UserPasswordResetService {
       console.log("Reset token stored in database");
 
       // Create reset URL
-      const resetUrl = `http://192.168.1.29:5000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+        const resetUrl = `http://192.168.1.29:5000/reset-password-form?token=${resetToken}&email=${email}`;
       console.log("Reset URL generated:", resetUrl);
 
       // Email content
@@ -127,7 +127,7 @@ export class UserPasswordResetService {
           This link expires in 1 hour.
           
           If you didn't request this, please ignore this email.
-        `
+        ` 
       };
 
       console.log("Attempting to send email...");

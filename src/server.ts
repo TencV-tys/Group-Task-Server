@@ -70,9 +70,14 @@ svr.use('/api/notifications', UserNotificationRoutes);
 svr.use('/api/feedback', FeedbackRoutes);
 
 
-svr.get('/reset-password', (req, res) => {
-    res.sendFile(path.join(__dirname, '../public/reset-password.html'));
+
+svr.get('/reset-password-form', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/reset-password-form.html'));
 });
+svr.get('/forgot-password', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/forgot-password.html'));
+});
+
 
 initSwapRequestCron();
 const COMPUTER_IP = '10.219.65.2';
