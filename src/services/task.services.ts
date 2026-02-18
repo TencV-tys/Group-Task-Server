@@ -317,310 +317,362 @@ export class TaskService {
   }
 
   // Get group tasks with time slots
-  static async getGroupTasks(groupId: string, userId: string, week?: number) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
+ // In task.services.ts - Update getGroupTasks method
+static async getGroupTasks(groupId: string, userId: string, week?: number) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
 
-      if (!membership) {
-        return { success: false, message: "You are not a member in this group" };
-      }
+    if (!membership) {
+      return { success: false, message: "You are not a member in this group" };
+    }
 
-      const group = await prisma.group.findUnique({ where: { id: groupId } });
-      if (!group) {
-        return { success: false, message: "Group not found" };
-      }
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
 
-      const targetWeek = week !== undefined ? Number(week) : group.currentRotationWeek;
-      const weekOffset = targetWeek - group.currentRotationWeek;
-      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
+    const targetWeek = week !== undefined ? Number(week) : group.currentRotationWeek;
+    const weekOffset = targetWeek - group.currentRotationWeek;
+    const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
 
-      const tasks = await prisma.task.findMany({
-        where: { groupId },
-        include: {
-          creator: { select: { id: true, fullName: true, avatarUrl: true } },
-          timeSlots: { 
-            orderBy: { sortOrder: 'asc' },
-            select: { 
-              id: true, 
-              startTime: true, 
-              endTime: true, 
-              label: true, 
-              isPrimary: true,
-              points: true 
-            }
-          },
-          assignments: {
-            where: { rotationWeek: targetWeek },
-            include: { 
-              user: { select: { id: true, fullName: true, avatarUrl: true } },
-              timeSlot: { 
-                select: { 
-                  id: true, 
-                  startTime: true, 
-                  endTime: true, 
-                  label: true,
-                  points: true 
-                }
-              }
-            },
-            orderBy: { dueDate: 'asc' }
+    // ADD THIS: Get today's date info
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const tasks = await prisma.task.findMany({
+      where: { groupId },
+      include: {
+        creator: { select: { id: true, fullName: true, avatarUrl: true } },
+        timeSlots: { 
+          orderBy: { sortOrder: 'asc' },
+          select: { 
+            id: true, 
+            startTime: true, 
+            endTime: true, 
+            label: true, 
+            isPrimary: true,
+            points: true 
           }
         },
-        orderBy: [{ rotationOrder: 'asc' }, { createdAt: 'desc' }]
-      });
-
-      const formattedTasks = tasks.map(task => {
-        const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
-        const userAssignment = task.assignments.find(a => a.userId === userId);
-        
-        return {
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          points: task.points,
-          executionFrequency: task.executionFrequency,
-          timeFormat: task.timeFormat,
-          timeSlots: task.timeSlots || [],
-          selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
-          dayOfWeek: task.dayOfWeek,
-          isRecurring: task.isRecurring,
-          category: task.category,
-          rotationOrder: task.rotationOrder,
-          currentAssignee: task.currentAssignee,
-          lastAssignedAt: task.lastAssignedAt,
-          createdAt: task.createdAt,
-          creator: task.creator,
-          assignments: task.assignments,
-          userAssignment: userAssignment || null,
-          isAssignedToUser: !!userAssignment,
-          rotationMembers: rotationMembers,
-          totalAssignments: task.assignments.length
-        };
-      });
-
-      return {
-        success: true,
-        message: "Tasks retrieved successfully",
-        tasks: formattedTasks,
-        currentWeek: group.currentRotationWeek,
-        nextRotation: group.lastRotationUpdate 
-          ? new Date(group.lastRotationUpdate.getTime() + 7 * 24 * 60 * 60 * 1000)
-          : null,
-        weekStart,
-        weekEnd
-      };
-
-    } catch (error: any) {
-      console.error("TaskService.getGroupTasks error:", error);
-      return { success: false, message: error.message || "Error retrieving tasks" };
-    }
-  }
-
-  // Get user's tasks
-  static async getUserTasks(groupId: string, userId: string, week?: number) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
-
-      if (!membership) {
-        return { success: false, message: "You are not a member in this group" };
-      }
-
-      const group = await prisma.group.findUnique({ where: { id: groupId } });
-      if (!group) {
-        return { success: false, message: "Group not found" };
-      }
-
-      const targetWeek = week !== undefined ? Number(week) : group.currentRotationWeek;
-      const weekOffset = targetWeek - group.currentRotationWeek;
-      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
-
-      const assignments = await prisma.assignment.findMany({
-        where: { userId, task: { groupId }, rotationWeek: targetWeek },
-        include: {
-          task: {
-            include: { 
-              creator: { select: { id: true, fullName: true, avatarUrl: true } },
-              timeSlots: { 
-                orderBy: { sortOrder: 'asc' },
-                select: { 
-                  id: true, 
-                  startTime: true, 
-                  endTime: true, 
-                  label: true,
-                  points: true 
-                }
+        assignments: {
+          where: { rotationWeek: targetWeek },
+          include: { 
+            user: { select: { id: true, fullName: true, avatarUrl: true } },
+            timeSlot: { 
+              select: { 
+                id: true, 
+                startTime: true, 
+                endTime: true, 
+                label: true,
+                points: true 
               }
             }
           },
-          timeSlot: { 
-            select: { 
-              id: true, 
-              startTime: true, 
-              endTime: true, 
-              label: true,
-              points: true 
-            }
-          }
-        },
-        orderBy: { dueDate: 'asc' }
-      });
-
-      const tasks = assignments.map(assignment => ({
-        id: assignment.task.id,
-        title: assignment.task.title,
-        description: assignment.task.description,
-        points: assignment.task.points,
-        executionFrequency: assignment.task.executionFrequency,
-        timeFormat: assignment.task.timeFormat,
-        timeSlots: assignment.task.timeSlots || [],
-        selectedDays: TaskHelpers.safeJsonParse(assignment.task.selectedDays),
-        dayOfWeek: assignment.task.dayOfWeek,
-        isRecurring: assignment.task.isRecurring,
-        category: assignment.task.category,
-        rotationOrder: assignment.task.rotationOrder,
-        createdAt: assignment.task.createdAt,
-        creator: assignment.task.creator,
-        assignment: {
-          id: assignment.id,
-          dueDate: assignment.dueDate,
-          assignmentDay: assignment.assignmentDay,
-          completed: assignment.completed,
-          completedAt: assignment.completedAt,
-          verified: assignment.verified,
-          photoUrl: assignment.photoUrl,
-          points: assignment.points,
-          weekStart: assignment.weekStart,
-          weekEnd: assignment.weekEnd,
-          rotationWeek: assignment.rotationWeek,
-          timeSlot: assignment.timeSlot
+          orderBy: { dueDate: 'asc' }
         }
-      }));
+      },
+      orderBy: [{ rotationOrder: 'asc' }, { createdAt: 'desc' }]
+    });
 
-      return {
-        success: true,
-        message: "Your tasks retrieved successfully",
-        tasks,
-        currentWeek: group.currentRotationWeek,
-        weekStart,
-        weekEnd
-      };
-
-    } catch (error: any) {
-      console.error("TaskService.getUserTasks error:", error);
-      return { success: false, message: error.message || "Error retrieving your tasks" };
-    }
-  }
-
-  // Get task details
-  static async getTaskDetails(taskId: string, userId: string) {
-    try {
-      const task = await prisma.task.findUnique({
-        where: { id: taskId },
-        include: {
-          group: {
-            select: {
-              id: true, 
-              name: true, 
-              description: true, 
-              currentRotationWeek: true,
-              members: {
-                where: { isActive: true },
-                select: {
-                  user: { select: { id: true, fullName: true, avatarUrl: true } },
-                  groupRole: true, 
-                  rotationOrder: true, 
-                  isActive: true
-                },
-                orderBy: { rotationOrder: 'asc' }
-              }
-            }
-          },
-          creator: { select: { id: true, fullName: true, avatarUrl: true } },
-          timeSlots: { 
-            orderBy: { sortOrder: 'asc' },
-            select: { 
-              id: true, 
-              startTime: true, 
-              endTime: true, 
-              label: true, 
-              isPrimary: true,
-              points: true 
-            }
-          },
-          assignments: {
-            include: { 
-              user: { select: { id: true, fullName: true, avatarUrl: true } },
-              timeSlot: { 
-                select: { 
-                  id: true, 
-                  startTime: true, 
-                  endTime: true, 
-                  label: true,
-                  points: true 
-                }
-              }
-            },
-            orderBy: { rotationWeek: 'desc' },
-            take: 10
-          }
-        }
-      });
-
-      if (!task) {
-        return { success: false, message: "Task not found" };
-      }
-
-      const isMember = await prisma.groupMember.findFirst({
-        where: { userId, groupId: task.groupId }
-      });
-
-      if (!isMember) {
-        return { success: false, message: "You are not a member of this group" };
-      }
-
-      const userAssignment = task.assignments.find(a => 
-        a.userId === userId && a.rotationWeek === task.group.currentRotationWeek
-      );
-
+    const formattedTasks = tasks.map(task => {
       const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
-
+      const userAssignment = task.assignments.find(a => a.userId === userId);
+      
+      // ADD THIS: Add isDueToday to assignments
+      const assignmentsWithDueInfo = task.assignments.map(assignment => ({
+        ...assignment,
+        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+      }));
+      
       return {
-        success: true,
-        message: "Task details retrieved",
-        task: {
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          points: task.points,
-          executionFrequency: task.executionFrequency,
-          timeFormat: task.timeFormat,
-          timeSlots: task.timeSlots || [],
-          selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
-          dayOfWeek: task.dayOfWeek,
-          isRecurring: task.isRecurring,
-          category: task.category,
-          rotationOrder: task.rotationOrder,
-          currentAssignee: task.currentAssignee,
-          lastAssignedAt: task.lastAssignedAt,
-          createdAt: task.createdAt,
-          group: task.group,
-          creator: task.creator,
-          assignments: task.assignments,
-          userAssignment: userAssignment || null,
-          totalAssignments: task.assignments.length,
-          rotationMembers: rotationMembers
-        }
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        points: task.points,
+        executionFrequency: task.executionFrequency,
+        timeFormat: task.timeFormat,
+        timeSlots: task.timeSlots || [],
+        selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
+        dayOfWeek: task.dayOfWeek,
+        isRecurring: task.isRecurring,
+        category: task.category,
+        rotationOrder: task.rotationOrder,
+        currentAssignee: task.currentAssignee,
+        lastAssignedAt: task.lastAssignedAt,
+        createdAt: task.createdAt,
+        creator: task.creator,
+        assignments: assignmentsWithDueInfo, // Updated assignments
+        userAssignment: userAssignment || null,
+        isAssignedToUser: !!userAssignment,
+        rotationMembers: rotationMembers,
+        totalAssignments: task.assignments.length
       };
+    });
 
-    } catch (error: any) {
-      console.error("TaskService.getTaskDetails error:", error);
-      return { success: false, message: error.message || "Error retrieving task details" };
-    }
+    return {
+      success: true,
+      message: "Tasks retrieved successfully",
+      tasks: formattedTasks,
+      currentWeek: group.currentRotationWeek,
+      nextRotation: group.lastRotationUpdate 
+        ? new Date(group.lastRotationUpdate.getTime() + 7 * 24 * 60 * 60 * 1000)
+        : null,
+      weekStart,
+      weekEnd,
+      // ADD THIS: Current date info
+      currentDate: {
+        today,
+        tomorrow
+      }
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.getGroupTasks error:", error);
+    return { success: false, message: error.message || "Error retrieving tasks" };
   }
+}
+  // In task.services.ts - Update getUserTasks method
+static async getUserTasks(groupId: string, userId: string, week?: number) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+
+    if (!membership) {
+      return { success: false, message: "You are not a member in this group" };
+    }
+
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
+
+    const targetWeek = week !== undefined ? Number(week) : group.currentRotationWeek;
+    const weekOffset = targetWeek - group.currentRotationWeek;
+    const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
+
+    // ADD THIS: Get today's date info
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const assignments = await prisma.assignment.findMany({
+      where: { userId, task: { groupId }, rotationWeek: targetWeek },
+      include: {
+        task: {
+          include: { 
+            creator: { select: { id: true, fullName: true, avatarUrl: true } },
+            timeSlots: { 
+              orderBy: { sortOrder: 'asc' },
+              select: { 
+                id: true, 
+                startTime: true, 
+                endTime: true, 
+                label: true,
+                points: true 
+              }
+            }
+          }
+        },
+        timeSlot: { 
+          select: { 
+            id: true, 
+            startTime: true, 
+            endTime: true, 
+            label: true,
+            points: true 
+          }
+        }
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    const tasks = assignments.map(assignment => ({
+      id: assignment.task.id,
+      title: assignment.task.title,
+      description: assignment.task.description,
+      points: assignment.task.points,
+      executionFrequency: assignment.task.executionFrequency,
+      timeFormat: assignment.task.timeFormat,
+      timeSlots: assignment.task.timeSlots || [],
+      selectedDays: TaskHelpers.safeJsonParse(assignment.task.selectedDays),
+      dayOfWeek: assignment.task.dayOfWeek,
+      isRecurring: assignment.task.isRecurring,
+      category: assignment.task.category,
+      rotationOrder: assignment.task.rotationOrder,
+      createdAt: assignment.task.createdAt,
+      creator: assignment.task.creator,
+      assignment: {
+        id: assignment.id,
+        dueDate: assignment.dueDate,
+        assignmentDay: assignment.assignmentDay,
+        completed: assignment.completed,
+        completedAt: assignment.completedAt,
+        verified: assignment.verified,
+        photoUrl: assignment.photoUrl,
+        points: assignment.points,
+        weekStart: assignment.weekStart,
+        weekEnd: assignment.weekEnd,
+        rotationWeek: assignment.rotationWeek,
+        timeSlot: assignment.timeSlot,
+        // ADD THIS: Is due today flag
+        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+      }
+    }));
+
+    return {
+      success: true,
+      message: "Your tasks retrieved successfully",
+      tasks,
+      currentWeek: group.currentRotationWeek,
+      weekStart,
+      weekEnd,
+      // ADD THIS: Current date info
+      currentDate: {
+        today,
+        tomorrow
+      }
+    };  
+
+  } catch (error: any) {
+    console.error("TaskService.getUserTasks error:", error);
+    return { success: false, message: error.message || "Error retrieving your tasks" };
+  }
+}
+   
+// In task.services.ts - Update getTaskDetails method
+static async getTaskDetails(taskId: string, userId: string) {
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        group: {
+          select: {
+            id: true, 
+            name: true, 
+            description: true, 
+            currentRotationWeek: true,
+            members: {
+              where: { isActive: true },
+              select: {
+                user: { select: { id: true, fullName: true, avatarUrl: true } },
+                groupRole: true, 
+                rotationOrder: true, 
+                isActive: true
+              },
+              orderBy: { rotationOrder: 'asc' }
+            }
+          }
+        },
+        creator: { select: { id: true, fullName: true, avatarUrl: true } },
+        timeSlots: { 
+          orderBy: { sortOrder: 'asc' },
+          select: { 
+            id: true, 
+            startTime: true, 
+            endTime: true, 
+            label: true, 
+            isPrimary: true,
+            points: true 
+          }
+        },
+        assignments: {
+          include: { 
+            user: { select: { id: true, fullName: true, avatarUrl: true } },
+            timeSlot: { 
+              select: { 
+                id: true, 
+                startTime: true, 
+                endTime: true, 
+                label: true,
+                points: true 
+              }
+            }
+          },
+          orderBy: { rotationWeek: 'desc' },
+          take: 10
+        }
+      }
+    });
+
+    if (!task) {
+      return { success: false, message: "Task not found" };
+    }
+
+    const isMember = await prisma.groupMember.findFirst({
+      where: { userId, groupId: task.groupId }
+    });
+
+    if (!isMember) {
+      return { success: false, message: "You are not a member of this group" };
+    }
+
+    const userAssignment = task.assignments.find(a => 
+      a.userId === userId && a.rotationWeek === task.group.currentRotationWeek
+    );
+
+    const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
+
+    // ADD THIS: Calculate today's date info
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Add isDueToday flag to each assignment
+    const assignmentsWithDueInfo = task.assignments.map(assignment => ({
+      ...assignment,
+      isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+    }));
+
+    return {
+      success: true,
+      message: "Task details retrieved",
+      task: {
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        points: task.points,
+        executionFrequency: task.executionFrequency,
+        timeFormat: task.timeFormat,
+        timeSlots: task.timeSlots || [],
+        selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
+        dayOfWeek: task.dayOfWeek,
+        isRecurring: task.isRecurring,
+        category: task.category,
+        rotationOrder: task.rotationOrder,
+        currentAssignee: task.currentAssignee,
+        lastAssignedAt: task.lastAssignedAt,
+        createdAt: task.createdAt,
+        group: task.group,
+        creator: task.creator,
+        assignments: assignmentsWithDueInfo, // Use updated assignments
+        userAssignment: userAssignment || null,
+        totalAssignments: task.assignments.length,
+        rotationMembers: rotationMembers,
+        // ADD THIS: Current date info
+        currentDate: {
+          today: today,
+          tomorrow: tomorrow,
+          currentWeek: task.group.currentRotationWeek
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.getTaskDetails error:", error);
+    return { success: false, message: error.message || "Error retrieving task details" };
+  }
+}
+  
 // Update task with time slots points distribution
   static async updateTask(
     userId: string, 
@@ -1203,7 +1255,7 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
       schedule,
       currentWeek: group.currentRotationWeek,
       totalTasks: tasks.length
-    };
+    }; 
  
   } catch (error: any) {
     console.error("TaskService.getRotationSchedule error:", error);

@@ -5,7 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import UserAuthRoutes from './routes/user.auth.routes';
-import AdminAuthRoutes from './routes/admin.auth.routes';
+import AdminAuthRoutes from './routes/admin.auth.routes'; 
 import GroupRoutes from './routes/group.routes';
 import HomeRoute from './routes/home.routes';
 import TaskRoutes from './routes/task.routes';
@@ -15,6 +15,7 @@ import SwapRequestRoutes from './routes/swapRequest.routes';
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import UserNotificationRoutes from './routes/user.notification.routes';
 import FeedbackRoutes from './routes/feedback.routes';
+import { initReminderCron } from "./cron/reminderCron";
 
 dotenv.config(); 
 
@@ -80,6 +81,9 @@ svr.get('/forgot-password', (req, res) => {
 
 
 initSwapRequestCron();
+
+initReminderCron();
+
 const COMPUTER_IP = '10.219.65.2';
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
