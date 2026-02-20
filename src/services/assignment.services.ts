@@ -2,9 +2,10 @@
 import prisma from "../prisma";
 import { AssignmentHelpers } from "../helpers/assignment.helpers";
 import { TimeHelpers } from "../helpers/time.helpers";
+import { UserNotificationService } from "./user.notification.services";
 export class AssignmentService {
   
-   static async completeAssignment(
+  static async completeAssignment(
     assignmentId: string,
     userId: string,
     data: {
@@ -119,7 +120,7 @@ export class AssignmentService {
         }
       });
 
-      // ========== NOTIFY ALL GROUP ADMINS ==========
+      // ========== NOTIFY ALL GROUP ADMINS USING THE NOTIFICATION SERVICE ==========
       const admins = await prisma.groupMember.findMany({
         where: {
           groupId: assignment.task.groupId,
@@ -138,70 +139,58 @@ export class AssignmentService {
 
       console.log(`📢 Notifying ${admins.length} admins about new submission`);
 
-      // Create notifications for each admin
+      // Create notifications for each admin using the service
       for (const admin of admins) {
-        await prisma.userNotification.create({
+        await UserNotificationService.createNotification({
+          userId: admin.userId,
+          type: "SUBMISSION_PENDING",
+          title: "📝 New Submission to Review",
+          message: `${assignment.user.fullName || "A member"} submitted "${assignment.task.title}"`,
           data: {
-            userId: admin.userId,
-            type: "SUBMISSION_PENDING",
-            title: "📝 New Submission to Review",
-            message: `${assignment.user.fullName || "A member"} submitted "${assignment.task.title}"`,
-            data: {
-              assignmentId: assignment.id,
-              taskId: assignment.taskId,
-              taskTitle: assignment.task.title,
-              groupId: assignment.task.group.id,
-              groupName: assignment.task.group.name,
-              userId: assignment.userId,
-              userName: assignment.user.fullName,
-              userAvatar: assignment.user.avatarUrl,
-              photoUrl: data.photoUrl,
-              hasNotes: !!data.notes,
-              notes: data.notes,
-              submittedAt: new Date(),
-              dueDate: assignment.dueDate,
-              points: assignment.points,
-              timeSlot: assignment.timeSlot ? {
-                startTime: assignment.timeSlot.startTime,
-                endTime: assignment.timeSlot.endTime,
-                label: assignment.timeSlot.label
-              } : null,
-              timeLeft: assignment.timeSlot && timeValidation ? timeValidation.timeLeft : undefined
-            },
-            read: false
+            assignmentId: assignment.id,
+            taskId: assignment.taskId,
+            taskTitle: assignment.task.title,
+            groupId: assignment.task.group.id,
+            groupName: assignment.task.group.name,
+            userId: assignment.userId,
+            userName: assignment.user.fullName,
+            userAvatar: assignment.user.avatarUrl,
+            photoUrl: data.photoUrl,
+            hasNotes: !!data.notes,
+            notes: data.notes,
+            submittedAt: new Date(),
+            dueDate: assignment.dueDate,
+            points: assignment.points,
+            timeSlot: assignment.timeSlot ? {
+              startTime: assignment.timeSlot.startTime,
+              endTime: assignment.timeSlot.endTime,
+              label: assignment.timeSlot.label
+            } : null,
+            timeLeft: assignment.timeSlot && timeValidation ? timeValidation.timeLeft : undefined
           }
         });
-
-        // Optional: Send push notification if you have push service
-        // await sendPushNotification(admin.userId, {
-        //   title: "New Submission",
-        //   body: `${assignment.user.fullName} submitted "${assignment.task.title}"`
-        // });
       }
 
-      // ========== NOTIFY TASK CREATOR (if different from admins) ==========
+      // ========== NOTIFY TASK CREATOR (if different from admins) ========== 
       if (assignment.task.createdById && 
           !admins.some(admin => admin.userId === assignment.task.createdById)) {
         
-        await prisma.userNotification.create({
+        await UserNotificationService.createNotification({
+          userId: assignment.task.createdById,
+          type: "SUBMISSION_PENDING",
+          title: "📝 Task Submission Received",
+          message: `${assignment.user.fullName || "A member"} submitted "${assignment.task.title}"`,
           data: {
-            userId: assignment.task.createdById,
-            type: "SUBMISSION_PENDING",
-            title: "📝 Task Submission Received",
-            message: `${assignment.user.fullName || "A member"} submitted "${assignment.task.title}"`,
-            data: {
-              assignmentId: assignment.id,
-              taskId: assignment.taskId,
-              taskTitle: assignment.task.title,
-              groupId: assignment.task.group.id,
-              groupName: assignment.task.group.name,
-              userId: assignment.userId,
-              userName: assignment.user.fullName,
-              photoUrl: data.photoUrl,
-              hasNotes: !!data.notes,
-              submittedAt: new Date()
-            },
-            read: false
+            assignmentId: assignment.id,
+            taskId: assignment.taskId,
+            taskTitle: assignment.task.title,
+            groupId: assignment.task.group.id,
+            groupName: assignment.task.group.name,
+            userId: assignment.userId,
+            userName: assignment.user.fullName,
+            photoUrl: data.photoUrl,
+            hasNotes: !!data.notes,
+            submittedAt: new Date()
           }
         });
       }
@@ -210,7 +199,11 @@ export class AssignmentService {
         success: true,
         message: "Assignment completed successfully. Waiting for admin verification.",
         assignment: updatedAssignment,
-        notifiedAdmins: admins.length
+        notifications: {
+          notifiedAdmins: admins.length,
+          showSuccessNotification: true,
+          notificationMessage: "Your submission has been sent for review"
+        }
       };
 
     } catch (error: any) {
@@ -219,85 +212,84 @@ export class AssignmentService {
     }
   }
 
-  // In assignment.services.ts - UPDATE verifyAssignment method
-static async verifyAssignment(
-  assignmentId: string,
-  userId: string,
-  data: {
-    verified: boolean;
-    adminNotes?: string;
-  }
-) {
-  try {
-    const assignment = await prisma.assignment.findUnique({
-      where: { id: assignmentId },
-      include: {
-        task: {
-          include: {
-            group: true
-          }
-        },
-        user: {
-          select: {
-            id: true,
-            fullName: true
+  // UPDATE verifyAssignment method with notification service
+  static async verifyAssignment(
+    assignmentId: string,
+    userId: string,
+    data: {
+      verified: boolean;
+      adminNotes?: string;
+    }
+  ) {
+    try {
+      const assignment = await prisma.assignment.findUnique({
+        where: { id: assignmentId },
+        include: {
+          task: {
+            include: {
+              group: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              fullName: true
+            }
           }
         }
+      });
+
+      if (!assignment) {
+        return { success: false, message: "Assignment not found" };
       }
-    });
 
-    if (!assignment) {
-      return { success: false, message: "Assignment not found" };
-    }
+      // Check if user is admin of the group
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId,
+          groupId: assignment.task.groupId,
+          groupRole: "ADMIN"
+        }
+      });
 
-    // Check if user is admin of the group
-    const membership = await prisma.groupMember.findFirst({
-      where: {
-        userId,
-        groupId: assignment.task.groupId,
-        groupRole: "ADMIN"
+      if (!membership) {
+        return { success: false, message: "Only group admins can verify assignments" };
       }
-    });
 
-    if (!membership) {
-      return { success: false, message: "Only group admins can verify assignments" };
-    }
+      // Check if assignment is completed
+      if (!assignment.completed) {
+        return { success: false, message: "Assignment must be completed before verification" };
+      }
 
-    // Check if assignment is completed
-    if (!assignment.completed) {
-      return { success: false, message: "Assignment must be completed before verification" };
-    }
-
-    // Update assignment
-    const updatedAssignment = await prisma.assignment.update({
-      where: { id: assignmentId },
-      data: {
-        verified: data.verified,
-        adminNotes: data.adminNotes || undefined
-      },
-      include: {
-        user: { select: { id: true, fullName: true, avatarUrl: true } },
-        task: {
-          select: {
-            id: true,
-            title: true,
-            points: true,
-            group: { select: { id: true, name: true } }
-          }
+      // Update assignment
+      const updatedAssignment = await prisma.assignment.update({
+        where: { id: assignmentId },
+        data: {
+          verified: data.verified,
+          adminNotes: data.adminNotes || undefined
         },
-        timeSlot: true
-      }
-    });
+        include: {
+          user: { select: { id: true, fullName: true, avatarUrl: true } },
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              group: { select: { id: true, name: true } }
+            }
+          },
+          timeSlot: true
+        }
+      });
 
-    // ========== NOTIFY THE USER ==========
-    const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
-    const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
-    const notificationMessage = data.verified 
-      ? `Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
-      : `Your submission for "${assignment.task.title}" needs revision.`;
+      // ========== NOTIFY THE USER USING THE SERVICE ==========
+      const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
+      const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
+      const notificationMessage = data.verified 
+        ? `Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
+        : `Your submission for "${assignment.task.title}" needs revision.`;
 
-    await prisma.userNotification.create({
-      data: {
+      await UserNotificationService.createNotification({
         userId: assignment.userId,
         type: notificationType,
         title: notificationTitle,
@@ -313,24 +305,21 @@ static async verifyAssignment(
           points: assignment.points,
           verifiedBy: userId,
           verifiedAt: new Date()
-        },
-        read: false
-      }
-    });
+        }
+      });
 
-    // ========== NOTIFY ALL ADMINS ABOUT THE DECISION ==========
-    const admins = await prisma.groupMember.findMany({
-      where: {
-        groupId: assignment.task.groupId,
-        groupRole: "ADMIN",
-        isActive: true,
-        userId: { not: userId } // Don't notify the admin who just verified
-      }
-    });
+      // ========== NOTIFY ALL ADMINS ABOUT THE DECISION ==========
+      const admins = await prisma.groupMember.findMany({
+        where: {
+          groupId: assignment.task.groupId,
+          groupRole: "ADMIN",
+          isActive: true,
+          userId: { not: userId } // Don't notify the admin who just verified
+        }
+      });
 
-    for (const admin of admins) {
-      await prisma.userNotification.create({
-        data: {
+      for (const admin of admins) {
+        await UserNotificationService.createNotification({
           userId: admin.userId,
           type: "SUBMISSION_DECISION",
           title: data.verified ? "✅ Submission Verified" : "❌ Submission Rejected",
@@ -347,23 +336,29 @@ static async verifyAssignment(
             adminNotes: data.adminNotes,
             verifiedBy: userId,
             verifiedAt: new Date()
-          },
-          read: false
+          }
+        });
+      }
+
+      return { 
+        success: true,
+        message: data.verified ? "Assignment verified successfully" : "Assignment rejected",
+        assignment: updatedAssignment,
+        notifications: {
+          notifiedUser: true,
+          notifiedOtherAdmins: admins.length,
+          userNotificationMessage: data.verified 
+            ? "User has been notified about verification" 
+            : "User has been notified about rejection"
         }
-      });
+      };
+
+    } catch (error: any) {
+      console.error("AssignmentService.verifyAssignment error:", error);
+      return { success: false, message: error.message || "Error verifying assignment" };
     }
-
-    return { 
-      success: true,
-      message: data.verified ? "Assignment verified successfully" : "Assignment rejected",
-      assignment: updatedAssignment
-    };
-
-  } catch (error: any) {
-    console.error("AssignmentService.verifyAssignment error:", error);
-    return { success: false, message: error.message || "Error verifying assignment" };
   }
-}
+
   static async getAssignmentDetails(assignmentId: string, userId: string) {
     try {
       const assignment = await prisma.assignment.findUnique({
@@ -662,3 +657,4 @@ static async getUserAssignments(
     }
   }
 }
+  

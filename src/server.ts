@@ -84,14 +84,15 @@ initSwapRequestCron();
 
 initReminderCron();
 
-const COMPUTER_IP = '10.219.65.2';
+//const COMPUTER_IP = '10.219.65.2';
+const MY_IP = '10.116.190.2'; 
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
 
 svr.listen(PORT, () => {
     console.log(`
 🚀 Server running at http://localhost:${PORT}
-📱 http://${COMPUTER_IP}:${PORT}
+📱 http://${MY_IP}:${PORT}
 📶 http://${Wifi}:${PORT}
 
 📁 Upload directories created:

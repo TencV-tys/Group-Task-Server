@@ -30,20 +30,22 @@ export class AssignmentController {
       const result = await AssignmentService.completeAssignment(
         assignmentId,
         userId,
-        { photoUrl, notes }
+        { photoUrl, notes } 
       );
 
       if (!result.success) {
         return res.status(400).json({
           success: false,
-          message: result.message
+          message: result.message,
+          validation: result.validation // Include validation details for time-related errors
         });
       }
 
       return res.json({
         success: true,
         message: result.message,
-        assignment: result.assignment
+        assignment: result.assignment,
+        notifications: result.notifications // Include notification info
       });
 
     } catch (error: any) {
@@ -53,8 +55,8 @@ export class AssignmentController {
         message: "Internal server error"
       });
     }
-  }
-
+  } 
+ 
   static async verifyAssignment(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -91,7 +93,8 @@ export class AssignmentController {
       return res.json({
         success: true,
         message: result.message,
-        assignment: result.assignment
+        assignment: result.assignment,
+        notifications: result.notifications // Include notification info
       });
 
     } catch (error: any) {
@@ -101,8 +104,7 @@ export class AssignmentController {
         message: "Internal server error"
       });
     }
-  }
-
+  } 
   static async getAssignmentDetails(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
