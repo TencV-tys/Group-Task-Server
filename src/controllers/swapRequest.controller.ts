@@ -6,7 +6,7 @@ import prisma from "../prisma";
 export class SwapRequestController {
   
   // CREATE: Request to swap an assignment
-  static async createSwapRequest(req: UserAuthRequest, res: Response) {
+static async createSwapRequest(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
       const { 
@@ -56,7 +56,8 @@ export class SwapRequestController {
       return res.status(201).json({
         success: true,
         message: result.message,
-        data: result.swapRequest
+        data: result.swapRequest,
+        notifications: result.notifications // Include notification info
       });
 
     } catch (error: any) {
@@ -279,7 +280,7 @@ export class SwapRequestController {
     }
   }
 
-  // UPDATE: Accept a swap request - FIXED VERSION
+   // ACCEPT: Accept a swap request
   static async acceptSwapRequest(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -311,16 +312,17 @@ export class SwapRequestController {
         });
       }
 
-      // ✅ Build response dynamically based on scope
+      // Build response dynamically based on scope
       const responseData: any = {
         swapRequest: result.swapRequest,
         previousAssignee: result.previousAssignee,
         scope: result.scope,
         selectedDay: result.selectedDay,
-        selectedTimeSlotId: result.selectedTimeSlotId
+        selectedTimeSlotId: result.selectedTimeSlotId,
+        notifications: result.notifications // Include notification info
       };
 
-      // ✅ Add scope-specific fields - ONLY if they exist
+      // Add scope-specific fields - ONLY if they exist
       if (result.scope === 'week' && result.newAssignment) {
         responseData.newAssignment = result.newAssignment;
       }
@@ -346,10 +348,10 @@ export class SwapRequestController {
         success: false,
         message: "Internal server error"
       });
-    }
+    } 
   }
 
-  // UPDATE: Reject a swap request
+  // REJECT: Reject a swap request
   static async rejectSwapRequest(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -386,7 +388,8 @@ export class SwapRequestController {
       return res.json({
         success: true,
         message: result.message,
-        data: result.swapRequest
+        data: result.swapRequest,
+        notifications: result.notifications // Include notification info
       });
 
     } catch (error: any) {
@@ -398,7 +401,7 @@ export class SwapRequestController {
     }
   }
 
-  // UPDATE: Cancel a swap request (only by requester)
+  // CANCEL: Cancel a swap request
   static async cancelSwapRequest(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -433,7 +436,8 @@ export class SwapRequestController {
       return res.json({
         success: true,
         message: result.message,
-        data: result.swapRequest
+        data: result.swapRequest,
+        notifications: result.notifications // Include notification info
       });
 
     } catch (error: any) {
