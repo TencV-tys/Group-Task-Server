@@ -91,7 +91,7 @@ export class AssignmentHelpers {
       return {
         isOverdue: true,
         message: 'Overdue'
-      };
+      }; 
     } else if (diffDays > 0) {
       return {
         isOverdue: false,
