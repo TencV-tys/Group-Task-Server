@@ -1,4 +1,4 @@
-// cron/neglectDetection.cron.ts - NEW FILE
+// cron/neglectDetection.cron.ts - UPDATED
 import cron from 'node-cron';
 import prisma from '../prisma';
 import { AssignmentService } from '../services/assignment.services';
@@ -9,50 +9,31 @@ export const initNeglectDetectionCron = () => {
     console.log('🕒 Running neglect detection cron job...');
     
     try {
-      // Get all active groups
-      const groups = await prisma.group.findMany({
-        select: { id: true }
-      });
+      const result = await AssignmentService.checkNeglectedAssignments();
       
-      console.log(`📊 Checking ${groups.length} groups for neglected assignments`);
-      
-      let totalNeglected = 0;
-      let totalDeductions = 0;
-      
-      for (const group of groups) {
-        const result = await AssignmentService.checkAndApplyNeglectPenalties(group.id);
-        
-        if (result.success && result.neglectedAssignments) {
-          totalNeglected += result.neglectedAssignments.length;
-          if (result.pointDeductions) {
-            totalDeductions += result.pointDeductions.reduce(
-              (sum, d) => sum + Math.abs(d.deductedPoints), 0
-            );
-          }
-        }
+      if (result.success) {
+        console.log(`✅ Neglect detection complete: Found ${result.totalNeglected || 0} neglected assignments`);
+      } else {
+        console.log(`❌ Neglect detection error: ${result.message}`);
       }
-      
-      console.log(`✅ Neglect detection complete: Found ${totalNeglected} neglected assignments, total deductions: ${totalDeductions} points`);
       
     } catch (error) {
       console.error('❌ Error in neglect detection cron job:', error);
     }
   });
   
-  // Also run at specific times to catch end of day
-  cron.schedule('0 23 * * *', async () => { // 11 PM every day
+  // Run at 11:30 PM every day for end-of-day check
+  cron.schedule('30 23 * * *', async () => { // 11:30 PM every day
     console.log('🌙 Running end-of-day neglect check...');
     
     try {
-      const groups = await prisma.group.findMany({
-        select: { id: true }
-      });
+      const result = await AssignmentService.checkNeglectedAssignments();
       
-      for (const group of groups) {
-        await AssignmentService.checkAndApplyNeglectPenalties(group.id);
+      if (result.success) {
+        console.log(`✅ End-of-day neglect check complete: Found ${result.totalNeglected || 0} neglected assignments`);
+      } else {
+        console.log(`❌ End-of-day neglect check error: ${result.message}`);
       }
-      
-      console.log('✅ End-of-day neglect check complete');
       
     } catch (error) {
       console.error('❌ Error in end-of-day neglect check:', error);
