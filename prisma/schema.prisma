@@ -1,4 +1,4 @@
-// Prisma v6 Schema - UPDATED WITH TIME SLOT POINTS
+// Prisma v6 Schema - COMPLETELY FIXED VERSION
 generator client {
   provider = "prisma-client-js"
 }
@@ -180,10 +180,10 @@ model Task {
   // For WEEKLY tasks: Store multiple days in JSON
   selectedDays Json? // JSON array of DayOfWeek enum values: ["MONDAY", "WEDNESDAY", "FRIDAY"]
 
-  // ✅ UPDATED: Multiple time slots relationship
+  // Multiple time slots relationship
   timeSlots TimeSlot[] @relation("TaskTimeSlots")
 
-  // ✅ UPDATED: For quick access, store primary time slot
+  // For quick access, store primary time slot
   primaryTimeSlotId String? @unique
 
   // Keep for backward compatibility
@@ -220,7 +220,7 @@ model Task {
   @@map("tasks")
 }
 
-// ✅ FIXED: TimeSlot model - remove @default(null) from points
+// TimeSlot model
 model TimeSlot {
   id        String  @id @default(uuid())
   taskId    String
@@ -228,8 +228,8 @@ model TimeSlot {
   endTime   String // e.g., "10:00"
   label     String? // Optional: "Morning", "Afternoon", "Evening", "Breakfast", "Lunch", "Dinner"
 
-  // ✅ FIXED: Points for this specific time slot (null = use task points)
-  points Int? // REMOVED: @default(null)
+  // Points for this specific time slot (null = use task points)
+  points Int?
 
   // For ordering time slots
   sortOrder Int @default(0)
@@ -257,7 +257,7 @@ model Assignment {
   userId  String
   dueDate DateTime
 
-  // ✅ FIXED: Points awarded for this specific assignment
+  // Points awarded for this specific assignment
   points Int @default(1)
 
   completed   Boolean   @default(false)
@@ -265,26 +265,26 @@ model Assignment {
   verified    Boolean   @default(false)
   photoUrl    String?
 
-  // ✅ NEW: User notes when completing task
+  // User notes when completing task
   notes String?
 
-  // ✅ NEW: Admin notes when verifying
+  // Admin notes when verifying
   adminNotes String?
 
-  // ✅ FIXED: Track which specific time slot this assignment is for
+  // Track which specific time slot this assignment is for
   timeSlotId String?
 
   // Rotation tracking
   rotationWeek  Int        @default(0)
-  weekStart     DateTime
-  weekEnd       DateTime
+  weekStart     DateTime?  // ← CHANGED TO OPTIONAL (allow NULL)
+  weekEnd       DateTime?  // ← CHANGED TO OPTIONAL (allow NULL)
   assignmentDay DayOfWeek?
 
   // Relationships
-  task        Task         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
-  user        User         @relation("UserAssignments", fields: [userId], references: [id])
-  swapRequest SwapRequest? @relation("AssignmentSwapRequest")
-  timeSlot    TimeSlot?    @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
+  task         Task           @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
+  user         User           @relation("UserAssignments", fields: [userId], references: [id])
+  swapRequests SwapRequest[]  @relation("AssignmentSwapRequests") // ← CHANGED to one-to-many
+  timeSlot     TimeSlot?      @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -301,7 +301,7 @@ model Assignment {
 
 model SwapRequest {
   id           String  @id @default(uuid())
-  assignmentId String  @unique
+  assignmentId String
   reason       String?
   status       String  @default("PENDING")
 
@@ -310,12 +310,13 @@ model SwapRequest {
   targetUserId String?
   expiresAt    DateTime?
 
-  // ✅ NEW: Swap scope fields
+  // Swap scope fields
   scope              String? @default("week") // "week" or "day"
   selectedDay        String? // "MONDAY", "TUESDAY", etc. - only if scope is "day"
   selectedTimeSlotId String? // Specific time slot ID - optional
 
-  assignment Assignment @relation("AssignmentSwapRequest", fields: [assignmentId], references: [id], onDelete: Cascade)
+  // ✅ FIXED: Changed to one-to-many relation
+  assignment Assignment @relation("AssignmentSwapRequests", fields: [assignmentId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -323,16 +324,14 @@ model SwapRequest {
   @@map("swap_requests")
 }
 
-// ============= UPDATED FEEDBACK MODEL =============
+// ============= FEEDBACK MODEL =============
 model Feedback {
   id      String @id @default(uuid())
   userId  String
-  type    String // Will store FeedbackType enum as string: "BUG", "FEATURE_REQUEST", "GENERAL", etc.
-  message String // The actual feedback text
-  status  String @default("OPEN") // Will store FeedbackStatus enum as string: "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"
-
-  // Optional category for better organization
-  category String? // e.g., "UI", "Performance", "Task", "Group", "Auth", "Other"
+  type    String
+  message String
+  status  String @default("OPEN")
+  category String?
 
   // Relationships
   user User @relation("UserFeedback", fields: [userId], references: [id], onDelete: Cascade)

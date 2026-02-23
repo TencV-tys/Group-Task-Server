@@ -379,9 +379,9 @@ export class AssignmentController {
         groupId: groupId as string,
         limit: limit ? Number(limit) : 10
       });
-
+   
       return res.status(200).json(result);
-      
+       
     } catch (error: any) {
       console.error("Error:", error);
       return res.status(500).json({ 

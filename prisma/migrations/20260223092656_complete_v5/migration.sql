@@ -117,8 +117,8 @@ CREATE TABLE `assignments` (
     `adminNotes` VARCHAR(191) NULL,
     `timeSlotId` VARCHAR(191) NULL,
     `rotationWeek` INTEGER NOT NULL DEFAULT 0,
-    `weekStart` DATETIME(3) NOT NULL,
-    `weekEnd` DATETIME(3) NOT NULL,
+    `weekStart` DATETIME(3) NULL,
+    `weekEnd` DATETIME(3) NULL,
     `assignmentDay` ENUM('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY') NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
@@ -148,7 +148,6 @@ CREATE TABLE `swap_requests` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    UNIQUE INDEX `swap_requests_assignmentId_key`(`assignmentId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

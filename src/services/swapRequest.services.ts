@@ -718,114 +718,128 @@ static async createSwapRequest(
     }
   }
 
-  // GET: Get single swap request details
-  static async getSwapRequestDetails(requestId: string, userId: string) {
-    try {
-      const swapRequest = await prisma.swapRequest.findUnique({
-        where: { id: requestId },
-        include: {
-          assignment: {
-            include: {
-              task: {
-                include: {
-                  group: {
-                    select: {
-                      id: true,
-                      name: true,
-                      currentRotationWeek: true
-                    }
-                  },
-                  timeSlots: {
-                    orderBy: { sortOrder: 'asc' }
+  // In your backend swapRequest.services.ts
+static async getSwapRequestDetails(requestId: string, userId: string) {
+  try {
+    const swapRequest = await prisma.swapRequest.findUnique({
+      where: { id: requestId },
+      include: {
+        assignment: {
+          include: {
+            task: {
+              include: {
+                group: {
+                  select: {
+                    id: true,
+                    name: true,
+                    currentRotationWeek: true
                   }
+                },
+                timeSlots: {
+                  orderBy: { sortOrder: 'asc' }
                 }
-              },
-              timeSlot: true,
-              user: {
-                select: {
-                  id: true,
-                  fullName: true,
-                  avatarUrl: true
-                }
+              }
+            },
+            timeSlot: true,
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true
               }
             }
           }
         }
-      });
-
-      if (!swapRequest) {
-        return { success: false, message: "Swap request not found" };
       }
+    });
 
-      // Get requester info
-      const requester = await prisma.user.findUnique({
-        where: { id: swapRequest.requestedBy },
+    if (!swapRequest) {
+      return { success: false, message: "Swap request not found" };
+    }
+
+    // Check if expired and update status if needed
+    if (swapRequest.status === 'PENDING' && 
+        swapRequest.expiresAt && 
+        swapRequest.expiresAt < new Date()) {
+      
+      await prisma.swapRequest.update({
+        where: { id: requestId },
+        data: { status: "EXPIRED" }
+      });
+      
+      swapRequest.status = "EXPIRED";
+    }
+
+    // Get requester info
+    const requester = await prisma.user.findUnique({
+      where: { id: swapRequest.requestedBy },
+      select: {
+        id: true,
+        fullName: true,
+        avatarUrl: true
+      }
+    });
+
+    // Get target user info if exists
+    let targetUser = null;
+    if (swapRequest.targetUserId) {
+      targetUser = await prisma.user.findUnique({
+        where: { id: swapRequest.targetUserId },
         select: {
           id: true,
           fullName: true,
           avatarUrl: true
         }
       });
-
-      // Get target user info if exists
-      let targetUser = null;
-      if (swapRequest.targetUserId) {
-        targetUser = await prisma.user.findUnique({
-          where: { id: swapRequest.targetUserId },
-          select: {
-            id: true,
-            fullName: true,
-            avatarUrl: true
-          }
-        });
-      }
-
-      // Get selected time slot details if exists
-      let selectedTimeSlot = null;
-      if (swapRequest.selectedTimeSlotId && swapRequest.assignment?.task?.timeSlots) {
-        selectedTimeSlot = swapRequest.assignment.task.timeSlots.find(
-          (slot: any) => slot.id === swapRequest.selectedTimeSlotId
-        );
-      }
-
-      const swapRequestWithDetails = {
-        ...swapRequest,
-        requester,
-        targetUser,
-        selectedTimeSlot
-      };
-
-      // Check if user has permission to view
-      const isRequester = swapRequest.requestedBy === userId;
-      const isTarget = swapRequest.targetUserId === userId;
-      const isAssignee = swapRequest.assignment?.userId === userId;
-      
-      // Check if user is group admin
-      const membership = await prisma.groupMember.findFirst({
-        where: {
-          userId,
-          groupId: swapRequest.assignment.task.groupId,
-          groupRole: "ADMIN"
-        }
-      });
-      const isAdmin = !!membership;
-
-      if (!isRequester && !isTarget && !isAssignee && !isAdmin) {
-        return { success: false, message: "You don't have permission to view this swap request" };
-      }
-
-      return {
-        success: true,
-        message: "Swap request details retrieved",
-        swapRequest: swapRequestWithDetails
-      };
-
-    } catch (error: any) {
-      console.error("SwapRequestService.getSwapRequestDetails error:", error);
-      return { success: false, message: error.message || "Error retrieving swap request details" };
     }
-  }
 
+    // Get selected time slot details if exists
+    let selectedTimeSlot = null;
+    if (swapRequest.selectedTimeSlotId && swapRequest.assignment?.task?.timeSlots) {
+      selectedTimeSlot = swapRequest.assignment.task.timeSlots.find(
+        (slot: any) => slot.id === swapRequest.selectedTimeSlotId
+      );
+    }
+
+    const swapRequestWithDetails = {
+      ...swapRequest,
+      requester,
+      targetUser,
+      selectedTimeSlot
+    };
+
+    // Check if user has permission to view
+    const isRequester = swapRequest.requestedBy === userId;
+    const isTarget = swapRequest.targetUserId === userId;
+    const isAssignee = swapRequest.assignment?.userId === userId;
+    
+    const membership = await prisma.groupMember.findFirst({
+      where: {
+        userId,
+        groupId: swapRequest.assignment.task.groupId,
+        groupRole: "ADMIN"
+      }
+    });
+    const isAdmin = !!membership;
+
+    if (!isRequester && !isTarget && !isAssignee && !isAdmin) {
+      return { success: false, message: "You don't have permission to view this swap request" };
+    }
+
+    return {
+      success: true,
+      message: swapRequest.status === 'EXPIRED' 
+        ? "This swap request has expired" 
+        : "Swap request details retrieved",
+      swapRequest: swapRequestWithDetails
+    };
+
+  } catch (error: any) {
+    console.error("SwapRequestService.getSwapRequestDetails error:", error);
+    return { success: false, message: error.message || "Error retrieving swap request details" };
+  }
+}
+ 
 // In services/swapRequest.services.ts - UPDATED acceptSwapRequest method
 
 static async acceptSwapRequest(requestId: string, userId: string) {
