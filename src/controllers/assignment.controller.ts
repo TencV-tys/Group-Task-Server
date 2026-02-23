@@ -278,7 +278,7 @@ if (result.success && result.assignment) {
       });
     }
   }
-
+ 
   // ========== NEW: Check submission time ==========
  static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
     try {
@@ -334,7 +334,7 @@ if (result.success && result.assignment) {
       return res.status(200).json({
         success: true,
         message: "Submission time check completed",
-        data: {
+        data: { 
           assignmentId,
           canSubmit: validation.allowed,
           reason: validation.reason,
@@ -359,86 +359,99 @@ if (result.success && result.assignment) {
       });
     }
   }
-  // ========== NEW: Get upcoming assignments ==========
-  static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { groupId } = req.query;
-      const { limit = 10 } = req.query;
-      
-      if (!userId) {
-        return res.status(401).json({ 
-          success: false, 
-          message: "Authentication required" 
-        });
-      }
-      
-      const now = new Date();
-      const today = now.toDateString();
-      
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          userId,
-          task: groupId ? { groupId: String(groupId) } : undefined,
-          completed: false,
-          dueDate: {
-            gte: new Date(today)
-          }
-        },
-        include: {
-          timeSlot: true,
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
+// ========== GET UPCOMING ASSIGNMENTS ==========
+static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId, limit = 10 } = req.query;
+    
+    if (!userId) { 
+      return res.status(401).json({ 
+        success: false, 
+        message: "Authentication required" 
+      });
+    }
+    
+    const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        task: groupId ? { groupId: String(groupId) } : undefined,
+        completed: false,
+        dueDate: {
+          gte: today
+        }
+      },
+      include: {
+        timeSlot: true,
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            group: {
+              select: {
+                id: true,
+                name: true
               }
             }
           }
-        },
-        orderBy: { dueDate: 'asc' },
-        take: Number(limit)
-      });
-      
-      const assignmentsWithTimeInfo = assignments.map(assignment => {
-        const dueDate = new Date(assignment.dueDate);
-        const isToday = dueDate.toDateString() === today;
-        const validation = isToday ? TimeHelpers.canSubmitAssignment(assignment, now) : null;
-        
-        return {
-          ...assignment,
-          isToday,
-          canSubmit: validation?.allowed || false,
-          timeLeft: validation?.timeLeft,
-          timeLeftText: validation?.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-          willBePenalized: validation?.willBePenalized || false,
-          submissionInfo: validation
-        };
-      });
-      
-      return res.status(200).json({
-        success: true,
-        message: "Upcoming assignments retrieved",
-        data: {
-          assignments: assignmentsWithTimeInfo,
-          currentTime: now,
-          total: assignmentsWithTimeInfo.length
         }
-      });
+      },
+      orderBy: { dueDate: 'asc' },
+      take: Number(limit)
+    });
+    
+    const assignmentsWithTimeInfo = assignments.map(assignment => {
+      const dueDate = new Date(assignment.dueDate);
+      const isToday = dueDate.toDateString() === today.toDateString();
+      const validation = isToday && assignment.timeSlot ? 
+        TimeHelpers.canSubmitAssignment(assignment, now) : null;
       
-    } catch (error: any) {
-      console.error("AssignmentController.getUpcomingAssignments error:", error);
-      return res.status(500).json({ 
-        success: false, 
-        message: error.message || "Error retrieving upcoming assignments" 
-      });
-    }
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task.title,
+        taskPoints: assignment.task.points,
+        group: assignment.task.group,
+        dueDate: assignment.dueDate,
+        isToday,
+        canSubmit: validation?.allowed || (isToday && !assignment.timeSlot) || false,
+        timeLeft: validation?.timeLeft || null,
+        timeLeftText: validation?.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+        willBePenalized: validation?.willBePenalized || false,
+        timeSlot: assignment.timeSlot,
+        completed: assignment.completed,
+        verified: assignment.verified
+      };
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: "Upcoming assignments retrieved",
+      data: {
+        assignments: assignmentsWithTimeInfo,
+        currentTime: now,
+        total: assignments.length
+      }
+    });
+    
+  } catch (error: any) {
+    console.error("Error:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Error retrieving upcoming assignments",
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }
+    });
   }
+}
 
   // ========== NEW: Get today's assignments ==========
   static async getTodayAssignments(req: UserAuthRequest, res: Response) {
