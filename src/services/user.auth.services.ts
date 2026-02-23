@@ -1,4 +1,4 @@
-// In src/services/user.auth.services.ts
+// services/user.auth.services.ts
 import { UserJwtUtils } from './../utils/user.jwtutils';
 import { UserRole, UserRoleStatus, Gender } from "@prisma/client";
 import prisma from "../prisma";
@@ -13,7 +13,7 @@ export class UserServices {
     fullName: string,
     password: string,
     confirmPassword: string,
-    avatarData?: string | null, // Changed from avatarUrl to avatarData (can be URL or base64)
+    avatarData?: string | null,
     gender?: string | null
   ): Promise<UserSignUpAuthTypes> {
     try {
@@ -35,7 +35,6 @@ export class UserServices {
         };
       }
 
-      // Validate gender if provided
       let genderEnum: Gender | null = null;
       if (gender) {
         const upperGender = gender.toUpperCase();
@@ -51,7 +50,6 @@ export class UserServices {
         }
       }
 
-      // Check if user already exists
       const existingUser = await prisma.user.findUnique({
         where: { email }
       });
@@ -64,17 +62,14 @@ export class UserServices {
         };
       }
 
-      // Process avatar if provided
       let avatarUrl: string | null = null;
       
       if (avatarData) {
         try {
-          // Check if it's a base64 string
           if (avatarData.startsWith('data:image')) {
             console.log("Processing base64 avatar...");
             avatarUrl = await this.saveBase64Image(avatarData, email);
           } else if (avatarData.startsWith('http')) {
-            // It's already a URL (maybe from social login)
             console.log("Using existing avatar URL...");
             avatarUrl = avatarData;
           } else {
@@ -82,14 +77,11 @@ export class UserServices {
           }
         } catch (avatarError: any) {
           console.error("Avatar processing failed:", avatarError.message);
-          // Continue with signup even if avatar fails
         }
       }
 
-      // Hash password
       const passwordHashed = await hashedPassword(password, 10);
 
-      // Create user
       const user = await prisma.user.create({
         data: {
           fullName: fullName,
@@ -102,13 +94,12 @@ export class UserServices {
         }
       });
 
-      // Generate token
       const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
 
       return {
         success: true,
         message: "Sign up successfully",
-        token,
+        token, // ← Token is here!
         user: {
           id: user.id,
           fullName: user.fullName,
@@ -124,7 +115,6 @@ export class UserServices {
     } catch (e: any) {
       console.error("Signup error:", e);
       
-      // Check for specific Prisma errors
       if (e.code) {
         console.error("Prisma error code:", e.code);
       }
@@ -137,115 +127,104 @@ export class UserServices {
     } 
   }
 
-  // Helper method to save base64 image to local storage
-private static async saveBase64Image(base64String: string, email: string): Promise<string | null> {
-  try {
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = path.join(__dirname, '../../uploads/avatars');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-      console.log("Created avatars directory:", uploadsDir);
-    }
+  private static async saveBase64Image(base64String: string, email: string): Promise<string | null> {
+    try {
+      const uploadsDir = path.join(__dirname, '../../uploads/avatars');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+        console.log("Created avatars directory:", uploadsDir);
+      }
 
-    // Parse base64 string
-    const matches = base64String.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
-      console.log("Invalid base64 format");
+      const matches = base64String.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        console.log("Invalid base64 format");
+        return null;
+      }
+
+      const imageType = matches[1]?.toLowerCase();
+      const base64Data = matches[2];
+      
+      if (!imageType || !base64Data) {
+        console.log("Invalid base64 data format");
+        return null;
+      }
+
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+
+      if (imageBuffer.length > 5 * 1024 * 1024) {
+        console.log("Image too large:", imageBuffer.length);
+        return null;
+      }
+
+      const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, '_');
+      const timestamp = Date.now();
+      const filename = `${sanitizedEmail}-${timestamp}.${imageType}`;
+      const filePath = path.join(uploadsDir, filename);
+
+      fs.writeFileSync(filePath, imageBuffer);
+      console.log("Avatar saved to:", filePath);
+
+      return `/uploads/avatars/${filename}`;
+
+    } catch (error: any) {
+      console.error("Error saving base64 image:", error.message);
       return null;
     }
-
-    // Extract matches with validation
-    const imageType = matches[1]?.toLowerCase(); // jpeg, png, etc
-    const base64Data = matches[2];
-    
-    // Validate extracted data
-    if (!imageType || !base64Data) {
-      console.log("Invalid base64 data format");
-      return null;
-    }
-
-    const imageBuffer = Buffer.from(base64Data, 'base64');
-
-    // Check file size (max 5MB)
-    if (imageBuffer.length > 5 * 1024 * 1024) {
-      console.log("Image too large:", imageBuffer.length);
-      return null;
-    }
-
-    // Generate filename (email-timestamp)
-    const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, '_');
-    const timestamp = Date.now();
-    const filename = `${sanitizedEmail}-${timestamp}.${imageType}`;
-    const filePath = path.join(uploadsDir, filename);
-
-    // Save file
-    fs.writeFileSync(filePath, imageBuffer);
-    console.log("Avatar saved to:", filePath);
-
-    // Return relative URL
-    return `/uploads/avatars/${filename}`;
-
-  } catch (error: any) {
-    console.error("Error saving base64 image:", error.message);
-    return null;
   }
-}
 
- static async login(email:string,password:string):Promise<UserLoginAuthTypes>{
-     try{
-            
-            if(!email || !password){
-                return{
-                    success:false,
-                    message:"All fields are required"
-                }
-            }
+  static async login(email:string, password:string): Promise<UserLoginAuthTypes>{
+    try{
+      if(!email || !password){
+        return {
+          success: false,
+          message: "All fields are required"
+        };
+      }
 
-        const user = await prisma.user.findUnique({
-            where:{email}
-        });
+      const user = await prisma.user.findUnique({
+        where: { email }
+      });
 
-        if(!user){
-            return{
-                success:false,
-                message:"User not found"
-            }
-        } 
-         
-        const validPassword = await comparePassword(password,user.passwordHash);
-          
-        if(!validPassword){
-            return{
-                success:false,
-                message:"Invalid Password"
-            }
+      if(!user){
+        return {
+          success: false,
+          message: "User not found"
+        };
+      } 
+       
+      const validPassword = await comparePassword(password, user.passwordHash);
+        
+      if(!validPassword){
+        return {
+          success: false,
+          message: "Invalid Password"
+        };
+      }
+
+      const userId = user.id as unknown as string;
+      const token = UserJwtUtils.generateToken(userId, user.email, user.role);
+      
+      return {
+        success: true,
+        message: "Login Successfully",
+        token, // ← Token is here!
+        user: {
+          id: userId,
+          fullName: user.fullName,
+          email: user.email,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender as Gender | null,
+          role: user.role,
+          roleStatus: user.roleStatus
         }
+      };
 
-        const userId = user.id as unknown as string;
-        const token = UserJwtUtils.generateToken(userId,user.email,user.role);
-          return{
-             success:true,
-             message:"Login Successfully",
-             token,
-             user:{
-                id:userId,
-                fullName:user.fullName,
-                email:user.email,
-                avatarUrl:user.avatarUrl,
-                gender:user.gender as Gender | null ,
-                role:user.role,
-                roleStatus:user.roleStatus
-             }
-          }
-
-     }catch(e:any){
-        return{
-            success:false,
-            message:"Login Failed",
-            error:e.message
-        }
-     }  
-
- }
-
+    } catch(e:any){
+      return {
+        success: false,
+        message: "Login Failed",
+        error: e.message
+      };
+    }  
+  }
 }
