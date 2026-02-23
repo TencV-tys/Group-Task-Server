@@ -90,20 +90,41 @@ static async createSwapRequest(
         success: false, 
         message: "A pending swap request already exists for this assignment" 
       };
-    }
+    } 
+            
+    // Check time constraints based on scope
+const now = new Date();
 
-    // Check 24 hour rule
-    const now = new Date();
-    const dueDate = new Date(assignment.dueDate);
-    const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-
-    if (hoursUntilDue < 24) {
-      return { 
-        success: false, 
-        message: "Cannot swap assignments less than 24 hours before due date" 
-      };
-    }
-
+if (data.scope === 'week') {
+  // For WEEK swaps, check if within first 24 hours of the week
+  // Get the week start date (Monday of current week)
+  const weekStart = new Date(now);
+  const dayOfWeek = weekStart.getDay(); // 0 = Sunday, 1 = Monday
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  weekStart.setDate(weekStart.getDate() - daysToMonday);
+  weekStart.setHours(0, 0, 0, 0);
+  
+  // Calculate hours since week started
+  const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
+  
+  // Week swap available within first 24 hours
+  if (hoursSinceWeekStart > 24) {
+    return { 
+      success: false, 
+      message: "Week swap window has closed (only available within first 24 hours of the week)" 
+    };
+  }
+} else {
+  // For DAY swaps, check if assignment is past due
+  const dueDate = new Date(assignment.dueDate);
+  if (now > dueDate) {
+    return { 
+      success: false, 
+      message: "Cannot swap past due assignments" 
+    };
+  }
+}
+          
     // Validate scope selection
     if (data.scope === 'day' && !data.selectedDay) {
       return { 

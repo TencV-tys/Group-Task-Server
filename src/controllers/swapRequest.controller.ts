@@ -19,7 +19,7 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
         selectedTimeSlotId
       } = req.body;
 
-      if (!userId) {
+      if (!userId) { 
         return res.status(401).json({
           success: false,
           message: "User not authenticated"
@@ -448,12 +448,12 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
       });
     }
   }
-
-   // In swapRequest.controller.ts - UPDATE checkCanSwap
+  // In swapRequest.controller.ts - FIX THIS
 static async checkCanSwap(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
-    const { assignmentId } = req.params as {assignmentId:string};
+    const { assignmentId } = req.params as { assignmentId:string };
+    const { scope } = req.query;
 
     if (!userId) {
       return res.status(401).json({
@@ -465,7 +465,11 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
     const assignment = await prisma.assignment.findUnique({
       where: { id: assignmentId },
       include: {
-        task: true
+        task: {
+          include: {
+            group: true
+          }
+        }
       }
     });
 
@@ -511,25 +515,35 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Get the swap request scope from query params (if any)
-    const { scope } = req.query;
-    
-    // Check 24 hour rule - ONLY for week swaps, NOT for day swaps
     const now = new Date();
-    const dueDate = new Date(assignment.dueDate);
-    const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
 
-    // Only apply 24-hour rule for WEEK swaps
-    if (scope === 'week' && hoursUntilDue < 24) {
+    // For WEEK swaps, check based on week start (Monday 00:00)
+    if (scope === 'week') {
+      // Get the week start date (Monday of the current week)
+      const weekStart = new Date(now);
+      const dayOfWeek = weekStart.getDay(); // 0 = Sunday, 1 = Monday
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      weekStart.setDate(weekStart.getDate() - daysToMonday);
+      weekStart.setHours(0, 0, 0, 0);
+      
+      // Calculate hours since week started
+      const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
+      
+      // Week swap available within first 24 hours
+      if (hoursSinceWeekStart > 24) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Week swap window has closed (only available within first 24 hours of the week)"
+        });
+      }
+      
       return res.json({
         success: true,
-        canSwap: false,
-        reason: "Cannot swap entire week less than 24 hours before due date"
+        canSwap: true
       });
     }
-
-    // DAY swaps can happen anytime before due date
-    return res.json({
+   return res.json({
       success: true,
       canSwap: true
     });
@@ -542,4 +556,5 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
     });
   }
 }
+   
 }
