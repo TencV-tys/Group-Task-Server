@@ -16,7 +16,7 @@ import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import UserNotificationRoutes from './routes/user.notification.routes';
 import FeedbackRoutes from './routes/feedback.routes';
 import { initReminderCron } from "./cron/reminderCron";
-
+import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
 dotenv.config(); 
 
 const svr = express();
@@ -83,6 +83,8 @@ svr.get('/forgot-password', (req, res) => {
 initSwapRequestCron();
 
 initReminderCron();
+
+initNeglectDetectionCron();
 
 //const COMPUTER_IP = '10.219.65.2';
 const MY_IP = '10.116.190.2'; 
