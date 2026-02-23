@@ -449,25 +449,16 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
     }
   }
 
-  // GET: Check if user can swap assignment
+   // In swapRequest.controller.ts - UPDATE checkCanSwap
 static async checkCanSwap(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
     const { assignmentId } = req.params as {assignmentId:string};
 
-    console.log('🔍 checkCanSwap called with:', { userId, assignmentId });
-
     if (!userId) {
       return res.status(401).json({
         success: false,
         message: "User not authenticated"
-      });
-    }
-
-    if (!assignmentId) {
-      return res.status(400).json({
-        success: false,
-        message: "Assignment ID is required"
       });
     }
 
@@ -478,8 +469,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       }
     });
 
-    console.log('📦 Assignment found:', assignment ? 'Yes' : 'No');
-
     if (!assignment) {
       return res.status(404).json({
         success: false,
@@ -489,16 +478,15 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
 
     // Check if assignment belongs to user
     if (assignment.userId !== userId) {
-      console.log('❌ Assignment belongs to different user:', assignment.userId);
-      return res.status(403).json({
-        success: false,
-        message: "You can only request swap for your own assignments"
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "You can only request swap for your own assignments"
       });
     }
 
     // Check if already completed
     if (assignment.completed) {
-      console.log('✅ Assignment already completed');
       return res.json({
         success: true,
         canSwap: false,
@@ -514,8 +502,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       }
     });
 
-    console.log('📋 Existing pending request:', existingRequest ? 'Yes' : 'No');
-
     if (existingRequest) {
       return res.json({
         success: true,
@@ -525,29 +511,31 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Check 24 hour rule
+    // Get the swap request scope from query params (if any)
+    const { scope } = req.query;
+    
+    // Check 24 hour rule - ONLY for week swaps, NOT for day swaps
     const now = new Date();
     const dueDate = new Date(assignment.dueDate);
     const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
 
-    console.log('⏰ Hours until due:', hoursUntilDue);
-
-    if (hoursUntilDue < 24) {
+    // Only apply 24-hour rule for WEEK swaps
+    if (scope === 'week' && hoursUntilDue < 24) {
       return res.json({
         success: true,
         canSwap: false,
-        reason: "Cannot swap assignments less than 24 hours before due date"
+        reason: "Cannot swap entire week less than 24 hours before due date"
       });
     }
 
-    console.log('✅ Swap is available!');
+    // DAY swaps can happen anytime before due date
     return res.json({
       success: true,
       canSwap: true
     });
 
   } catch (error: any) {
-    console.error("❌ SwapRequestController.checkCanSwap error:", error);
+    console.error("SwapRequestController.checkCanSwap error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error"
