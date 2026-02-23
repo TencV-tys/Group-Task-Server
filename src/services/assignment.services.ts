@@ -6,6 +6,7 @@ import { UserNotificationService } from "./user.notification.services";
 
 export class AssignmentService {
   
+  // ========== COMPLETE ASSIGNMENT ==========
   static async completeAssignment(
     assignmentId: string,
     userId: string,
@@ -14,7 +15,6 @@ export class AssignmentService {
       notes?: string;
     }
   ) {
-    // Declare timeValidation here so it's available in the whole function
     let timeValidation;
     
     try {
@@ -44,21 +44,17 @@ export class AssignmentService {
         return { success: false, message: "Assignment not found" };
       }
 
-      // Check if assignment belongs to user
       if (assignment.userId !== userId) {
         return { success: false, message: "You can only complete your own assignments" };
       }
 
-      // Check if already completed
       if (assignment.completed) {
         return { success: false, message: "Assignment already completed" };
       }
 
-      // Validate due date
       const now = new Date();
       const dueDate = new Date(assignment.dueDate);
       
-      // Check if it's the correct day
       if (now.toDateString() !== dueDate.toDateString()) {
         return { 
           success: false, 
@@ -66,7 +62,6 @@ export class AssignmentService {
         };
       }
 
-      // TIME VALIDATION LOGIC WITH PENALTY
       let finalPoints = assignment.points;
       let isLate = false;
       let penaltyAmount = 0;
@@ -94,27 +89,24 @@ export class AssignmentService {
           };
         }
         
-        // Check if late (after end time)
-const [endHourStr = '0', endMinuteStr = '0'] = assignment.timeSlot.endTime.split(':');
-const endHour = parseInt(endHourStr, 10);
-const endMinute = parseInt(endMinuteStr, 10);
+        const [endHourStr = '0', endMinuteStr = '0'] = assignment.timeSlot.endTime.split(':');
+        const endHour = parseInt(endHourStr, 10);
+        const endMinute = parseInt(endMinuteStr, 10);
 
-if (!isNaN(endHour) && !isNaN(endMinute)) {
-  const endTime = new Date(dueDate);
-  endTime.setHours(endHour, endMinute, 0, 0);
-  
-  if (now > endTime) {
-    isLate = true;
-    penaltyAmount = Math.floor(assignment.points * 0.5);
-    finalPoints = assignment.points - penaltyAmount;
-  }
-}
-        
+        if (!isNaN(endHour) && !isNaN(endMinute)) {
+          const endTime = new Date(dueDate);
+          endTime.setHours(endHour, endMinute, 0, 0);
+          
+          if (now > endTime) {
+            isLate = true;
+            penaltyAmount = Math.floor(assignment.points * 0.5);
+            finalPoints = assignment.points - penaltyAmount;
+          }
+        }
         
         console.log(`Assignment ${assignmentId} submitted with ${timeValidation.timeLeft} seconds remaining, isLate: ${isLate}, finalPoints: ${finalPoints}`);
       }
 
-      // Update assignment
       const updatedAssignment = await prisma.assignment.update({
         where: { id: assignmentId },
         data: {
@@ -139,7 +131,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         }
       });
 
-      // ========== NOTIFY ALL GROUP ADMINS ==========
       const admins = await prisma.groupMember.findMany({
         where: {
           groupId: assignment.task.groupId,
@@ -158,7 +149,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
 
       console.log(`📢 Notifying ${admins.length} admins about new submission`);
 
-      // Create notifications for each admin
       for (const admin of admins) {
         await UserNotificationService.createNotification({
           userId: admin.userId,
@@ -193,7 +183,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         });
       }
 
-      // ========== NOTIFY TASK CREATOR ========== 
       if (assignment.task.createdById && 
           !admins.some(admin => admin.userId === assignment.task.createdById)) {
         
@@ -220,7 +209,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         });
       }
 
-      // ========== NOTIFY USER ABOUT PENALTY IF LATE ==========
       if (isLate) {
         await UserNotificationService.createNotification({
           userId: assignment.userId,
@@ -265,7 +253,7 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
     }
   }
 
-  // Verify assignment
+  // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(
     assignmentId: string,
     userId: string,
@@ -296,7 +284,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         return { success: false, message: "Assignment not found" };
       }
 
-      // Check if user is admin
       const membership = await prisma.groupMember.findFirst({
         where: {
           userId,
@@ -309,12 +296,10 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         return { success: false, message: "Only group admins can verify assignments" };
       }
 
-      // Check if assignment is completed
       if (!assignment.completed) {
         return { success: false, message: "Assignment must be completed before verification" };
       }
 
-      // Update assignment
       const updatedAssignment = await prisma.assignment.update({
         where: { id: assignmentId },
         data: {
@@ -335,7 +320,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         }
       });
 
-      // Notify the user
       const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
       const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
       const notificationMessage = data.verified 
@@ -361,7 +345,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         }
       });
 
-      // Notify other admins
       const admins = await prisma.groupMember.findMany({
         where: {
           groupId: assignment.task.groupId,
@@ -409,7 +392,183 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
     }
   }
 
-  // ========== NEW: CHECK NEGLECTED ASSIGNMENTS (FOR CRON) ==========
+  // ========== GET UPCOMING ASSIGNMENTS ==========
+  static async getUpcomingAssignments(
+    userId: string,
+    filters?: {
+      groupId?: string;
+      limit?: number;
+    }
+  ) {
+    try {
+      console.log(`📋 AssignmentService.getUpcomingAssignments for user: ${userId}`);
+      
+      const now = new Date();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const where: any = {
+        userId,
+        completed: false,
+        dueDate: {
+          gte: today
+        }
+      };
+
+      if (filters?.groupId) {
+        where.task = {
+          groupId: filters.groupId
+        };
+      }
+
+      const assignments = await prisma.assignment.findMany({
+        where,
+        include: {
+          timeSlot: true,
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { dueDate: 'asc' },
+        take: filters?.limit || 10
+      });
+
+      console.log(`✅ Found ${assignments.length} assignments`);
+
+      return {
+        success: true,
+        message: "Upcoming assignments retrieved",
+        data: {
+          assignments,
+          currentTime: now,
+          total: assignments.length
+        }
+      };
+
+    } catch (error: any) {
+      console.error("❌ AssignmentService.getUpcomingAssignments error:", error);
+      return {
+        success: false,
+        message: error.message || "Error retrieving upcoming assignments",
+        data: {
+          assignments: [],
+          currentTime: new Date(),
+          total: 0
+        }
+      };
+    }
+  }
+
+  // ========== GET TODAY'S ASSIGNMENTS ==========
+  static async getTodayAssignments(
+    userId: string,
+    filters?: {
+      groupId?: string;
+    }
+  ) {
+    try {
+      console.log(`📋 AssignmentService.getTodayAssignments for user: ${userId}`);
+      
+      const now = new Date();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      
+      const where: any = {
+        userId,
+        completed: false,
+        dueDate: {
+          gte: today,
+          lt: tomorrow
+        }
+      };
+
+      if (filters?.groupId) {
+        where.task = {
+          groupId: filters.groupId
+        };
+      }
+
+      const assignments = await prisma.assignment.findMany({
+        where,
+        include: {
+          timeSlot: true,
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { dueDate: 'asc' }
+      });
+
+      // Add time validation info
+      const assignmentsWithTimeInfo = assignments.map(assignment => {
+        const validation = TimeHelpers.canSubmitAssignment(assignment, now);
+        
+        return {
+          id: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.task.title,
+          taskPoints: assignment.task.points,
+          group: assignment.task.group,
+          dueDate: assignment.dueDate,
+          canSubmit: validation.allowed,
+          timeLeft: validation.timeLeft,
+          timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+          reason: validation.reason,
+          timeSlot: assignment.timeSlot,
+          willBePenalized: validation.willBePenalized,
+          finalPoints: validation.finalPoints
+        };
+      });
+
+      console.log(`✅ Found ${assignments.length} today assignments`);
+
+      return {
+        success: true,
+        message: "Today's assignments retrieved",
+        data: {
+          assignments: assignmentsWithTimeInfo,
+          currentTime: now,
+          total: assignments.length
+        }
+      };
+
+    } catch (error: any) {
+      console.error("❌ AssignmentService.getTodayAssignments error:", error);
+      return {
+        success: false,
+        message: error.message || "Error retrieving today's assignments",
+        data: {
+          assignments: [],
+          currentTime: new Date(),
+          total: 0
+        }
+      };
+    }
+  }
+
+  // ========== CHECK NEGLECTED ASSIGNMENTS (FOR CRON) ==========
   static async checkNeglectedAssignments() {
     try {
       const groups = await prisma.group.findMany({ select: { id: true } });
@@ -427,7 +586,7 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
     }
   }
 
-  // ========== NEW: CHECK NEGLECTED ASSIGNMENTS FOR A GROUP ==========
+  // ========== CHECK NEGLECTED ASSIGNMENTS FOR A GROUP ==========
   private static async checkGroupNeglectedAssignments(groupId: string) {
     try {
       const group = await prisma.group.findUnique({ 
@@ -457,7 +616,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
         if (TimeHelpers.isAssignmentNeglected(assignment, now)) {
           neglectedCount++;
 
-          // Mark as neglected
           await prisma.assignment.update({
             where: { id: assignment.id },
             data: {
@@ -467,7 +625,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
             }
           });
 
-          // Notify user
           await UserNotificationService.createNotification({
             userId: assignment.userId,
             type: "POINT_DEDUCTION",
@@ -483,7 +640,6 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
             }
           });
 
-          // Notify admins
           const admins = await prisma.groupMember.findMany({
             where: { groupId, groupRole: "ADMIN" }
           });
@@ -514,20 +670,20 @@ if (!isNaN(endHour) && !isNaN(endMinute)) {
       return { count: 0 };
     }
   }
-static async sendUpcomingTaskReminders() {
+
+  // ========== SEND UPCOMING TASK REMINDERS ==========
+  static async sendUpcomingTaskReminders() {
     try {
       const now = new Date();
       const currentHour = now.getHours();
       const currentMinute = now.getMinutes();
       const currentInMinutes = currentHour * 60 + currentMinute;
 
-      // Get today's date range
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Find all assignments due today that are not completed
       const assignments = await prisma.assignment.findMany({
         where: {
           completed: false,
@@ -552,7 +708,6 @@ static async sendUpcomingTaskReminders() {
       for (const assignment of assignments) {
         if (!assignment.timeSlot) continue;
 
-        // Parse start time safely
         const startParts = assignment.timeSlot.startTime.split(':');
         const startHourStr = startParts[0] || '0';
         const startMinuteStr = startParts[1] || '0';
@@ -563,17 +718,14 @@ static async sendUpcomingTaskReminders() {
         if (isNaN(startHour) || isNaN(startMinute)) continue;
         
         const startInMinutes = startHour * 60 + startMinute;
-        
-        // Check if time slot starts in 60 minutes or less
         const timeUntilStart = startInMinutes - currentInMinutes;
         
         if (timeUntilStart > 0 && timeUntilStart <= 60) {
-          // Check if already sent reminder recently
           const existingReminder = await prisma.userNotification.findFirst({
             where: {
               userId: assignment.userId,
               type: "TASK_REMINDER",
-              createdAt: { gte: new Date(Date.now() - 30 * 60000) } // Last 30 minutes
+              createdAt: { gte: new Date(Date.now() - 30 * 60000) }
             }
           });
 
@@ -599,13 +751,12 @@ static async sendUpcomingTaskReminders() {
           }
         }
 
-        // Parse end time safely
         const endParts = assignment.timeSlot.endTime.split(':');
         const endHourStr = endParts[0] || '0';
         const endMinuteStr = endParts[1] || '0';
         
         const endHour = parseInt(endHourStr, 10);
-        const endMinute = parseInt(endMinuteStr, 10);
+        const endMinute = parseInt(endMinuteStr, 10);  
         
         if (isNaN(endHour) || isNaN(endMinute)) continue;
         
@@ -613,14 +764,12 @@ static async sendUpcomingTaskReminders() {
         const submissionStartInMinutes = endInMinutes - 30;
         const graceEndInMinutes = endInMinutes + 30;
 
-        // Check if currently in submission window
         if (currentInMinutes >= submissionStartInMinutes && currentInMinutes <= graceEndInMinutes) {
-          // Check if already sent active reminder
           const existingActive = await prisma.userNotification.findFirst({
             where: {
               userId: assignment.userId,
               type: "TASK_ACTIVE",
-              createdAt: { gte: new Date(Date.now() - 15 * 60000) } // Last 15 minutes
+              createdAt: { gte: new Date(Date.now() - 15 * 60000) }
             }
           });
 
@@ -653,7 +802,8 @@ static async sendUpcomingTaskReminders() {
       return { success: false, message: error.message };
     }
   }
-  // ========== EXISTING METHODS (UNCHANGED) ==========
+
+  // ========== GET ASSIGNMENT DETAILS ==========
   static async getAssignmentDetails(assignmentId: string, userId: string) {
     try {
       const assignment = await prisma.assignment.findUnique({
@@ -701,6 +851,7 @@ static async sendUpcomingTaskReminders() {
     }
   }
 
+  // ========== GET USER ASSIGNMENTS ==========
   static async getUserAssignments(
     userId: string,
     filters: {
@@ -804,6 +955,7 @@ static async sendUpcomingTaskReminders() {
     }
   }
 
+  // ========== GET GROUP ASSIGNMENTS ==========
   static async getGroupAssignments(
     groupId: string,
     requestingUserId: string,

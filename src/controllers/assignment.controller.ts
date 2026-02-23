@@ -7,10 +7,11 @@ import prisma from "../prisma";
 
 export class AssignmentController {
   
+  // ========== COMPLETE ASSIGNMENT ==========
   static async completeAssignment(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { assignmentId } = req.params as { assignmentId:string };
+      const { assignmentId } = req.params as { assignmentId: string };
       const { photoUrl, notes } = req.body;
 
       if (!userId) {
@@ -61,10 +62,11 @@ export class AssignmentController {
     }
   } 
  
+  // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { assignmentId } = req.params as { assignmentId:string };
+      const { assignmentId } = req.params as { assignmentId: string };
       const { verified, adminNotes } = req.body;
 
       if (!userId) {
@@ -110,10 +112,11 @@ export class AssignmentController {
     }
   } 
 
+  // ========== GET ASSIGNMENT DETAILS ==========
   static async getAssignmentDetails(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { assignmentId } = req.params as {assignmentId:string};
+      const { assignmentId } = req.params as { assignmentId: string };
 
       if (!userId) {
         return res.status(401).json({
@@ -138,13 +141,12 @@ export class AssignmentController {
         });
       }
 
-      // Add time validation for frontend
-let timeValidation = null;
-if (result.success && result.assignment) {
-  if (!result.assignment.completed && result.assignment.timeSlot) {
-    timeValidation = TimeHelpers.canSubmitAssignment(result.assignment, new Date());
-  }
-}
+      let timeValidation = null;
+      if (result.success && result.assignment) {
+        if (!result.assignment.completed && result.assignment.timeSlot) {
+          timeValidation = TimeHelpers.canSubmitAssignment(result.assignment, new Date());
+        }
+      }
 
       return res.json({
         success: true,
@@ -164,10 +166,11 @@ if (result.success && result.assignment) {
     }
   }
 
+  // ========== GET USER ASSIGNMENTS ==========
   static async getUserAssignments(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { userId: targetUserId } = req.params as {userId:string};
+      const { userId: targetUserId } = req.params as { userId: string };
       const { 
         status,
         week,
@@ -217,10 +220,11 @@ if (result.success && result.assignment) {
     }
   }
 
+  // ========== GET GROUP ASSIGNMENTS ==========
   static async getGroupAssignments(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { groupId } = req.params as {groupId:string};
+      const { groupId } = req.params as { groupId: string };
       const { 
         status,
         week,
@@ -279,10 +283,10 @@ if (result.success && result.assignment) {
     }
   }
  
-  // ========== NEW: Check submission time ==========
- static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
+  // ========== CHECK SUBMISSION TIME ==========
+  static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
     try {
-      const { assignmentId } = req.params as { assignmentId:string };
+      const { assignmentId } = req.params as { assignmentId: string };
       const userId = req.user?.id;
       
       if (!userId) {
@@ -295,7 +299,7 @@ if (result.success && result.assignment) {
       const assignment = await prisma.assignment.findUnique({
         where: { id: assignmentId },
         include: {
-          timeSlot: true, // This should work if the relation is defined in schema
+          timeSlot: true,
           task: {
             include: {
               timeSlots: {
@@ -313,7 +317,6 @@ if (result.success && result.assignment) {
         });
       }
       
-      // Check if assignment belongs to user
       if (assignment.userId !== userId) {
         return res.status(403).json({ 
           success: false, 
@@ -323,10 +326,9 @@ if (result.success && result.assignment) {
       
       const now = new Date();
       
-      // Create a properly shaped object for TimeHelpers
       const assignmentForValidation = {
         ...assignment,
-        timeSlot: assignment.timeSlot // This should exist from include
+        timeSlot: assignment.timeSlot
       };
       
       const validation = TimeHelpers.canSubmitAssignment(assignmentForValidation, now);
@@ -344,7 +346,7 @@ if (result.success && result.assignment) {
           gracePeriodEnd: validation.gracePeriodEnd,
           currentTime: now,
           dueDate: assignment.dueDate,
-          timeSlot: assignment.timeSlot, // This should work now
+          timeSlot: assignment.timeSlot,
           willBePenalized: validation.willBePenalized,
           finalPoints: validation.finalPoints,
           originalPoints: validation.originalPoints
@@ -359,101 +361,42 @@ if (result.success && result.assignment) {
       });
     }
   }
-// ========== GET UPCOMING ASSIGNMENTS ==========
-static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
-  try {
-    const userId = req.user?.id;
-    const { groupId, limit = 10 } = req.query;
-    
-    if (!userId) { 
-      return res.status(401).json({ 
+
+  // ========== GET UPCOMING ASSIGNMENTS ==========
+  static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId, limit = 10 } = req.query;
+      
+      if (!userId) {
+        return res.status(401).json({ 
+          success: false, 
+          message: "Authentication required" 
+        });
+      }
+      
+      const result = await AssignmentService.getUpcomingAssignments(userId, {
+        groupId: groupId as string,
+        limit: limit ? Number(limit) : 10
+      });
+
+      return res.status(200).json(result);
+      
+    } catch (error: any) {
+      console.error("Error:", error);
+      return res.status(500).json({ 
         success: false, 
-        message: "Authentication required" 
+        message: error.message,
+        data: {
+          assignments: [],
+          currentTime: new Date(),
+          total: 0
+        }
       });
     }
-    
-    const now = new Date();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const assignments = await prisma.assignment.findMany({
-      where: {
-        userId,
-        task: groupId ? { groupId: String(groupId) } : undefined,
-        completed: false,
-        dueDate: {
-          gte: today
-        }
-      },
-      include: {
-        timeSlot: true,
-        task: {
-          select: {
-            id: true,
-            title: true,
-            points: true,
-            group: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { dueDate: 'asc' },
-      take: Number(limit)
-    });
-    
-    const assignmentsWithTimeInfo = assignments.map(assignment => {
-      const dueDate = new Date(assignment.dueDate);
-      const isToday = dueDate.toDateString() === today.toDateString();
-      const validation = isToday && assignment.timeSlot ? 
-        TimeHelpers.canSubmitAssignment(assignment, now) : null;
-      
-      return {
-        id: assignment.id,
-        taskId: assignment.taskId,
-        taskTitle: assignment.task.title,
-        taskPoints: assignment.task.points,
-        group: assignment.task.group,
-        dueDate: assignment.dueDate,
-        isToday,
-        canSubmit: validation?.allowed || (isToday && !assignment.timeSlot) || false,
-        timeLeft: validation?.timeLeft || null,
-        timeLeftText: validation?.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-        willBePenalized: validation?.willBePenalized || false,
-        timeSlot: assignment.timeSlot,
-        completed: assignment.completed,
-        verified: assignment.verified
-      };
-    });
-    
-    return res.status(200).json({
-      success: true,
-      message: "Upcoming assignments retrieved",
-      data: {
-        assignments: assignmentsWithTimeInfo,
-        currentTime: now,
-        total: assignments.length
-      }
-    });
-    
-  } catch (error: any) {
-    console.error("Error:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: error.message || "Error retrieving upcoming assignments",
-      data: {
-        assignments: [],
-        currentTime: new Date(),
-        total: 0
-      }
-    });
   }
-}
 
-  // ========== NEW: Get today's assignments ==========
+  // ========== GET TODAY'S ASSIGNMENTS ==========
   static async getTodayAssignments(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -466,70 +409,11 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
         }); 
       }
       
-      const now = new Date();
-      const today = now.toDateString();
-      
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          userId,
-          task: groupId ? { groupId: String(groupId) } : undefined,
-          completed: false
-        },
-        include: {
-          timeSlot: true,
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              executionFrequency: true,
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
-              }
-            }
-          }
-        }
+      const result = await AssignmentService.getTodayAssignments(userId, {
+        groupId: groupId as string
       });
-      
-      // Filter for today's assignments
-      const todayAssignments = assignments.filter(assignment => {
-        const dueDate = new Date(assignment.dueDate);
-        return dueDate.toDateString() === today;
-      });
-      
-      // Add time validation info
-      const assignmentsWithTimeInfo = todayAssignments.map(assignment => {
-        const validation = TimeHelpers.canSubmitAssignment(assignment, now);
-        
-        return {
-          id: assignment.id,
-          taskId: assignment.taskId,
-          taskTitle: assignment.task.title,
-          taskPoints: assignment.task.points,
-          group: assignment.task.group,
-          dueDate: assignment.dueDate,
-          canSubmit: validation.allowed,
-          timeLeft: validation.timeLeft,
-          timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-          reason: validation.reason,
-          timeSlot: assignment.timeSlot,
-          willBePenalized: validation.willBePenalized,
-          finalPoints: validation.finalPoints
-        };
-      });
-      
-      return res.status(200).json({
-        success: true,
-        message: "Today's assignments retrieved",
-        data: {
-          assignments: assignmentsWithTimeInfo,
-          currentTime: now,
-          total: assignmentsWithTimeInfo.length
-        }
-      });
+
+      return res.status(200).json(result);
       
     } catch (error: any) {
       console.error("AssignmentController.getTodayAssignments error:", error);
@@ -540,10 +424,10 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
     }
   }
 
-  // ========== Get assignment statistics ==========
+  // ========== GET ASSIGNMENT STATISTICS ==========
   static async getAssignmentStats(req: UserAuthRequest, res: Response) {
     try {
-      const { groupId } = req.params as {groupId:string};
+      const { groupId } = req.params as { groupId: string };
       const userId = req.user?.id;
       
       if (!userId) {
@@ -553,7 +437,6 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
         });
       }
       
-      // Check if user is member of group
       const membership = await prisma.groupMember.findFirst({
         where: { userId, groupId }
       });
@@ -577,7 +460,6 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
         });
       }
       
-      // Get all assignments for current week
       const assignments = await prisma.assignment.findMany({
         where: {
           task: { groupId },
@@ -602,7 +484,6 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
         }
       });
       
-      // Calculate statistics
       const totalAssignments = assignments.length;
       const completedAssignments = assignments.filter(a => a.completed).length;
       const pendingAssignments = totalAssignments - completedAssignments;
@@ -611,14 +492,12 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
       const rejectedAssignments = assignments.filter(a => a.verified === false).length;
       const pendingVerification = assignments.filter(a => a.completed && a.verified === null).length;
       
-      // Calculate points
       const totalPoints = assignments.reduce((sum, a) => sum + a.points, 0);
       const completedPoints = assignments
         .filter(a => a.completed)
         .reduce((sum, a) => sum + a.points, 0);
       const pendingPoints = totalPoints - completedPoints;
       
-      // Group by user
       const userStats: Record<string, any> = {};
       assignments.forEach(assignment => {
         const userId = assignment.userId;
@@ -642,7 +521,6 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
           userStats[userId].completedAssignments++;
           userStats[userId].completedPoints += assignment.points;
           
-          // Check if late (based on notes)
           if (assignment.notes?.includes('LATE')) {
             userStats[userId].lateSubmissions++;
           }
