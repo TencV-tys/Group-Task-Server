@@ -392,82 +392,89 @@ export class AssignmentService {
     }
   }
 
-  // ========== GET UPCOMING ASSIGNMENTS ==========
-  static async getUpcomingAssignments(
-    userId: string,
-    filters?: {
-      groupId?: string;
-      limit?: number;
-    }
-  ) {
-    try {
-      console.log(`📋 AssignmentService.getUpcomingAssignments for user: ${userId}`);
-      
-      const now = new Date();
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const where: any = {
-        userId,
-        completed: false,
-        dueDate: {
-          gte: today
-        }
+ // ========== GET UPCOMING ASSIGNMENTS ==========
+static async getUpcomingAssignments(
+  userId: string,
+  filters?: {
+    groupId?: string;
+    limit?: number;
+  }
+) {
+  console.log("📚📚📚 SERVICE: getUpcomingAssignments STARTED 📚📚📚");
+  console.log("📚 UserId:", userId);
+  console.log("📚 Filters:", filters);
+  
+  try {
+    console.log("📚 Building Prisma query...");
+    
+    const where: any = {
+      userId: userId,
+      completed: false
+    };
+
+    if (filters?.groupId) {
+      where.task = {
+        groupId: filters.groupId
       };
+    }
 
-      if (filters?.groupId) {
-        where.task = {
-          groupId: filters.groupId
-        };
-      }
+    console.log("📚 Where clause:", JSON.stringify(where, null, 2));
 
-      const assignments = await prisma.assignment.findMany({
-        where,
-        include: {
-          timeSlot: true,
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
+    const assignments = await prisma.assignment.findMany({
+      where,
+      include: {
+        timeSlot: true,
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            group: {
+              select: {
+                id: true,
+                name: true
               }
             }
           }
-        },
-        orderBy: { dueDate: 'asc' },
-        take: filters?.limit || 10
-      });
-
-      console.log(`✅ Found ${assignments.length} assignments`);
-
-      return {
-        success: true,
-        message: "Upcoming assignments retrieved",
-        data: {
-          assignments,
-          currentTime: now,
-          total: assignments.length
         }
-      };
+      },
+      orderBy: { dueDate: 'asc' },
+      take: filters?.limit || 10
+    });
 
-    } catch (error: any) {
-      console.error("❌ AssignmentService.getUpcomingAssignments error:", error);
-      return {
-        success: false,
-        message: error.message || "Error retrieving upcoming assignments",
-        data: {
-          assignments: [],
-          currentTime: new Date(),
-          total: 0
-        }
-      };
+    console.log(`✅ SERVICE: Found ${assignments.length} assignments`);
+    
+    if (assignments.length > 0) {
+      console.log("📚 First assignment:", JSON.stringify(assignments[0], null, 2));
     }
+
+    return {
+      success: true,
+      message: "Upcoming assignments retrieved",
+      data: {
+        assignments: assignments || [],
+        currentTime: new Date(),
+        total: assignments.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("❌❌❌ SERVICE ERROR:", error);
+    console.error("❌ Error stack:", error.stack);
+    console.error("❌ Error code:", error.code);
+    console.error("❌ Error meta:", error.meta);
+    
+    return {
+      success: false,
+      message: error.message,
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }
+    };
   }
+}
 
   // ========== GET TODAY'S ASSIGNMENTS ==========
   static async getTodayAssignments(

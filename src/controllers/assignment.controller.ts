@@ -362,39 +362,51 @@ export class AssignmentController {
     }
   }
 
-  // ========== GET UPCOMING ASSIGNMENTS ==========
-  static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { groupId, limit = 10 } = req.query;
-      
-      if (!userId) {
-        return res.status(401).json({ 
-          success: false, 
-          message: "Authentication required" 
-        });
-      }
-      
-      const result = await AssignmentService.getUpcomingAssignments(userId, {
-        groupId: groupId as string,
-        limit: limit ? Number(limit) : 10
-      });
-   
-      return res.status(200).json(result);
-       
-    } catch (error: any) {
-      console.error("Error:", error);
-      return res.status(500).json({ 
+  // In assignment.controller.ts - update getUpcomingAssignments
+static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
+  console.log("🎯 CONTROLLER: getUpcomingAssignments STARTED");
+  console.log("👤 User from middleware:", req.user);
+  console.log("📊 Query params:", req.query);
+  
+  try {
+    const userId = req.user?.id;
+    const { groupId, limit = 10 } = req.query;
+    
+    console.log("📋 Processing with userId:", userId);
+    console.log("🔍 Calling AssignmentService.getUpcomingAssignments...");
+    
+    if (!userId) {
+      console.log("❌ No user ID in request");
+      return res.status(401).json({ 
         success: false, 
-        message: error.message,
-        data: {
-          assignments: [],
-          currentTime: new Date(),
-          total: 0
-        }
+        message: "Authentication required" 
       });
     }
+    
+    const result = await AssignmentService.getUpcomingAssignments(userId, {
+      groupId: groupId as string,
+      limit: limit ? Number(limit) : 10
+    });
+    
+    console.log("✅ Service returned with success:", result.success);
+    console.log("📦 Number of assignments:", result.data?.assignments?.length || 0);
+    
+    return res.status(200).json(result);
+    
+  } catch (error: any) {
+    console.error("❌ CONTROLLER ERROR:", error);
+    console.error("❌ Error stack:", error.stack);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }
+    });
   }
+}
 
   // ========== GET TODAY'S ASSIGNMENTS ==========
   static async getTodayAssignments(req: UserAuthRequest, res: Response) {

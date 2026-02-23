@@ -58,6 +58,8 @@ svr.use(cors({
 }));
 svr.use(cookieParser());
 
+
+
 // Routes
 svr.use('/api/auth/users', UserAuthRoutes);
 svr.use('/api/auth/admins', AdminAuthRoutes);

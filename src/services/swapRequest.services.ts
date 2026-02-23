@@ -146,41 +146,40 @@ static async createSwapRequest(
         selectedTimeSlotId: data.selectedTimeSlotId
       }
     });
-
-    // Fetch the created request with additional data for response
-    const swapRequestWithDetails = await prisma.swapRequest.findUnique({
-      where: { id: swapRequest.id },
+// In createSwapRequest, update the include to match new relation name
+const swapRequestWithDetails = await prisma.swapRequest.findUnique({
+  where: { id: swapRequest.id },
+  include: {
+    assignment: {
       include: {
-        assignment: {
-          include: {
-            task: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            executionFrequency: true,
+            points: true,
+            timeSlots: {
               select: {
                 id: true,
-                title: true,
-                executionFrequency: true,
-                points: true,
-                timeSlots: {
-                  select: {
-                    id: true,
-                    startTime: true,
-                    endTime: true,
-                    label: true
-                  }
-                }
-              }
-            },
-            timeSlot: true,
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                avatarUrl: true
+                startTime: true,
+                endTime: true,
+                label: true
               }
             }
           }
+        },
+        timeSlot: true,
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
         }
       }
-    });
+    }
+  }
+});
 
     // Get requester info separately
     const requester = await prisma.user.findUnique({

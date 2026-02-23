@@ -1,6 +1,8 @@
+// services/home.services.ts - COMPLETE UPDATED VERSION
 import prisma from "../prisma";
 
 export class HomeServices {
+
   static async getHomeData(userId: string) {
     try {
       console.log(`Fetching home data for user: ${userId}`);
@@ -59,13 +61,25 @@ export class HomeServices {
       currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
       currentWeekEnd.setHours(23, 59, 59, 999);
 
-      // Get assignments for current rotation week
+      // Get assignments for current rotation week - FIXED with null checks
       const currentWeekAssignments = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
-          weekStart: { lte: now },
-          weekEnd: { gte: now }
+          OR: [
+            {
+              AND: [
+                { weekStart: { lte: now } },
+                { weekEnd: { gte: now } }
+              ]
+            },
+            {
+              dueDate: {
+                gte: currentWeekStart,
+                lte: currentWeekEnd
+              }
+            }
+          ]
         },
         include: {
           task: {
@@ -142,11 +156,21 @@ export class HomeServices {
       const nextWeekEnd = new Date(currentWeekEnd);
       nextWeekEnd.setDate(nextWeekEnd.getDate() + 7);
 
+      // Get upcoming assignments - FIXED with null checks
       const upcomingAssignments = await prisma.assignment.findMany({
         where: {
           userId: userId,
-          weekStart: { gte: nextWeekStart },
-          weekEnd: { lte: nextWeekEnd }
+          OR: [
+            {
+              weekStart: { gte: nextWeekStart }
+            },
+            {
+              dueDate: {
+                gte: nextWeekStart,
+                lte: nextWeekEnd
+              }
+            }
+          ]
         },
         include: {
           task: {
@@ -299,8 +323,8 @@ export class HomeServices {
             completed: assignment.completed,
             groupName: assignment.task.group.name,
             groupId: assignment.task.group.id,
-            weekStart: assignment.weekStart,
-            weekEnd: assignment.weekEnd
+            weekStart: assignment.weekStart || null,
+            weekEnd: assignment.weekEnd || null
           })),
           upcomingTasks: upcomingAssignments.map(assignment => ({
             id: assignment.id,
@@ -309,9 +333,11 @@ export class HomeServices {
             points: assignment.task.points,
             timeOfDay: assignment.task.timeOfDay,
             dayOfWeek: assignment.task.dayOfWeek,
-            weekStart: assignment.weekStart,
-            weekEnd: assignment.weekEnd,
-            startsInDays: Math.ceil((assignment.weekStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+            weekStart: assignment.weekStart || null,
+            weekEnd: assignment.weekEnd || null,
+            startsInDays: assignment.weekStart 
+              ? Math.ceil((assignment.weekStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+              : null
           })),
           groups: groups,
           leaderboard: leaderboard,
@@ -338,77 +364,16 @@ export class HomeServices {
     }
   }
 
-  // Helper to get total points for user
-  static async getTotalPoints(userId: string): Promise<number> {
-    try {
-      const completedAssignments = await prisma.assignment.findMany({
-        where: {
-          userId: userId,
-          completed: true
-        },
-        include: {
-          task: {
-            select: {
-              points: true
-            }
-          }
-        }
-      });
-
-      return completedAssignments.reduce((sum, assignment) => 
-        sum + (assignment.task.points || 0), 0
-      );
-    } catch (error) {
-      console.error("Error getting total points:", error);
-      return 0;
-    }
-  }
-
-  static getActivityIcon(type: string) {
-    const icons: Record<string, string> = {
-      TASK_ASSIGNED: '📝',
-      TASK_COMPLETED: '✅',
-      TASK_OVERDUE: '⚠️',
-      GROUP_JOINED: '👥',
-      GROUP_CREATED: '🏠',
-      ROTATION_ADVANCED: '🔄',
-      SWAP_REQUESTED: '🔄',
-      SWAP_ACCEPTED: '🤝',
-      SWAP_DECLINED: '❌',
-      MENTION: '💬',
-      REMINDER: '⏰',
-      POINTS_EARNED: '⭐',
-      NEW_MEMBER: '🆕',
-      TASK_CREATED: '➕',
-      ROTATION_ORDER_CHANGED: '📊'
-    };
-    return icons[type] || '📌';
-  }
-
-  static getTimeAgo(date: Date) {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 60) {
-      return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
-    } else if (diffHours < 24) {
-      return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-    } else if (diffDays < 7) {
-      return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-    } else {
-      return date.toLocaleDateString();
-    }
-  }
-
   static async getWeeklySummary(userId: string) {
     try {
       const now = new Date();
       const weekStart = new Date(now);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
       weekStart.setHours(0, 0, 0, 0);
+      
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
 
       // Get completed tasks this week
       const completedThisWeek = await prisma.assignment.findMany({
@@ -435,13 +400,25 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       });
 
-      // Get pending tasks for this week
+      // Get pending tasks for this week - FIXED with null checks
       const pendingThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
-          weekStart: { lte: now },
-          weekEnd: { gte: now }
+          OR: [
+            {
+              AND: [
+                { weekStart: { lte: now } },
+                { weekEnd: { gte: now } }
+              ]
+            },
+            {
+              dueDate: {
+                gte: weekStart,
+                lte: weekEnd
+              }
+            }
+          ]
         },
         include: {
           task: {
@@ -503,5 +480,61 @@ export class HomeServices {
         message: error.message || "Error getting weekly summary"
       };
     }
+  }
+
+  // Helper method to get total points
+  private static async getTotalPoints(userId: string): Promise<number> {
+    try {
+      const completedAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true,
+          verified: true
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          }
+        }
+      });
+
+      return completedAssignments.reduce((sum, a) => sum + (a.task.points || 0), 0);
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  // Helper method to get activity icon
+  private static getActivityIcon(type: string): string {
+    const icons: Record<string, string> = {
+      'SUBMISSION_VERIFIED': 'check-circle',
+      'SUBMISSION_REJECTED': 'close-circle',
+      'TASK_ASSIGNED': 'clipboard-check',
+      'TASK_COMPLETED': 'check',
+      'SWAP_REQUEST': 'swap-horizontal',
+      'SWAP_ACCEPTED': 'handshake',
+      'POINTS_EARNED': 'star',
+      'GROUP_INVITE': 'account-plus',
+      'NEW_MEMBER': 'account-plus',
+      'FEEDBACK_RESPONSE': 'message-reply'
+    };
+    return icons[type] || 'bell';
+  }
+
+  // Helper method to get time ago string
+  private static getTimeAgo(date: Date): string {
+    const now = new Date();
+    const diffMs = now.getTime() - new Date(date).getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return new Date(date).toLocaleDateString();
   }
 }
