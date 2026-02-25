@@ -24,6 +24,7 @@ import SwapRequestRoutes from './routes/swapRequest.routes';
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import UserNotificationRoutes from './routes/user.notification.routes';
 import FeedbackRoutes from './routes/feedback.routes';
+import GroupActivityRoutes from './routes/group.activity.routes';
 import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
 
@@ -90,6 +91,8 @@ svr.use('/api/assignments', AssignmentRoutes);
 svr.use('/api/swap-requests', SwapRequestRoutes);
 svr.use('/api/notifications', UserNotificationRoutes);
 svr.use('/api/feedback', FeedbackRoutes);
+svr.use('/api/group-activity', GroupActivityRoutes);
+
 
 // HTML Pages for password reset
 svr.get('/reset-password-form', (req, res) => {
