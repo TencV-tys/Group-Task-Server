@@ -4,111 +4,143 @@ export class GroupActivityService {
   
   // ========== GET GROUP ACTIVITY SUMMARY (For Admins) ==========
   static async getGroupActivitySummary(groupId: string, userId: string) {
-    try {
-      // Check if user is admin
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId, groupRole: "ADMIN" }
-      });
+  try {
+    // Check if user is admin
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId, groupRole: "ADMIN" }
+    });
 
-      if (!membership) {
-        return { success: false, message: "Only admins can view group activity summary" };
+    if (!membership) {
+      return { success: false, message: "Only admins can view group activity summary" };
+    }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { currentRotationWeek: true }
+    });
+
+    // Get overall statistics
+    const totalMembers = await prisma.groupMember.count({
+      where: { groupId, isActive: true }
+    });
+
+    const totalTasks = await prisma.task.count({
+      where: { groupId }
+    });
+
+    // Current week stats
+    const currentWeekAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group?.currentRotationWeek || 1
+      },
+      include: {
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        task: { select: { title: true, points: true } },
+        timeSlot: true
       }
+    });
 
-      const group = await prisma.group.findUnique({
-        where: { id: groupId },
-        select: { currentRotationWeek: true }
-      });
+    const totalAssignments = currentWeekAssignments.length;
+    const completedAssignments = currentWeekAssignments.filter(a => a.completed).length;
+    const verifiedAssignments = currentWeekAssignments.filter(a => a.verified === true).length;
+    const pendingVerification = currentWeekAssignments.filter(a => a.completed && a.verified === null).length;
+    const rejectedAssignments = currentWeekAssignments.filter(a => a.verified === false).length;
+    const neglectedAssignments = currentWeekAssignments.filter(a => 
+      !a.completed && new Date(a.dueDate) < new Date()
+    ).length;
 
-      // Get overall statistics
-      const totalMembers = await prisma.groupMember.count({
-        where: { groupId, isActive: true }
-      });
+    const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
+    const earnedPoints = currentWeekAssignments
+      .filter(a => a.completed)
+      .reduce((sum, a) => sum + a.points, 0);
 
-      const totalTasks = await prisma.task.count({
-        where: { groupId }
-      });
-
-      // Current week stats
-      const currentWeekAssignments = await prisma.assignment.findMany({
-        where: {
-          task: { groupId },
-          rotationWeek: group?.currentRotationWeek || 1
-        },
-        include: {
-          user: { select: { id: true, fullName: true, avatarUrl: true } },
-          task: { select: { title: true, points: true } },
-          timeSlot: true
+    // ===== REPLACE THIS SECTION =====
+    // Get member contributions this week - using Prisma aggregations
+    const activeMembers = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        isActive: true
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true,
+            assignments: {
+              where: {
+                rotationWeek: group?.currentRotationWeek || 1,
+                task: { groupId }
+              },
+              select: {
+                id: true,
+                completed: true,
+                verified: true,
+                points: true
+              }
+            }
+          }
         }
-      });
+      }
+    });
 
-      const totalAssignments = currentWeekAssignments.length;
-      const completedAssignments = currentWeekAssignments.filter(a => a.completed).length;
-      const verifiedAssignments = currentWeekAssignments.filter(a => a.verified === true).length;
-      const pendingVerification = currentWeekAssignments.filter(a => a.completed && a.verified === null).length;
-      const rejectedAssignments = currentWeekAssignments.filter(a => a.verified === false).length;
-      const neglectedAssignments = currentWeekAssignments.filter(a => 
-        !a.completed && new Date(a.dueDate) < new Date()
-      ).length;
-
-      const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
-      const earnedPoints = currentWeekAssignments
+    // Transform the data
+    const memberContributions = activeMembers.map(item => {
+      const assignments = item.user.assignments;
+      const totalAssignments = assignments.length;
+      const completedAssignments = assignments.filter(a => a.completed).length;
+      const verifiedAssignments = assignments.filter(a => a.verified === true).length;
+      const earnedPoints = assignments
         .filter(a => a.completed)
         .reduce((sum, a) => sum + a.points, 0);
 
-      // Get member contributions this week
-      const memberContributions = await prisma.$queryRaw`
-        SELECT 
-          u.id,
-          u."fullName",
-          u."avatarUrl",
-          COUNT(a.id) as "totalAssignments",
-          COUNT(CASE WHEN a.completed = true THEN 1 END) as "completedAssignments",
-          COUNT(CASE WHEN a.verified = true THEN 1 END) as "verifiedAssignments",
-          COALESCE(SUM(CASE WHEN a.completed = true THEN a.points ELSE 0 END), 0) as "earnedPoints"
-        FROM "GroupMember" gm
-        JOIN "User" u ON u.id = gm."userId"
-        LEFT JOIN "Assignment" a ON a."userId" = u.id 
-          AND a."rotationWeek" = ${group?.currentRotationWeek || 1}
-          AND EXISTS (
-            SELECT 1 FROM "Task" t 
-            WHERE t.id = a."taskId" AND t."groupId" = ${groupId}
-          )
-        WHERE gm."groupId" = ${groupId} AND gm."isActive" = true
-        GROUP BY u.id, u."fullName", u."avatarUrl"
-        ORDER BY "earnedPoints" DESC
-      `;
-
       return {
-        success: true,
-        message: "Group activity summary retrieved",
-        data: {
-          summary: {
-            totalMembers,
-            totalTasks,
-            currentWeek: group?.currentRotationWeek || 1,
-            assignments: {
-              total: totalAssignments,
-              completed: completedAssignments,
-              pendingVerification,
-              verified: verifiedAssignments,
-              rejected: rejectedAssignments,
-              neglected: neglectedAssignments
-            },
-            points: {
-              total: totalPoints,
-              earned: earnedPoints,
-              completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
-            }
-          },
-          memberContributions
-        }
+        id: item.user.id,
+        fullName: item.user.fullName,
+        avatarUrl: item.user.avatarUrl,
+        totalAssignments,
+        completedAssignments,
+        verifiedAssignments,
+        earnedPoints
       };
+    });
 
-    } catch (error: any) {
-      console.error("GroupActivityService.getGroupActivitySummary error:", error);
-      return { success: false, message: error.message || "Error retrieving activity summary" };
-    }
+    // Sort by earnedPoints descending
+    memberContributions.sort((a, b) => b.earnedPoints - a.earnedPoints);
+    // ===== END OF REPLACEMENT =====
+
+    return {
+      success: true,
+      message: "Group activity summary retrieved",
+      data: {
+        summary: {
+          totalMembers,
+          totalTasks,
+          currentWeek: group?.currentRotationWeek || 1,
+          assignments: {
+            total: totalAssignments,
+            completed: completedAssignments,
+            pendingVerification,
+            verified: verifiedAssignments,
+            rejected: rejectedAssignments,
+            neglected: neglectedAssignments
+          },
+          points: {
+            total: totalPoints,
+            earned: earnedPoints,
+            completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
+          }
+        },
+        memberContributions
+      }
+    };
+
+  } catch (error: any) {
+    console.error("GroupActivityService.getGroupActivitySummary error:", error);
+    return { success: false, message: error.message || "Error retrieving activity summary" };
   }
+}
 
   // ========== GET COMPLETION HISTORY (All members) ==========
   static async getCompletionHistory(

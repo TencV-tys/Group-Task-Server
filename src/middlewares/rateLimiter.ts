@@ -39,7 +39,7 @@ export const uploadLimiter = rateLimit({
 
 // Task creation/update limiter
 export const taskLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+  windowMs: 60 * 60 * 10000, // 1 hour
   max: 50, // Limit each IP to 50 task operations per hour
   message: {
     success: false,
