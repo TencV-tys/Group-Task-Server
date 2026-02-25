@@ -10,7 +10,8 @@ import {
   uploadLimiter, 
   taskLimiter,
   passwordResetLimiter,
-  swapRequestLimiter 
+  swapRequestLimiter,
+  groupActivityLimiter 
 } from './middlewares/rateLimiter';
 
 import UserAuthRoutes from './routes/user.auth.routes';
@@ -40,6 +41,7 @@ svr.use('/api/uploads', uploadLimiter);    // 🛡️ Upload routes
 svr.use('/api/tasks', taskLimiter);        // 🛡️ Task routes
 svr.use('/api/swap-requests', swapRequestLimiter); // 🛡️ Swap routes
 svr.use('/api/auth/users/reset-password', passwordResetLimiter); // 🛡️ Password reset (strictest)
+svr.use('/api/group-activity', groupActivityLimiter);
 
 // ========== CRITICAL UPDATES START ==========
 
