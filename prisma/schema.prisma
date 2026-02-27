@@ -1,4 +1,4 @@
-// Prisma v6 Schema - COMPLETELY FIXED VERSION
+// Prisma v6 Schema - COMPLETELY FIXED VERSION WITH GROUP-ONLY REPORT SYSTEM
 generator client {
   provider = "prisma-client-js"
 }
@@ -81,6 +81,24 @@ enum FeedbackStatus {
   CLOSED
 }
 
+// Report Types
+enum ReportType {
+  INAPPROPRIATE_CONTENT
+  HARASSMENT
+  SPAM
+  OFFENSIVE_BEHAVIOR
+  TASK_ABUSE
+  GROUP_MISUSE
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
 // ============= CORE MODELS =============
 model User {
   id           String  @id @default(uuid())
@@ -111,6 +129,7 @@ model User {
   feedback          Feedback[]         @relation("UserFeedback")
   userNotifications UserNotification[]
   refreshTokens     RefreshToken[]     @relation("UserRefreshTokens")
+  reports           Report[]           @relation("UserReports")
 
   statusChangedByAdmin SystemAdmin? @relation("StatusChangedByAdmin", fields: [roleStatusChangedBy], references: [id])
 
@@ -141,6 +160,7 @@ model Group {
   members GroupMember[] @relation("GroupMembers")
   tasks   Task[]        @relation("GroupTasks")
   creator User          @relation("GroupCreator", fields: [createdById], references: [id])
+  reports Report[]      @relation("GroupReports")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -266,7 +286,7 @@ model Assignment {
   photoUrl    String?
 
   // User notes when completing task
-  notes String?
+  notes String? @db.Text
 
   // Admin notes when verifying
   adminNotes String?
@@ -276,15 +296,15 @@ model Assignment {
 
   // Rotation tracking
   rotationWeek  Int        @default(0)
-  weekStart     DateTime?  // ← CHANGED TO OPTIONAL (allow NULL)
-  weekEnd       DateTime?  // ← CHANGED TO OPTIONAL (allow NULL)
+  weekStart     DateTime? // ← CHANGED TO OPTIONAL (allow NULL)
+  weekEnd       DateTime? // ← CHANGED TO OPTIONAL (allow NULL)
   assignmentDay DayOfWeek?
 
   // Relationships
-  task         Task           @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
-  user         User           @relation("UserAssignments", fields: [userId], references: [id])
-  swapRequests SwapRequest[]  @relation("AssignmentSwapRequests") // ← CHANGED to one-to-many
-  timeSlot     TimeSlot?      @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
+  task         Task          @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
+  user         User          @relation("UserAssignments", fields: [userId], references: [id])
+  swapRequests SwapRequest[] @relation("AssignmentSwapRequests") // ← CHANGED to one-to-many
+  timeSlot     TimeSlot?     @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -324,13 +344,42 @@ model SwapRequest {
   @@map("swap_requests")
 }
 
+// ============= REPORT MODEL - GROUP ONLY =============
+model Report {
+  id          String       @id @default(uuid())
+  reporterId  String // User who filed the report
+  groupId     String // Group being reported
+  type        ReportType
+  description String       @db.Text
+  status      ReportStatus @default(PENDING)
+
+  // Admin resolution
+  resolvedBy      String?
+  resolutionNotes String?   @db.Text
+  resolvedAt      DateTime?
+
+  // Relationships - FIXED with unique relation names
+  reporter User         @relation("UserReports", fields: [reporterId], references: [id], onDelete: Cascade)
+  group    Group        @relation("GroupReports", fields: [groupId], references: [id], onDelete: Cascade)
+  resolver SystemAdmin? @relation("ResolvedReports", fields: [resolvedBy], references: [id]) // 👈 FIXED: Added relation name
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId])
+  @@index([reporterId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("reports")
+}
+
 // ============= FEEDBACK MODEL =============
 model Feedback {
-  id      String @id @default(uuid())
-  userId  String
-  type    String
-  message String
-  status  String @default("OPEN")
+  id       String  @id @default(uuid())
+  userId   String
+  type     String
+  message  String
+  status   String  @default("OPEN")
   category String?
 
   // Relationships
@@ -405,6 +454,7 @@ model SystemAdmin {
   auditLogs          AdminAuditLog[]     @relation("AdminAuditLogs")
   adminNotifications AdminNotification[] // Admin notifications
   refreshTokens      AdminRefreshToken[] @relation("AdminRefreshTokens")
+  resolvedReports    Report[]            @relation("ResolvedReports") // 👈 FIXED: Matches the resolver relation name
 
   // Status
   lastLoginAt DateTime?

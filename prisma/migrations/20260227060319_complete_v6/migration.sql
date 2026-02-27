@@ -113,7 +113,7 @@ CREATE TABLE `assignments` (
     `completedAt` DATETIME(3) NULL,
     `verified` BOOLEAN NOT NULL DEFAULT false,
     `photoUrl` VARCHAR(191) NULL,
-    `notes` VARCHAR(191) NULL,
+    `notes` TEXT NULL,
     `adminNotes` VARCHAR(191) NULL,
     `timeSlotId` VARCHAR(191) NULL,
     `rotationWeek` INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +148,27 @@ CREATE TABLE `swap_requests` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `reports` (
+    `id` VARCHAR(191) NOT NULL,
+    `reporterId` VARCHAR(191) NOT NULL,
+    `groupId` VARCHAR(191) NOT NULL,
+    `type` ENUM('INAPPROPRIATE_CONTENT', 'HARASSMENT', 'SPAM', 'OFFENSIVE_BEHAVIOR', 'TASK_ABUSE', 'GROUP_MISUSE', 'OTHER') NOT NULL,
+    `description` TEXT NOT NULL,
+    `status` ENUM('PENDING', 'REVIEWING', 'RESOLVED', 'DISMISSED') NOT NULL DEFAULT 'PENDING',
+    `resolvedBy` VARCHAR(191) NULL,
+    `resolutionNotes` TEXT NULL,
+    `resolvedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    INDEX `reports_groupId_idx`(`groupId`),
+    INDEX `reports_reporterId_idx`(`reporterId`),
+    INDEX `reports_status_idx`(`status`),
+    INDEX `reports_createdAt_idx`(`createdAt`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -308,6 +329,15 @@ ALTER TABLE `assignments` ADD CONSTRAINT `assignments_timeSlotId_fkey` FOREIGN K
 
 -- AddForeignKey
 ALTER TABLE `swap_requests` ADD CONSTRAINT `swap_requests_assignmentId_fkey` FOREIGN KEY (`assignmentId`) REFERENCES `assignments`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `reports` ADD CONSTRAINT `reports_reporterId_fkey` FOREIGN KEY (`reporterId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `reports` ADD CONSTRAINT `reports_groupId_fkey` FOREIGN KEY (`groupId`) REFERENCES `groups`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `reports` ADD CONSTRAINT `reports_resolvedBy_fkey` FOREIGN KEY (`resolvedBy`) REFERENCES `system_admins`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `feedback` ADD CONSTRAINT `feedback_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

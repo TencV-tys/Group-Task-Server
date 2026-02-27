@@ -1,37 +1,29 @@
-// cron/reminderCron.ts - OPTIONAL
+// cron/reminderCron.ts - COMPLETE WORKING VERSION
 import cron from 'node-cron';
-import prisma from '../prisma';
+import { AssignmentService } from '../services/assignment.services';
 
-// This is OPTIONAL - only if you want server-sent reminders
 export const initReminderCron = () => {
-  // Check every hour for tasks due in the next hour
-  cron.schedule('0 * * * *', async () => {
-    console.log('Checking for upcoming deadlines...');
+  // Run every minute to check for upcoming tasks
+  cron.schedule('* * * * *', async () => {
+    console.log('🔔 Running task reminder check at:', new Date().toISOString());
     
-    const now = new Date();
-    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-    
-    const upcomingAssignments = await prisma.assignment.findMany({
-      where: {
-        dueDate: {
-          gte: now,
-          lte: oneHourLater
-        },
-        completed: false
-      },
-      include: {
-        user: true,
-        task: {
-          include: {
-            group: true
-          }
+    try { 
+      const startTime = Date.now();
+      const result = await AssignmentService.sendUpcomingTaskReminders();
+      const endTime = Date.now();
+      
+      if (result.success) {
+        if (result.remindersSent > 0) {
+          console.log(`✅ Sent ${result.remindersSent} task reminders in ${endTime - startTime}ms`);
         }
+      } else {
+        console.log(`❌ Reminder error: ${result.message}`);
       }
-    });
-
-    for (const assignment of upcomingAssignments) {
-      // You could send push notifications here
-      console.log(`Reminder: ${assignment.user.fullName} - ${assignment.task.title} due soon`);
+      
+    } catch (error) {
+      console.error('❌ Error in reminder cron job:', error);
     }
   });
-}; 
+  
+  console.log('🔔 Task reminder cron initialized (running every minute)');
+};

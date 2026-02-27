@@ -48,7 +48,7 @@ export const taskLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
+ 
 // Password reset limiter (extra strict)
 export const passwordResetLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
