@@ -5,53 +5,54 @@ import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 
 export class GroupController{
  
-      static async createGroup(req:UserAuthRequest, res:Response){
-          try{
-              
-            const userId = req.user?.id;
+   static async createGroup(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
 
-            if(!userId){
-                return res.status(404).json({
-                    success:false,
-                    message:"User not authenticated"
-                });
-            }
+    if (!userId) {
+      return res.status(404).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
 
-            const {name, description} = req.body;
-            
-            if(!name || !name.trim()){
-                return res.status(400).json({
-                    success:false,
-                    message:"Group name is required"
-                });
-            }
-             
+    const { name, description } = req.body;
 
-            const group = await GroupServices.createGroup(userId,name.trim(), description.trim());
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Group name is required"
+      });
+    }
 
-             if(!group.success){
-                return res.status(401).json({
-                    success:false,
-                    message:group.message
-                })
-             }
+    // FIX: Safely handle description
+    const group = await GroupServices.createGroup(
+      userId,
+      name.trim(),
+      description ? description.trim() : null  // ← This prevents the crash
+    );
 
-            return res.json({
-                success:true,
-                message:group.message,
-                group:group
-            })
+    if (!group.success) {
+      return res.status(400).json({
+        success: false,
+        message: group.message
+      });
+    }
 
+    return res.json({
+      success: true,
+      message: group.message,
+      group: group
+    });
 
-          }catch(e:any){
-              return res.status(500).json({
-                success:false,
-                message:"Internal server error"
-              });
-
-          }
-
-      }
+  } catch (e: any) {
+    console.error("❌ Create group controller error:", e);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
      
   
       static async joinGroup(req:UserAuthRequest, res:Response){

@@ -13,7 +13,7 @@ export class GroupServices {
                     inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
                     createdById: userId,
                     currentRotationWeek: 1, // Start at week 1
-                    lastRotationUpdate: new Date()
+                    lastRotationUpdate: new Date() 
                 }
             });
 
