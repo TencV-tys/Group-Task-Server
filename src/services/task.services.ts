@@ -3,6 +3,7 @@ import prisma from "../prisma";
 import { TaskExecutionFrequency, Prisma,DayOfWeek } from '@prisma/client';
 import { TaskHelpers } from "../helpers/task.helpers";
 import { TimeHelpers } from "../helpers/time.helpers";
+import { SocketService } from "./socket.services";
 export class TaskService {
   
   // Create task with distributed points across time slots
@@ -286,29 +287,42 @@ export class TaskService {
         }
       }
 
-      // Fetch complete task with relations
-      const completeTask = await prisma.task.findUnique({
-        where: { id: task.id },
-        include: {
-          group: { select: { id: true, name: true, description: true, currentRotationWeek: true } },
-          creator: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
-          timeSlots: { orderBy: { sortOrder: 'asc' } },
-          assignments: {
-            where: { rotationWeek: group.currentRotationWeek },
-            include: { 
-              user: { select: { id: true, fullName: true, avatarUrl: true } },
-              timeSlot: true 
-            },
-            orderBy: { dueDate: 'asc' }
-          }
-        }
-      });
 
-      return {
-        success: true,
-        message: initialAssignee ? "Task created and assigned successfully" : "Task created successfully (not assigned)",
-        task: completeTask
-      };
+    // Fetch complete task with relations
+const completeTask = await prisma.task.findUnique({
+  where: { id: task.id },
+  include: {
+    group: { select: { id: true, name: true, description: true, currentRotationWeek: true } },
+    creator: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
+    timeSlots: { orderBy: { sortOrder: 'asc' } },
+    assignments: {
+      where: { rotationWeek: group.currentRotationWeek },
+      include: { 
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        timeSlot: true 
+      },
+      orderBy: { dueDate: 'asc' }
+    }
+  }
+});
+
+// 🔴 EMIT SOCKET EVENT FOR TASK CREATED
+await SocketService.emitTaskCreated(completeTask, groupId, userId);
+
+// If assigned to someone, emit assignment created event
+if (initialAssignee) {
+  await SocketService.emitAssignmentCreated(
+    completeTask?.assignments?.[0],
+    initialAssignee.userId,
+    groupId
+  );
+}
+
+return {
+  success: true,
+  message: initialAssignee ? "Task created and assigned successfully" : "Task created successfully (not assigned)",
+  task: completeTask
+};
 
     } catch (error: any) {
       console.error('TaskService.createTask error:', error);
@@ -963,29 +977,30 @@ static async getTaskDetails(taskId: string, userId: string) {
         }
       }
 
-      const updatedTask = await prisma.task.update({
-        where: { id: taskId },
-        data: updateData,
-        include: {
-          group: { select: { id: true, name: true, currentRotationWeek: true } },
-          creator: { select: { id: true, fullName: true, avatarUrl: true } },
-          timeSlots: { orderBy: { sortOrder: 'asc' } }
-        }
-      });
+    const updatedTask = await prisma.task.update({
+  where: { id: taskId },
+  data: updateData,
+  include: {
+    group: { select: { id: true, name: true, currentRotationWeek: true } },
+    creator: { select: { id: true, fullName: true, avatarUrl: true } },
+    timeSlots: { orderBy: { sortOrder: 'asc' } }
+  }
+});
 
-      return {
-        success: true,
-        message: "Task updated successfully",
-        task: updatedTask
-      };
+// 🔴 EMIT SOCKET EVENT FOR TASK UPDATED
+await SocketService.emitTaskUpdated(updatedTask, updatedTask.group.id, userId);
+
+return {
+  success: true,
+  message: "Task updated successfully",
+  task: updatedTask
+};
 
     } catch (error: any) {
       console.error("TaskService.updateTask error:", error);
       return { success: false, message: error.message || "Error updating task" };
     }
   }
-
-  // ... Other methods remain the same until rotateGroupTasks ...
 
   // Rotate group tasks - FIXED: Add type safety
   static async rotateGroupTasks(groupId: string, userId: string) {
@@ -1126,23 +1141,32 @@ static async getTaskDetails(taskId: string, userId: string) {
         });
       }
 
-      // Update group rotation week
-      await prisma.group.update({
-        where: { id: groupId },
-        data: { 
-          currentRotationWeek: newWeek, 
-          lastRotationUpdate: new Date() 
-        }
-      });
+     // Update group rotation week
+await prisma.group.update({
+  where: { id: groupId },
+  data: { 
+    currentRotationWeek: newWeek, 
+    lastRotationUpdate: new Date() 
+  }
+});
 
-      return {
-        success: true,
-        message: `Rotated ${rotatedTasks.length} tasks to week ${newWeek}`,
-        rotatedTasks,
-        newWeek,
-        weekStart,
-        weekEnd
-      };
+// 🔴 EMIT SOCKET EVENT FOR ROTATION COMPLETED
+await SocketService.emitRotationCompleted(
+  groupId,
+  newWeek,
+  rotatedTasks,
+  weekStart,
+  weekEnd
+);
+
+return {
+  success: true,
+  message: `Rotated ${rotatedTasks.length} tasks to week ${newWeek}`,
+  rotatedTasks,
+  newWeek,
+  weekStart,
+  weekEnd
+};
 
     } catch (error: any) {
       console.error("TaskService.rotateGroupTasks error:", error);
@@ -1375,21 +1399,30 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
         }
       }
 
-      // Update task with new assignee
-      await prisma.task.update({
-        where: { id: taskId },
-        data: { 
-          currentAssignee: targetUserId,
-          lastAssignedAt: new Date()
-        }
-      });
+    // Update task with new assignee
+await prisma.task.update({
+  where: { id: taskId },
+  data: { 
+    currentAssignee: targetUserId,
+    lastAssignedAt: new Date()
+  }
+});
 
-      return {
-        success: true,
-        message: "Task reassigned successfully",
-        newAssignee: targetUser
-      };
+// 🔴 EMIT SOCKET EVENT FOR TASK ASSIGNED
+await SocketService.emitTaskAssigned(
+  taskId,
+  task.title,
+  targetUserId,
+  userId,
+  task.groupId,
+  new Date() // or use appropriate due date
+);
 
+return {
+  success: true,
+  message: "Task reassigned successfully",
+  newAssignee: targetUser
+};
     } catch (error: any) {
       console.error("TaskService.reassignTask error:", error);
       return { success: false, message: error.message || "Error reassigning task" };
@@ -1521,9 +1554,12 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
         return { success: false, message: "Only group admins can delete tasks" };
       }
 
-      await prisma.task.delete({ where: { id: taskId } });
+    await prisma.task.delete({ where: { id: taskId } });
 
-      return { success: true, message: "Task deleted successfully" };
+// 🔴 EMIT SOCKET EVENT FOR TASK DELETED
+await SocketService.emitTaskDeleted(taskId, task.title, task.groupId, userId);
+
+return { success: true, message: "Task deleted successfully" };
 
     } catch (error: any) {
       console.error("TaskService.deleteTask error:", error);
