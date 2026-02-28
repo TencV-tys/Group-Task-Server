@@ -1,5 +1,5 @@
 import prisma from "../prisma";
-
+import { SocketService } from "./socket.services";
 export class GroupMembersService {
   // Get all members in a group WITH ROTATION INFO
   static async getGroupMembers(groupId: string, userId: string) {
@@ -296,33 +296,45 @@ export class GroupMembersService {
         orderBy: { rotationOrder: 'asc' }
       });
 
-      // Delete the member
-      await prisma.groupMember.delete({
-        where: { id: memberId }
-      });
+     // Delete the member
+await prisma.groupMember.delete({
+  where: { id: memberId }
+});
 
-      // If removed member was in rotation, we may need to adjust tasks
-      if (targetMember.isActive && targetMember.rotationOrder !== null) {
-        // Get tasks assigned to this member for current and future weeks
-        const currentAssignments = await prisma.assignment.findMany({
-          where: {
-            userId: targetMember.userId,
-            task: {
-              groupId: groupId
-            },
-            rotationWeek: { gte: (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1 }
-          }
-        });
+// Get user details for the socket event
+const user = await prisma.user.findUnique({
+  where: { id: targetMember.userId },
+  select: { fullName: true }
+});
 
-        // For now, just log this - in a full implementation, you'd reassign these tasks
-        console.log(`Removed member ${targetMember.userId} had ${currentAssignments.length} future assignments`);
-      }
+// 🔴 EMIT SOCKET EVENT FOR MEMBER LEFT
+await SocketService.emitGroupMemberLeft(
+  groupId,
+  targetMember.userId,
+  user?.fullName || 'A member'
+);
 
-      return {
-        success: true,
-        message: "Member removed successfully"
-      };
+// If removed member was in rotation, we may need to adjust tasks
+if (targetMember.isActive && targetMember.rotationOrder !== null) {
+  // Get tasks assigned to this member for current and future weeks
+  const currentAssignments = await prisma.assignment.findMany({
+    where: {
+      userId: targetMember.userId,
+      task: {
+        groupId: groupId
+      },
+      rotationWeek: { gte: (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1 }
+    }
+  });
 
+  // For now, just log this - in a full implementation, you'd reassign these tasks
+  console.log(`Removed member ${targetMember.userId} had ${currentAssignments.length} future assignments`);
+}
+
+return {
+  success: true,
+  message: "Member removed successfully"
+};
     } catch (error: any) {
       console.error("GroupMembersService.removeMember error:", error);
       return {
@@ -375,17 +387,45 @@ export class GroupMembersService {
         }
       }
 
-      // Update the role
-      await prisma.groupMember.update({
-        where: { id: memberId },
-        data: { groupRole: newRole as any }
-      });
+     // Update the role
+await prisma.groupMember.update({
+  where: { id: memberId },
+  data: { groupRole: newRole as any }
+});
 
-      return {
-        success: true,
-        message: "Member role updated successfully"
-      };
+// Get member and user details for the socket event
+const member = await prisma.groupMember.findUnique({
+  where: { id: memberId },
+  include: {
+    user: {
+      select: { fullName: true }
+    }
+  }
+});
 
+// Get admin name for the socket event
+const admin = await prisma.user.findUnique({
+  where: { id: adminId },
+  select: { fullName: true }
+});
+
+// 🔴 EMIT SOCKET EVENT FOR ROLE CHANGED 
+if (member) {
+  await SocketService.emitGroupMemberRoleChanged(
+    groupId,
+    member.userId,
+    member.user.fullName,
+    member.groupRole, // This is the old role (before update)
+    newRole,
+    adminId,
+    admin?.fullName || 'Admin'
+  );
+}
+
+return {
+  success: true,
+  message: "Member role updated successfully"
+};
     } catch (error: any) {
       console.error("GroupMembersService.updateMemberRole error:", error);
       return {

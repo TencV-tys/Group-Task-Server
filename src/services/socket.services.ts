@@ -363,29 +363,31 @@ export class SocketService {
     }
   }
 
-  static async emitGroupMemberRoleChanged(
-    groupId: string,
-    userId: string,
-    userName: string,
-    oldRole: string,
-    newRole: string,
-    changedBy: string
-  ) {
-    try {
-      const payload: GroupMemberRoleChangedPayload = {
-        groupId,
-        userId,
-        userName,
-        oldRole,
-        newRole,
-        changedBy
-      };
-      
-      emitToGroup(groupId, SERVER_EVENTS.GROUP_MEMBER_ROLE_CHANGED, payload);
-    } catch (error) {
-      console.error('SocketService.emitGroupMemberRoleChanged error:', error);
-    }
+ static async emitGroupMemberRoleChanged(
+  groupId: string,
+  userId: string,
+  userName: string,
+  oldRole: string,
+  newRole: string,
+  changedBy: string,
+  changedByName?: string
+) {
+  try {
+    const payload = {
+      groupId,
+      userId,
+      userName,
+      oldRole,
+      newRole,
+      changedBy,
+      changedByName: changedByName || 'Admin'
+    };
+    
+    emitToGroup(groupId, SERVER_EVENTS.GROUP_MEMBER_ROLE_CHANGED, payload);
+  } catch (error) {
+    console.error('SocketService.emitGroupMemberRoleChanged error:', error);
   }
+}
 
   // ========== ROTATION EVENTS ==========
 

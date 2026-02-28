@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { GroupMembersService } from "../services/group.members.services";
+import { SocketService } from "../services/socket.services";
 import prisma from "../prisma";
 
 export class GroupMembersController {
@@ -370,15 +371,28 @@ export class GroupMembersController {
         }
       }
 
-      // Delete the membership
-      await prisma.groupMember.delete({
-        where: { id: userMembership.id }
-      });
+    // Delete the membership
+await prisma.groupMember.delete({
+  where: { id: userMembership.id }
+});
 
-      return res.json({
-        success: true,
-        message: "You have left the group"
-      });
+// Get user details for socket event
+const user = await prisma.user.findUnique({
+  where: { id: userId },
+  select: { fullName: true }
+});
+
+// 🔴 EMIT SOCKET EVENT FOR MEMBER LEFT
+await SocketService.emitGroupMemberLeft(
+  groupId,
+  userId,
+  user?.fullName || 'A member'
+);
+
+return res.json({
+  success: true,
+  message: "You have left the group"
+});
 
     } catch (error: any) {
       console.error("GroupMembersController.leaveGroup error:", error);

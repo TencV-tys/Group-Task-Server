@@ -1,5 +1,5 @@
 import prisma from "../prisma";
-
+import { SocketService } from "./socket.services";
 export class GroupServices {
 
     static async createGroup(userId: string, groupName: string, description?: string | null) {
@@ -51,90 +51,104 @@ export class GroupServices {
         }
     }
 
-    static async joinGroup(userId: string, inviteCode: string) {
-        try {
-            console.log(`User ${userId} trying to join with code: ${inviteCode}`);
-            
-            const group = await prisma.group.findUnique({
-                where: { inviteCode: inviteCode.toUpperCase() }
-            });
+   static async joinGroup(userId: string, inviteCode: string) {
+  try {
+    console.log(`User ${userId} trying to join with code: ${inviteCode}`);
+    
+    const group = await prisma.group.findUnique({
+      where: { inviteCode: inviteCode.toUpperCase() }
+    });
 
-            if (!group) { 
-                return {
-                    success: false,
-                    message: "Invalid invite code"
-                }
-            }
-
-            const existingMember = await prisma.groupMember.findFirst({
-                where: {
-                    userId: userId,
-                    groupId: group.id
-                }
-            });
-
-            if (existingMember) {
-                return {
-                    success: false,
-                    message: "You are already a member of this group"
-                }
-            }
-
-            // Get the next available rotation order
-            const lastMember = await prisma.groupMember.findFirst({
-                where: {
-                    groupId: group.id,
-                    rotationOrder: { not: null }
-                },
-                orderBy: { rotationOrder: 'desc' }
-            });
-
-            const nextRotationOrder = (lastMember?.rotationOrder || 0) + 1;
-
-            const member = await prisma.groupMember.create({
-                data: {
-                    userId: userId,
-                    groupId: group.id,
-                    groupRole: "MEMBER",
-                    rotationOrder: nextRotationOrder, // Add to rotation
-                    isActive: true // Active by default
-                },
-                include: {
-                    group: {
-                        select: {
-                            id: true,
-                            name: true,
-                            description: true,
-                            currentRotationWeek: true
-                        }
-                    }
-                }
-            });
-
-            console.log(`User ${userId} joined group ${group.id} as MEMBER with rotation order ${nextRotationOrder}`);
-            
-            return {
-                success: true,
-                message: `Joined ${group.name} successfully`,
-                group: member.group,
-                membership: {
-                    id: member.id,
-                    role: member.groupRole,
-                    rotationOrder: member.rotationOrder,
-                    isActive: member.isActive,
-                    joinedAt: member.joinedAt
-                }
-            }
-
-        } catch (e: any) {
-            console.error("ERROR joining group:", e);
-            return {
-                success: false,
-                message: "Error joining group",
-                error: e.message
-            };
-        }
+    if (!group) { 
+      return {
+        success: false,
+        message: "Invalid invite code"
+      }
     }
+
+    const existingMember = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: group.id
+      }
+    });
+
+    if (existingMember) {
+      return {
+        success: false,
+        message: "You are already a member of this group"
+      }
+    }
+
+    // Get the next available rotation order
+    const lastMember = await prisma.groupMember.findFirst({
+      where: {
+        groupId: group.id,
+        rotationOrder: { not: null }
+      },
+      orderBy: { rotationOrder: 'desc' }
+    });
+
+    const nextRotationOrder = (lastMember?.rotationOrder || 0) + 1;
+
+    const member = await prisma.groupMember.create({
+      data: {
+        userId: userId,
+        groupId: group.id,
+        groupRole: "MEMBER",
+        rotationOrder: nextRotationOrder, // Add to rotation
+        isActive: true // Active by default
+      },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            currentRotationWeek: true
+          }
+        }
+      }
+    });
+
+    console.log(`User ${userId} joined group ${group.id} as MEMBER with rotation order ${nextRotationOrder}`);
+    
+    // Get user details for the socket event
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true, avatarUrl: true }
+    });
+
+    // 🔴 EMIT SOCKET EVENT FOR MEMBER JOINED
+    await SocketService.emitGroupMemberJoined(
+      group.id,
+      userId,
+      user?.fullName || 'A member',
+      user?.avatarUrl || undefined
+    );
+    
+    return {
+      success: true,
+      message: `Joined ${group.name} successfully`,
+      group: member.group,
+      membership: {
+        id: member.id,
+        role: member.groupRole,
+        rotationOrder: member.rotationOrder,
+        isActive: member.isActive,
+        joinedAt: member.joinedAt
+      }
+    }
+
+  } catch (e: any) {
+    console.error("ERROR joining group:", e);
+    return {
+      success: false,
+      message: "Error joining group",
+      error: e.message
+    };
+  }
+}
 
     static async getUserGroups(userId: string) {
         try {
@@ -593,6 +607,7 @@ export class GroupServices {
 }
 
 // Update group info (name, description)
+// Update group info (name, description)
 static async updateGroup(groupId: string, userId: string, updateData: { name?: string, description?: string }) {
   try {
     // Check if user is admin
@@ -642,6 +657,11 @@ static async updateGroup(groupId: string, userId: string, updateData: { name?: s
         currentRotationWeek: true
       }
     });
+
+    // 🔴 EMIT SOCKET EVENT FOR GROUP UPDATED
+    // Note: You may want to add a GROUP_UPDATED event to your socket service
+    // For now, we'll just log it
+    console.log(`Group ${groupId} updated by user ${userId}`);
 
     return {
       success: true,
