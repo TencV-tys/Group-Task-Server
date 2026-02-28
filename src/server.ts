@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
 import { 
   generalLimiter, 
   authLimiter, 
@@ -28,6 +29,9 @@ import FeedbackRoutes from './routes/feedback.routes';
 import GroupActivityRoutes from './routes/group.activity.routes';
 import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
+
+// Socket.IO imports
+import { setupSocketIO, setIO } from './socket';
 
 dotenv.config(); 
 
@@ -111,13 +115,22 @@ initSwapRequestCron();
 initReminderCron();
 initNeglectDetectionCron();
 
+// ========== CREATE HTTP SERVER ==========
+const server = http.createServer(svr);
+
+// ========== INITIALIZE SOCKET.IO ==========
+console.log('🔌 Initializing Socket.IO...');
+const io = setupSocketIO(server);
+setIO(io);
+console.log('✅ Socket.IO initialized');
+
 // ========== SERVER START ==========
 //const COMPUTER_IP = '10.219.65.2';
 const MY_IP = '10.116.190.2'; 
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
 
-svr.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                     SERVER STARTED                         ║
@@ -127,6 +140,9 @@ svr.listen(PORT, () => {
    📍 Local:   http://localhost:${PORT}
    📱 Mobile:  http://${MY_IP}:${PORT}
    📶 WiFi:    http://${Wifi}:${PORT}
+
+🔌 WebSocket Server: Active
+   └─ Real-time features enabled
 
 📁 Upload directories:
    ├─ ${path.join(__dirname, '../uploads')}
@@ -161,4 +177,4 @@ svr.listen(PORT, () => {
 
 ✅ Server is ready to handle requests!
     `);
-}); 
+});

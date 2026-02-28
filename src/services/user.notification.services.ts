@@ -1,9 +1,9 @@
 import prisma from "../prisma";
-
+import { SocketService } from "./socket.services";
 export class UserNotificationService {
   
   // Create notification for a user
-  static async createNotification(data: {
+ static async createNotification(data: {
     userId: string;
     type: string;
     title: string;
@@ -21,6 +21,16 @@ export class UserNotificationService {
           read: false
         }
       });
+
+      // 🔴 EMIT SOCKET EVENT FOR REAL-TIME NOTIFICATION
+      await SocketService.emitNewNotification(
+        data.userId,
+        notification.id,
+        data.type,
+        data.title,
+        data.message,
+        data.data
+      );
 
       return {
         success: true,
