@@ -1,10 +1,10 @@
 import prisma from "../prisma";
 import { Prisma, DayOfWeek } from '@prisma/client';
 import { UserNotificationService } from "./user.notification.services";
+import { SocketService } from "./socket.services";
 export class SwapRequestService {
   
-  // CREATE: Create a new swap request with scope support
-
+ // CREATE: Create a new swap request with scope support
 static async createSwapRequest(
   userId: string,
   assignmentId: string,
@@ -93,37 +93,37 @@ static async createSwapRequest(
     } 
             
     // Check time constraints based on scope
-const now = new Date();
+    const now = new Date();
 
-if (data.scope === 'week') {
-  // For WEEK swaps, check if within first 24 hours of the week
-  // Get the week start date (Monday of current week)
-  const weekStart = new Date(now);
-  const dayOfWeek = weekStart.getDay(); // 0 = Sunday, 1 = Monday
-  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  weekStart.setDate(weekStart.getDate() - daysToMonday);
-  weekStart.setHours(0, 0, 0, 0);
-  
-  // Calculate hours since week started
-  const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
-  
-  // Week swap available within first 24 hours
-  if (hoursSinceWeekStart > 24) {
-    return { 
-      success: false, 
-      message: "Week swap window has closed (only available within first 24 hours of the week)" 
-    };
-  }
-} else {
-  // For DAY swaps, check if assignment is past due
-  const dueDate = new Date(assignment.dueDate);
-  if (now > dueDate) {
-    return { 
-      success: false, 
-      message: "Cannot swap past due assignments" 
-    };
-  }
-}
+    if (data.scope === 'week') {
+      // For WEEK swaps, check if within first 24 hours of the week
+      // Get the week start date (Monday of current week)
+      const weekStart = new Date(now);
+      const dayOfWeek = weekStart.getDay(); // 0 = Sunday, 1 = Monday
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      weekStart.setDate(weekStart.getDate() - daysToMonday);
+      weekStart.setHours(0, 0, 0, 0);
+      
+      // Calculate hours since week started
+      const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
+      
+      // Week swap available within first 24 hours
+      if (hoursSinceWeekStart > 24) {
+        return { 
+          success: false, 
+          message: "Week swap window has closed (only available within first 24 hours of the week)" 
+        };
+      }
+    } else {
+      // For DAY swaps, check if assignment is past due
+      const dueDate = new Date(assignment.dueDate);
+      if (now > dueDate) {
+        return { 
+          success: false, 
+          message: "Cannot swap past due assignments" 
+        };
+      }
+    }
           
     // Validate scope selection
     if (data.scope === 'day' && !data.selectedDay) {
@@ -167,40 +167,41 @@ if (data.scope === 'week') {
         selectedTimeSlotId: data.selectedTimeSlotId
       }
     });
-// In createSwapRequest, update the include to match new relation name
-const swapRequestWithDetails = await prisma.swapRequest.findUnique({
-  where: { id: swapRequest.id },
-  include: {
-    assignment: {
+
+    // Get swap request with details
+    const swapRequestWithDetails = await prisma.swapRequest.findUnique({
+      where: { id: swapRequest.id },
       include: {
-        task: {
-          select: {
-            id: true,
-            title: true,
-            executionFrequency: true,
-            points: true,
-            timeSlots: {
+        assignment: {
+          include: {
+            task: {
               select: {
                 id: true,
-                startTime: true,
-                endTime: true,
-                label: true
+                title: true,
+                executionFrequency: true,
+                points: true,
+                timeSlots: {
+                  select: {
+                    id: true,
+                    startTime: true,
+                    endTime: true,
+                    label: true
+                  }
+                }
+              }
+            },
+            timeSlot: true,
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true
               }
             }
           }
-        },
-        timeSlot: true,
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            avatarUrl: true
-          }
         }
       }
-    }
-  }
-});
+    });
 
     // Get requester info separately
     const requester = await prisma.user.findUnique({
@@ -294,6 +295,23 @@ const swapRequestWithDetails = await prisma.swapRequest.findUnique({
       }
       notifiedUsersCount = activeMembersList.length;
     }
+
+    // 🔴 EMIT SOCKET EVENT FOR SWAP REQUEST
+    await SocketService.emitSwapRequested(
+      swapRequest.id,
+      assignmentId,
+      assignment.taskId,
+      assignment.task.title,
+      userId,
+      assignment.user.fullName,
+      assignment.task.groupId,
+      data.scope || 'week',
+      expiresAt,
+      data.targetUserId,
+      data.selectedDay,
+      data.selectedTimeSlotId,
+      data.reason
+    );
 
     // Notify admins about the swap request
     const admins = await prisma.groupMember.findMany({
@@ -860,7 +878,7 @@ static async getSwapRequestDetails(requestId: string, userId: string) {
   }
 }
  
-// In services/swapRequest.services.ts - UPDATED acceptSwapRequest method
+// In services/swapRequest.services.ts - UPDATED acceptSwapRequest method with socket events
 
 static async acceptSwapRequest(requestId: string, userId: string) {
   try {
@@ -1180,6 +1198,24 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         transferredCount
       }
     });
+
+   // 🔴 EMIT SOCKET EVENT FOR SWAP RESPONSE
+const scope = (swapRequest.scope === 'day' ? 'day' : 'week') as 'day' | 'week';
+const selectedDay = swapRequest.selectedDay || undefined;
+
+await SocketService.emitSwapResponded(
+  requestId,
+  assignment.id,
+  task.id,
+  task.title,
+  swapRequest.requestedBy,
+  userId,
+  memberDetails?.fullName || 'User',
+  task.groupId,
+  'ACCEPTED',
+  scope,
+  selectedDay
+);
 
     // Notify admins
     const admins = await prisma.groupMember.findMany({
