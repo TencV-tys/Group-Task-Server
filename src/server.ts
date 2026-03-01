@@ -39,8 +39,8 @@ const svr = express();
 
 // ========== RATE LIMITING - APPLY BEFORE ROUTES ==========
 console.log('🛡️ Applying rate limiters...');
-svr.use('/api', generalLimiter);           // 🛡️ All /api routes
-svr.use('/api/auth', authLimiter);         // 🛡️ Auth routes (stricter)
+//svr.use('/api', generalLimiter);           // 🛡️ All /api routes
+//svr.use('/api/auth', authLimiter);         // 🛡️ Auth routes (stricter)
 svr.use('/api/uploads', uploadLimiter);    // 🛡️ Upload routes
 svr.use('/api/tasks', taskLimiter);        // 🛡️ Task routes
 svr.use('/api/swap-requests', swapRequestLimiter); // 🛡️ Swap routes

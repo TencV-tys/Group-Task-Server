@@ -4,7 +4,8 @@ import { Request,Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
 import { AdminRefreshToken } from "../services/admin.create.refreshToken.services";
 import { AdminRefreshServices } from "../services/admin.refresh.services";
-
+import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
+import prisma from "../prisma";
 import { AdminLogoutServices } from '../services/admin.logout.services';
 export class AdminAuthController{
 
@@ -158,6 +159,49 @@ export class AdminAuthController{
          }
 
    }
+
+static async getMe(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated"
+      });
+    }
+
+    const admin = await prisma.systemAdmin.findUnique({
+      where: { id: adminId },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        role: true,
+        isActive: true,
+        lastLoginAt: true
+      }
+    });
+
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin not found"
+      });
+    }
+
+    return res.json({
+      success: true,
+      admin
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
 
 
 }

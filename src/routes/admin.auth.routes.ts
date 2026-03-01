@@ -5,8 +5,8 @@ const router = Router();
 
 
 router.post('/login',AdminAuthController.login);
+router.get('/me', AdminAuthMiddleware, AdminAuthController.getMe);
 router.post('/refresh-token',AdminAuthMiddleware, AdminAuthController.refreshToken);
 router.post('/logout',AdminAuthMiddleware, AdminAuthController.logout);
-
 export default router;
 
