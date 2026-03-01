@@ -11,7 +11,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+      "seed": "ts-node prisma/seed.ts",
+    "seed:admin": "ts-node prisma/seed.ts --admin-only"
   },
   "keywords": [],
   "author": "",
@@ -37,6 +39,7 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
