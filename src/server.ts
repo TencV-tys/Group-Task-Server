@@ -27,6 +27,9 @@ import UserNotificationRoutes from './routes/user.notification.routes';
 import FeedbackRoutes from './routes/feedback.routes';
 import GroupActivityRoutes from './routes/group.activity.routes';
 import AdminUsersRoutes from './routes/admin.users.routes';
+import AdminFeedbackRoutes from './routes/admin.feedback.routes';
+
+
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
@@ -100,7 +103,7 @@ svr.use('/api/notifications', UserNotificationRoutes);
 svr.use('/api/feedback', FeedbackRoutes);
 svr.use('/api/group-activity', GroupActivityRoutes);
 svr.use('/api/admin/users', AdminUsersRoutes);
-
+svr.use('/api/admin/feedback', AdminFeedbackRoutes);
 
 // HTML Pages for password reset
 svr.get('/reset-password-form', (req, res) => {
