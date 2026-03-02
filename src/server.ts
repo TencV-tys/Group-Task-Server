@@ -23,10 +23,11 @@ import TaskRoutes from './routes/task.routes';
 import UploadRoutes from './routes/upload.routes';
 import AssignmentRoutes from './routes/assignment.routes';
 import SwapRequestRoutes from './routes/swapRequest.routes';
-import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import UserNotificationRoutes from './routes/user.notification.routes';
 import FeedbackRoutes from './routes/feedback.routes';
 import GroupActivityRoutes from './routes/group.activity.routes';
+import AdminUsersRoutes from './routes/admin.users.routes';
+import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
 
@@ -98,6 +99,7 @@ svr.use('/api/swap-requests', SwapRequestRoutes);
 svr.use('/api/notifications', UserNotificationRoutes);
 svr.use('/api/feedback', FeedbackRoutes);
 svr.use('/api/group-activity', GroupActivityRoutes);
+svr.use('/api/admin/users', AdminUsersRoutes);
 
 
 // HTML Pages for password reset
