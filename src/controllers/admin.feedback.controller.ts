@@ -97,7 +97,7 @@ export class AdminFeedbackController {
       }
 
       const { feedbackId } = req.params as { feedbackId: string };
-      const { status, adminNotes } = req.body;
+      const { status } = req.body; // Removed adminNotes
 
       if (!status) {
         return res.status(400).json({
@@ -106,7 +106,8 @@ export class AdminFeedbackController {
         });
       }
 
-      const result = await AdminFeedbackService.updateFeedbackStatus(feedbackId, status, adminNotes);
+      // ✅ FIXED: Only passing 2 arguments
+      const result = await AdminFeedbackService.updateFeedbackStatus(feedbackId, status);
 
       if (!result.success) {
         return res.status(400).json(result);
@@ -123,44 +124,8 @@ export class AdminFeedbackController {
     }
   }
 
-  // ========== ADD ADMIN REPLY ==========
-  static async addAdminReply(req: AdminAuthRequest, res: Response) {
-    try {
-      const adminId = req.admin?.id;
-      
-      if (!adminId) {
-        return res.status(401).json({
-          success: false,
-          message: "Admin not authenticated"
-        });
-      }
-
-      const { feedbackId } = req.params as { feedbackId: string };
-      const { reply } = req.body;
-
-      if (!reply) {
-        return res.status(400).json({
-          success: false,
-          message: "Reply is required"
-        });
-      }
-
-      const result = await AdminFeedbackService.addAdminReply(feedbackId, reply, adminId);
-
-      if (!result.success) {
-        return res.status(400).json(result);
-      }
-
-      return res.json(result);
-
-    } catch (error: any) {
-      console.error("AdminFeedbackController.addAdminReply error:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error"
-      });
-    }
-  }
+  // ========== ADD ADMIN REPLY - REMOVED ==========
+  // This method is removed because your schema doesn't support admin replies
 
   // ========== DELETE FEEDBACK ==========
   static async deleteFeedback(req: AdminAuthRequest, res: Response) {

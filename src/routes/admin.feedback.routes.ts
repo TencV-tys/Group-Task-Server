@@ -20,8 +20,6 @@ router.get('/:feedbackId', AdminFeedbackController.getFeedbackById);
 // Update feedback status
 router.patch('/:feedbackId/status', AdminFeedbackController.updateFeedbackStatus);
 
-// Add admin reply
-router.post('/:feedbackId/reply', AdminFeedbackController.addAdminReply);
 
 // Delete feedback
 router.delete('/:feedbackId', AdminFeedbackController.deleteFeedback);
