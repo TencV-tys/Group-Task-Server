@@ -4,7 +4,7 @@ import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { TaskService } from "../services/task.services";
 import { TaskExecutionFrequency } from '@prisma/client';
 import { TaskHelpers } from "../helpers/task.helpers";
-
+import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskController {
   
   static async createTask(req: UserAuthRequest, res: Response) {
@@ -631,4 +631,26 @@ export class TaskController {
       });
     }
   }
+  static async getRotationStatus(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as {groupId:string};
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
+
+    const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
+    
+    return res.json({
+      success: true,
+      data: analysis,
+      message: RotationHelpers.getRotationStatusMessage(analysis)
+    });
+
+  } catch (error: any) {
+    console.error("Error getting rotation status:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
 }  

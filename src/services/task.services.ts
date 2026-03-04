@@ -4,6 +4,7 @@ import { TaskExecutionFrequency, Prisma,DayOfWeek } from '@prisma/client';
 import { TaskHelpers } from "../helpers/task.helpers";
 import { TimeHelpers } from "../helpers/time.helpers";
 import { SocketService } from "./socket.services";
+import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService {
   
   // Create task with distributed points across time slots
@@ -76,7 +77,28 @@ export class TaskService {
       if (!timeSlotsValidation.isValid) {
         return { success: false, message: timeSlotsValidation.error };
       }
-
+             const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
+    
+    // If this is a recurring task and we don't have enough tasks for all members
+    if (data.isRecurring && !analysis.hasEnoughTasks) {
+      const tasksNeeded = analysis.tasksNeeded;
+      const memberCount = analysis.totalMembers;
+      const currentTasks = analysis.totalTasks;
+      
+      // If this will be the task that completes the set, allow it with warning
+      if (currentTasks + 1 === memberCount) {
+        // Perfect - this task will complete the set
+        console.log(`✅ This task will complete the rotation set (${memberCount}/${memberCount})`);
+      } else {
+        // Still need more tasks
+        return {
+          success: false,
+          message: `Cannot create task yet. You have ${memberCount} members but only ${currentTasks} recurring tasks. You need ${tasksNeeded} more task(s) for perfect rotation. Each member should have one task.`,
+          warning: true,
+          analysis
+        };
+      }
+    }
       // Get rotation members
       let targetMemberIds = data.rotationMemberIds || [];
       let rotationMembers = [];
@@ -460,7 +482,7 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
     if (!membership) {
       return { success: false, message: "You are not a member in this group" };
     }
-
+ 
     const group = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group) {
       return { success: false, message: "Group not found" };

@@ -7,7 +7,6 @@ import { SocketService } from './socket.services';
 export class AssignmentService {
   
   // ========== COMPLETE ASSIGNMENT ==========
-  // ========== COMPLETE ASSIGNMENT ==========
 static async completeAssignment(
   assignmentId: string,
   userId: string,

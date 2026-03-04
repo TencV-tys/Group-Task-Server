@@ -27,6 +27,8 @@ router.get('/group/:groupId/schedule', TaskController.getRotationSchedule);
 // Get task statistics for a group
 router.get('/group/:groupId/statistics', TaskController.getTaskStatistics);
 
+router.get('/group/:groupId/rotation-status', TaskController.getRotationStatus);
+
 // ============= INDIVIDUAL TASK ROUTES =============
 // Get single task details 
 router.get('/:taskId', TaskController.getTaskDetails);
