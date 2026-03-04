@@ -359,7 +359,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     const tasks = await prisma.task.findMany({
-      where: { groupId },
+      where: { groupId, isDeleted:false },
       include: {
         creator: { select: { id: true, fullName: true, avatarUrl: true } },
         timeSlots: { 
@@ -1533,39 +1533,84 @@ return {
     }
   }
 
-
   // Delete a task
   static async deleteTask(taskId: string, userId: string) {
-    try {
-      const task = await prisma.task.findUnique({
-        where: { id: taskId },
-        include: { group: true }
-      });
-
-      if (!task) {
-        return { success: false, message: "Task not found" };
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: { 
+        group: true,
+        assignments: {
+          include: {
+            user: {
+              select: { id: true, fullName: true }
+            }
+          }
+        }
       }
+    });
 
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId: task.groupId, groupRole: "ADMIN" }
-      });
-
-      if (!membership) {
-        return { success: false, message: "Only group admins can delete tasks" };
-      }
-
-    await prisma.task.delete({ where: { id: taskId } });
-
-// 🔴 EMIT SOCKET EVENT FOR TASK DELETED
-await SocketService.emitTaskDeleted(taskId, task.title, task.groupId, userId);
-
-return { success: true, message: "Task deleted successfully" };
-
-    } catch (error: any) {
-      console.error("TaskService.deleteTask error:", error);
-      return { success: false, message: error.message || "Error deleting task" };
+    if (!task) {
+      return { success: false, message: "Task not found" };
     }
+
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId: task.groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only group admins can delete tasks" };
+    }
+
+    // ===== SOFT DELETE - mark as deleted instead of actual delete =====
+    await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: userId,
+        title: `[DELETED] ${task.title}` // Optional: mark title as deleted
+      }
+    });
+
+    // Create notifications for affected users (optional)
+    const affectedUserIds = new Set<string>();
+    task.assignments?.forEach(assignment => {
+      affectedUserIds.add(assignment.userId);
+    });
+
+    // Create notifications for each affected user
+    for (const affectedUserId of affectedUserIds) {
+      await prisma.userNotification.create({
+        data: {
+          userId: affectedUserId,
+          type: "TASK_DELETED",
+          title: "🗑️ Task Deleted",
+          message: `The task "${task.title}" has been deleted by an admin. Your history and points are preserved.`,
+          data: {
+            taskId: task.id,
+            taskTitle: task.title,
+            groupId: task.groupId,
+            groupName: task.group.name
+          }
+        }
+      });
+    }
+
+    // 🔴 EMIT SOCKET EVENT FOR TASK DELETED
+    await SocketService.emitTaskDeleted(taskId, task.title, task.groupId, userId);
+
+    return { 
+      success: true, 
+      message: "Task deleted successfully. User history and points preserved.",
+      preservedAssignments: task.assignments?.length || 0
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.deleteTask error:", error);
+    return { success: false, message: error.message || "Error deleting task" };
   }
+}
 
   // Get task statistics
   static async getTaskStatistics(groupId: string, userId: string) {

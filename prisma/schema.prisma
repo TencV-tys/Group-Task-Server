@@ -223,6 +223,12 @@ model Task {
 
   // Store which members are in rotation for this specific task
   rotationMembers Json? // JSON array: [{userId: "uuid", fullName: "John Doe", rotationOrder: 1}]
+   
+    // ===== SOFT DELETE FIELDS (ADD THESE) =====
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+  deletedBy    String?   // User ID of who deleted it (admin)
+
 
   // Foreign keys
   groupId     String
