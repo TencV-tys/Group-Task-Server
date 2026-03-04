@@ -65,7 +65,8 @@ export class RotationHelpers {
       let assignedTasks = 0;
       
       recurringTasks.forEach(task => {
-        const rotationMembers = JSON.parse(task.rotationMembers as string || '[]');
+  
+      const rotationMembers = parseRotationMembers(task.rotationMembers);
         const memberIndex = rotationMembers.findIndex((m: any) => m.userId === member.userId);
         
         if (memberIndex !== -1) {
@@ -98,7 +99,7 @@ export class RotationHelpers {
     return {
       totalMembers: memberCount,
       activeMembers: memberCount,
-      totalTasks: taskCount,
+      totalTasks: taskCount, 
       recurringTasks: taskCount,
       tasksPerMember,
       hasEnoughTasks,
@@ -127,4 +128,20 @@ export class RotationHelpers {
     
     return "Rotation ready.";
   }
+
+
+
+
+}
+function parseRotationMembers(rotationMembers: any): any[] {
+  if (!rotationMembers) return [];
+  if (Array.isArray(rotationMembers)) return rotationMembers;
+  if (typeof rotationMembers === 'string') {
+    try {
+      return JSON.parse(rotationMembers) || [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }

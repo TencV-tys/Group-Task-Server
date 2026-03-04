@@ -132,7 +132,7 @@ console.log('✅ Socket.IO initialized');
 
 // ========== SERVER START ==========
 
-const MY_IP = '172.28.15.2'; 
+const MY_IP = '10.123.17.2'; 
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
 
