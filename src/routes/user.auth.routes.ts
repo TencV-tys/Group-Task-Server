@@ -11,6 +11,9 @@ router.post('/signup', UserAuthController.signup);
 router.post('/refresh-token', UserAuthMiddleware, UserAuthController.refreshToken);
 router.post('/logout', UserAuthMiddleware, UserAuthController.logout);
 
+// 👇 ADD THIS NEW ROUTE
+router.get('/me', UserAuthMiddleware, UserAuthController.getCurrentUser);
+
 // Password reset routes
 router.post('/forgot-password', UserPasswordResetController.requestReset);
 router.post('/verify-reset-token', UserPasswordResetController.verifyToken);

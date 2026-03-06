@@ -103,7 +103,7 @@ export class CronService {
                   admin.userId,
                   assignedTasks.map(t => t.id) // Only pass assigned task IDs
                 );
-                
+                 
                 if (result.success) {
                   console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
                   

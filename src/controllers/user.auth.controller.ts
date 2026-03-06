@@ -5,9 +5,10 @@ import { UserRefreshToken } from '../services/user.create.refreshToken.services'
 import { UserJwtUtils } from '../utils/user.jwtutils';
 import { UserRefreshServices } from '../services/user.refresh.services';
 import { UserLogoutServices } from '../services/user.logout.services';
-
+import { UserAuthRequest } from '../middlewares/user.auth.middleware';
+import prisma from '../prisma';
 export class UserAuthController{
-
+ 
   static async signup(req: Request, res: Response) {
     try {
         console.log("=== CONTROLLER SIGNUP ===");
@@ -226,4 +227,61 @@ export class UserAuthController{
         });
     }
   }
+static async getCurrentUser(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+     
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    // Fetch fresh user data from database
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        gender: true,
+        role: true,
+        roleStatus: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        gender: user.gender,
+        role: user.role,
+        roleStatus: user.roleStatus,
+        createdAt: user.createdAt
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Error in getCurrentUser:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user data"
+    });
+  }
+}
+
 }
