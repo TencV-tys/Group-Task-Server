@@ -133,13 +133,13 @@ export class RotationHelpers {
 
 
 }
-function parseRotationMembers(rotationMembers: any): any[] {
+function parseRotationMembers(rotationMembers: any): any[] { 
   if (!rotationMembers) return [];
   if (Array.isArray(rotationMembers)) return rotationMembers;
   if (typeof rotationMembers === 'string') {
     try {
       return JSON.parse(rotationMembers) || [];
-    } catch {
+    } catch { 
       return [];
     }
   }

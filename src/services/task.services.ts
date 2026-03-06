@@ -1025,7 +1025,7 @@ return {
   }
 
   // Rotate group tasks - FIXED: Add type safety
-  // services/task.services.ts - FIXED rotation algorithm
+  // services/task.services.ts - FIXED rotateGroupTasks with proper null checks
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -1043,9 +1043,22 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     // Get all recurring tasks with their points
     const tasks = await prisma.task.findMany({
-      where: { groupId, isRecurring: true },
+      where: { 
+        groupId, 
+        isRecurring: true,
+        isDeleted: false 
+      },
       include: {
-        timeSlots: { orderBy: { sortOrder: 'asc' } }
+        timeSlots: { 
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        }
       },
       orderBy: { rotationOrder: 'asc' }
     });
@@ -1056,7 +1069,10 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     // Get all active members with their cumulative points
     const members = await prisma.groupMember.findMany({
-      where: { groupId, isActive: true },
+      where: { 
+        groupId, 
+        isActive: true 
+      },
       include: { 
         user: { 
           select: { 
@@ -1066,15 +1082,30 @@ static async rotateGroupTasks(groupId: string, userId: string) {
           } 
         } 
       },
-      orderBy: { cumulativePoints: 'asc' } // LOWEST points FIRST
+      orderBy: { 
+        cumulativePoints: 'asc' 
+      }
     });
 
-    // Sort tasks by points (HIGHEST to LOWEST)
-    const sortedTasks = [...tasks].sort((a, b) => (b.points || 0) - (a.points || 0));
+    if (members.length === 0) {
+      return { success: false, message: "No active members in the group" };
+    }
+
+    // Calculate total points for each task (sum of all time slots)
+    const tasksWithTotalPoints = tasks.map(task => {
+      const totalPoints = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+      return {
+        ...task,
+        totalPoints: totalPoints || task.points || 0 // Fallback to task.points if no time slots
+      };
+    });
+
+    // Sort tasks by total points (HIGHEST to LOWEST)
+    const sortedTasks = [...tasksWithTotalPoints].sort((a, b) => b.totalPoints - a.totalPoints);
 
     console.log('🔄 FAIR ROTATION ALGORITHM:');
-    console.log('Members (lowest points first):', members.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
-    console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.points}pts)`));
+    console.log('Members (lowest points first):', members.map(m => `${m.user?.fullName || 'Unknown'} (${m.cumulativePoints}pts)`));
+    console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
 
     const newWeek = group.currentRotationWeek + 1;
     const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(1);
@@ -1085,9 +1116,13 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       const member = members[i]; // Lowest points first
       const task = sortedTasks[i]; // Highest points first
       
-      if (!task) continue;
+      // Skip if task is undefined (shouldn't happen if counts match)
+      if (!task || !member) {
+        console.warn(`Skipping assignment at index ${i}: member or task missing`);
+        continue;
+      }
 
-      console.log(`Assigning ${member.user.fullName} (${member.cumulativePoints}pts) → ${task.title} (${task.points}pts)`);
+      console.log(`Assigning ${member.user?.fullName || 'Unknown'} (${member.cumulativePoints}pts) → ${task.title} (${task.totalPoints}pts)`);
 
       // Update task with new assignee
       await prisma.task.update({
@@ -1100,16 +1135,28 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
       // Delete existing assignments for next week
       await prisma.assignment.deleteMany({
-        where: { taskId: task.id, rotationWeek: newWeek }
+        where: { 
+          taskId: task.id, 
+          rotationWeek: newWeek 
+        }
       });
+
+      // Get the time slots for this task (with their individual points)
+      const timeSlots = task.timeSlots.length > 0 ? task.timeSlots : [{
+        id: null,
+        startTime: "00:00",
+        endTime: "23:59",
+        points: task.totalPoints
+      }];
 
       // Create new assignments based on task frequency
       if (task.executionFrequency === 'DAILY') {
+        // Daily tasks: create for each day of the week
         for (let day = 0; day < 7; day++) {
           const dueDate = new Date(weekStart);
           dueDate.setDate(dueDate.getDate() + day);
           
-          for (const timeSlot of task.timeSlots) {
+          for (const timeSlot of timeSlots) {
             const timeParts = timeSlot.startTime.split(':');
             const hours = Number(timeParts[0]) || 0;
             const minutes = Number(timeParts[1]) || 0;
@@ -1122,58 +1169,83 @@ static async rotateGroupTasks(groupId: string, userId: string) {
                 taskId: task.id,
                 userId: member.userId,
                 dueDate: slotDueDate,
-                points: timeSlot.points || 0,
+                points: timeSlot.points || task.totalPoints,
                 rotationWeek: newWeek,
                 weekStart,
                 weekEnd,
                 assignmentDay: TaskHelpers.getDayOfWeekFromIndex(day),
                 completed: false,
-                timeSlotId: timeSlot.id
+                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
               }
             });
           }
         }
-      } else if (task.executionFrequency === 'WEEKLY') {
-        const selectedDays = TaskHelpers.safeJsonParse(task.selectedDays) || 
-                            (task.dayOfWeek ? [task.dayOfWeek] : ['MONDAY']);
-        
-        for (const day of selectedDays) {
-          const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
-          
-          for (const timeSlot of task.timeSlots) {
-            const timeParts = timeSlot.startTime.split(':');
-            const hours = Number(timeParts[0]) || 0;
-            const minutes = Number(timeParts[1]) || 0;
-            
-            const slotDueDate = new Date(baseDueDate);
-            slotDueDate.setHours(hours, minutes, 0, 0);
-            
-            await prisma.assignment.create({
-              data: {
-                taskId: task.id,
-                userId: member.userId,
-                dueDate: slotDueDate,
-                points: timeSlot.points || 0,
-                rotationWeek: newWeek,
-                weekStart,
-                weekEnd,
-                assignmentDay: day,
-                completed: false,
-                timeSlotId: timeSlot.id
-              }
-            });
-          }
+      }else if (task.executionFrequency === 'WEEKLY') {
+  // Weekly tasks: parse selected days
+  let selectedDays: DayOfWeek[] = [];
+  
+  if (task.selectedDays) {
+    try {
+      selectedDays = JSON.parse(task.selectedDays as string);
+    } catch {
+      selectedDays = [];
+    }
+  }
+  
+  if (selectedDays.length === 0 && task.dayOfWeek) {
+    selectedDays = [task.dayOfWeek];
+  }
+  
+  if (selectedDays.length === 0) {
+    selectedDays = ['MONDAY']; // Default fallback
+  }
+  
+  for (const day of selectedDays) {
+    // FIX: Pass the day and a timeSlot object with startTime from weekStart
+    // Create a time slot object with the weekStart time
+    const weekStartTime = weekStart.toLocaleTimeString('en-US', { 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+    
+    const baseDueDate = TaskHelpers.calculateDueDate(day, { startTime: weekStartTime });
+    
+    for (const timeSlot of timeSlots) {
+      const timeParts = timeSlot.startTime.split(':');
+      const hours = Number(timeParts[0]) || 0;
+      const minutes = Number(timeParts[1]) || 0;
+      
+      const slotDueDate = new Date(baseDueDate);
+      slotDueDate.setHours(hours, minutes, 0, 0);
+      
+      await prisma.assignment.create({
+        data: {
+          taskId: task.id,
+          userId: member.userId,
+          dueDate: slotDueDate,
+          points: timeSlot.points || task.totalPoints,
+          rotationWeek: newWeek,
+          weekStart,
+          weekEnd,
+          assignmentDay: day,
+          completed: false,
+          ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
         }
-      }
+      });
+    }
+  }
+}
 
-      // Update member's cumulative points
-      const taskPoints = task.points || 0;
+      // Update member's cumulative points (add this week's points)
+      const taskPoints = task.totalPoints;
       await prisma.groupMember.update({
         where: { id: member.id },
         data: {
           cumulativePoints: {
             increment: taskPoints
-          }
+          },
+          pointsUpdatedAt: new Date()
         }
       });
 
@@ -1183,7 +1255,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         taskPoints,
         previousAssignee: task.currentAssignee,
         newAssignee: member.userId,
-        newAssigneeName: member.user.fullName,
+        newAssigneeName: member.user?.fullName || 'Unknown',
         oldCumulative: member.cumulativePoints,
         newCumulative: member.cumulativePoints + taskPoints
       });
@@ -1198,10 +1270,24 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       }
     });
 
-    // Log the fairness proof
+    // Calculate fairness metrics (with null checks)
+    const updatedMembers = await prisma.groupMember.findMany({
+      where: { groupId, isActive: true },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { cumulativePoints: 'desc' }
+    });
+
+    // Safe access with null checks
+    const maxPoints = updatedMembers.length > 0 ? updatedMembers[0]?.cumulativePoints || 0 : 0;
+    const minPoints = updatedMembers.length > 0 ? updatedMembers[updatedMembers.length - 1]?.cumulativePoints || 0 : 0;
+    const fairnessScore = maxPoints > 0 ? Math.round(100 - ((maxPoints - minPoints) / maxPoints) * 100) : 100;
+
+    // Safe console logs with null checks
     console.log('✅ FAIRNESS PROOF:');
-    console.log(`Lowest points member (${members[0].user.fullName}) got highest task (${sortedTasks[0].title} - ${sortedTasks[0].points}pts)`);
-    console.log(`Highest points member (${members[members.length-1].user.fullName}) got lowest task (${sortedTasks[sortedTasks.length-1].title} - ${sortedTasks[sortedTasks.length-1].points}pts)`);
+    if (members.length > 0 && sortedTasks.length > 0) {
+      console.log(`Lowest points member (${members[0]?.user?.fullName || 'Unknown'} - ${members[0]?.cumulativePoints || 0}pts) → got highest task (${sortedTasks[0]?.title || 'Unknown'} - ${sortedTasks[0]?.totalPoints || 0}pts)`);
+      console.log(`Highest points member (${members[members.length-1]?.user?.fullName || 'Unknown'} - ${members[members.length-1]?.cumulativePoints || 0}pts) → got lowest task (${sortedTasks[sortedTasks.length-1]?.title || 'Unknown'} - ${sortedTasks[sortedTasks.length-1]?.totalPoints || 0}pts)`);
+    }
 
     return {
       success: true,
@@ -1210,15 +1296,19 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       newWeek,
       weekStart,
       weekEnd,
-      fairnessProof: {
-        lowestPointsMember: members[0].user.fullName,
-        lowestPointsValue: members[0].cumulativePoints,
-        gotHighestTask: sortedTasks[0].title,
-        gotHighestPoints: sortedTasks[0].points,
-        highestPointsMember: members[members.length-1].user.fullName,
-        highestPointsValue: members[members.length-1].cumulativePoints,
-        gotLowestTask: sortedTasks[sortedTasks.length-1].title,
-        gotLowestPoints: sortedTasks[sortedTasks.length-1].points
+      fairnessMetrics: {
+        lowestPointsMember: members.length > 0 ? members[0]?.user?.fullName || 'Unknown' : 'Unknown',
+        lowestPointsValue: members.length > 0 ? members[0]?.cumulativePoints || 0 : 0,
+        gotHighestTask: sortedTasks.length > 0 ? sortedTasks[0]?.title || 'Unknown' : 'Unknown',
+        gotHighestPoints: sortedTasks.length > 0 ? sortedTasks[0]?.totalPoints || 0 : 0,
+        highestPointsMember: members.length > 0 ? members[members.length-1]?.user?.fullName || 'Unknown' : 'Unknown',
+        highestPointsValue: members.length > 0 ? members[members.length-1]?.cumulativePoints || 0 : 0,
+        gotLowestTask: sortedTasks.length > 0 ? sortedTasks[sortedTasks.length-1]?.title || 'Unknown' : 'Unknown',
+        gotLowestPoints: sortedTasks.length > 0 ? sortedTasks[sortedTasks.length-1]?.totalPoints || 0 : 0,
+        fairnessScore,
+        afterRotationMax: maxPoints,
+        afterRotationMin: minPoints,
+        afterRotationDiff: maxPoints - minPoints
       }
     };
 

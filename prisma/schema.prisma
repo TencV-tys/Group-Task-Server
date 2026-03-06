@@ -177,8 +177,8 @@ model GroupMember {
   // For rotation tracking
   rotationOrder Int? // Order in rotation sequence
   isActive      Boolean @default(true) // Whether member participates in rotation
-  
-    cumulativePoints Int      @default(0) // Total points earned over time
+
+  cumulativePoints Int       @default(0) // Total points earned over time
   pointsUpdatedAt  DateTime? // When points were last updated
 
   // Relationships
@@ -226,12 +226,11 @@ model Task {
 
   // Store which members are in rotation for this specific task
   rotationMembers Json? // JSON array: [{userId: "uuid", fullName: "John Doe", rotationOrder: 1}]
-   
-    // ===== SOFT DELETE FIELDS (ADD THESE) =====
-  isDeleted    Boolean   @default(false)
-  deletedAt    DateTime?
-  deletedBy    String?   // User ID of who deleted it (admin)
 
+  // ===== SOFT DELETE FIELDS (ADD THESE) =====
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String? // User ID of who deleted it (admin)
 
   // Foreign keys
   groupId     String

@@ -33,6 +33,7 @@ import AdminNotificationsRoutes from './routes/admin.notifications.routes';
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
+import { initRotationCron } from './cron/rotateGroupTask.cron';
 
 // Socket.IO imports
 import { setupSocketIO, setIO } from './socket';
@@ -120,7 +121,7 @@ console.log('⏰ Initializing cron jobs...');
 initSwapRequestCron();
 initReminderCron();
 initNeglectDetectionCron();
-
+initRotationCron();
 // ========== CREATE HTTP SERVER ==========
 const server = http.createServer(svr);
 
