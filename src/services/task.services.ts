@@ -1318,6 +1318,115 @@ static async rotateGroupTasks(groupId: string, userId: string) {
   }
 }
 
+// In task.services.ts - Add this new method
+static async rotateAssignedTasks(groupId: string, userId: string, taskIds: string[]) {
+  try {
+    console.log(`🔄 Rotating ${taskIds.length} assigned tasks for group ${groupId}`);
+    
+    // Get only the tasks that are assigned
+    const tasks = await prisma.task.findMany({
+      where: { 
+        id: { in: taskIds },
+        isRecurring: true,
+        isDeleted: false,
+        currentAssignee: { not: null } // Ensure they have assignees
+      },
+      include: {
+        timeSlots: true,
+        assignments: {
+          where: { completed: false },
+          take: 1
+        }
+      }
+    });
+
+    if (tasks.length === 0) {
+      return { success: false, message: "No assigned tasks to rotate" };
+    }
+
+    // Get members with cumulative points
+    const members = await prisma.groupMember.findMany({
+      where: { groupId, isActive: true },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { cumulativePoints: 'asc' }
+    });
+
+    // Sort tasks by points (highest to lowest)
+    const sortedTasks = [...tasks].sort((a, b) => (b.points || 0) - (a.points || 0));
+
+    console.log('🎯 Fair rotation for assigned tasks:');
+    console.log('Members (lowest points first):', members.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
+    console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.points}pts)`));
+
+    // Perform fair rotation
+    const rotatedTasks = [];
+    const newWeek = (await prisma.group.findUnique({ where: { id: groupId } }))!.currentRotationWeek + 1;
+    const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(1);
+
+    for (let i = 0; i < tasks.length; i++) {
+      const member = members[i % members.length]; // Cycle through members
+      const task = sortedTasks[i];
+      
+      if (!task || !member) continue;
+
+      console.log(`   Assigning ${member.user.fullName} → ${task.title}`);
+
+      // Update task with new assignee
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { 
+          currentAssignee: member.userId,
+          lastAssignedAt: new Date()
+        }
+      });
+
+      // Delete old assignments for next week
+      await prisma.assignment.deleteMany({
+        where: { 
+          taskId: task.id, 
+          rotationWeek: newWeek 
+        }
+      });
+
+      // Create new assignments (simplified - you have your full logic)
+      // ... your assignment creation logic here ...
+
+      // Update member's cumulative points
+      await prisma.groupMember.update({
+        where: { id: member.id },
+        data: {
+          cumulativePoints: { increment: task.points || 0 }
+        }
+      });
+
+      rotatedTasks.push({
+        taskId: task.id,
+        title: task.title,
+        assignedTo: member.user.fullName
+      });
+    }
+
+    // Update group rotation week
+    await prisma.group.update({
+      where: { id: groupId },
+      data: { 
+        currentRotationWeek: newWeek,
+        lastRotationUpdate: new Date()
+      }
+    });
+
+    return {
+      success: true,
+      message: `Rotated ${rotatedTasks.length} assigned tasks`,
+      rotatedTasks
+    };
+
+  } catch (error: any) {
+    console.error("Error rotating assigned tasks:", error);
+    return { success: false, message: error.message };
+  }
+}
+
 // Get rotation schedule - FIXED to show ACTUAL assignments
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
   try {

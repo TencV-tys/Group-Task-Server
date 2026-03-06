@@ -11,7 +11,7 @@ export class AssignmentService {
 static async completeAssignment(
   assignmentId: string,
   userId: string,
-  data: {
+  data: { 
     photoUrl?: string;  
     notes?: string;
   }
