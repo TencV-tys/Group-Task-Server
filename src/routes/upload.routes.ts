@@ -1,7 +1,7 @@
 import { UserAuthMiddleware } from './../middlewares/user.auth.middleware';
 import express from 'express';
 import { UploadController } from '../controllers/upload.controller';
-import { singleUpload } from '../utils/multer';
+import { singleUpload, photoUpload } from '../utils/multer'; // Import both
 
 const router = express.Router();
 
@@ -14,7 +14,7 @@ router.post(
     req.body.uploadType = 'avatar';
     next(); 
   },
-  singleUpload,
+  singleUpload, // Uses 'file' field
   UploadController.uploadAvatar
 );
 
@@ -25,7 +25,7 @@ router.post(
   UploadController.uploadAvatarBase64
 );
 
-// Task photo upload (file upload)
+// Task photo upload (file upload) - FOR ASSIGNMENTS
 router.post(
   '/task/:taskId/photo',
   UserAuthMiddleware,
@@ -33,7 +33,7 @@ router.post(
     req.body.uploadType = 'task_photo';
     next();
   },
-  singleUpload,
+  photoUpload, // Uses 'photo' field for assignments
   UploadController.uploadTaskPhoto
 );
 
@@ -51,7 +51,7 @@ router.post(
     req.body.uploadType = 'group_avatar';
     next();
   },
-  singleUpload,
+  singleUpload, // Uses 'file' field
   UploadController.uploadGroupAvatar
 );
  
@@ -68,6 +68,6 @@ router.delete(
   UploadController.deleteGroupAvatar
 );
 
-router.post('/task/:taskId/photo', singleUpload, UploadController.uploadTaskPhoto);
+// Remove duplicate route at the bottom
 
 export default router;

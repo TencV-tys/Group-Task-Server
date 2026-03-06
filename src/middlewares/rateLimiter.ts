@@ -28,7 +28,7 @@ export const authLimiter = rateLimit({
 // File upload limiter (prevent large file upload abuse)
 export const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20, // Limit each IP to 20 uploads per hour
+  max: 100, // Limit each IP to 20 uploads per hour
   message: {
     success: false,
     message: 'Too many upload attempts, please try again after an hour'
@@ -40,7 +40,7 @@ export const uploadLimiter = rateLimit({
 // Task creation/update limiter
 export const taskLimiter = rateLimit({
   windowMs: 60 * 60 * 10000, // 1 hour
-  max: 50, // Limit each IP to 50 task operations per hour
+  max: 100, // Limit each IP to 50 task operations per hour
   message: {
     success: false,
     message: 'Too many task operations, please try again after an hour'
@@ -64,7 +64,7 @@ export const passwordResetLimiter = rateLimit({
 // Swap request limiter
 export const swapRequestLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 30,
+  max: 100,
   message: {
     success: false,
     message: 'Too many swap requests, please try again after an hour'

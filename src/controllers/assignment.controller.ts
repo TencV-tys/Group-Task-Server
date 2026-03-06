@@ -3,6 +3,7 @@ import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { AssignmentService } from "../services/assignment.services";
 import { TimeHelpers } from "../helpers/time.helpers";
+
 import prisma from "../prisma";
 
 export class AssignmentController {
@@ -12,7 +13,22 @@ export class AssignmentController {
     try {
       const userId = req.user?.id;
       const { assignmentId } = req.params as { assignmentId: string };
-      const { photoUrl, notes } = req.body;
+      
+      // For multipart requests, multer already processed the file
+      // The file is available at req.file
+      // The notes are available at req.body.notes
+      
+      let photoUrl = undefined;
+      const file = (req as any).file;
+      
+      if (file) {
+        // Generate URL path for the uploaded file
+        photoUrl = `/uploads/task-photos/${file.filename}`;
+        console.log("📸 Photo uploaded:", photoUrl);
+      }
+
+      const notes = req.body.notes;
+      console.log("📝 Notes received:", notes);
 
       if (!userId) {
         return res.status(401).json({
@@ -31,7 +47,10 @@ export class AssignmentController {
       const result = await AssignmentService.completeAssignment(
         assignmentId,
         userId,
-        { photoUrl, notes } 
+        { 
+          photoUrl,
+          notes: notes || undefined 
+        }
       );
 
       if (!result.success) {
@@ -60,7 +79,7 @@ export class AssignmentController {
         message: "Internal server error"
       });
     }
-  } 
+  }
  
   // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(req: UserAuthRequest, res: Response) {

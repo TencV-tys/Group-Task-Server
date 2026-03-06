@@ -177,6 +177,9 @@ model GroupMember {
   // For rotation tracking
   rotationOrder Int? // Order in rotation sequence
   isActive      Boolean @default(true) // Whether member participates in rotation
+  
+    cumulativePoints Int      @default(0) // Total points earned over time
+  pointsUpdatedAt  DateTime? // When points were last updated
 
   // Relationships
   user  User  @relation("UserGroups", fields: [userId], references: [id], onDelete: Cascade)

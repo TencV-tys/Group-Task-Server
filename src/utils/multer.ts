@@ -10,6 +10,7 @@ const storage = multer.diskStorage({
     
     let uploadPath = '';
     switch (uploadType) {
+      case 'avatar':
       case 'user_avatar':
         uploadPath = path.join(__dirname, '../../uploads/user-avatars');
         break;
@@ -50,8 +51,15 @@ const fileFilter = (req: any, file: any, cb: any) => {
   }
 };
 
-export const singleUpload = multer({
+// Create multer instance
+const upload = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: fileFilter
-}).single('file');
+});
+
+// Export different middleware for different field names
+export const singleUpload = upload.single('file');    // For 'file' field (avatars)
+export const photoUpload = upload.single('photo');    // For 'photo' field (assignments)
+
+export default upload;

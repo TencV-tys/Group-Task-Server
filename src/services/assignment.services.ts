@@ -4,6 +4,7 @@ import { AssignmentHelpers } from "../helpers/assignment.helpers";
 import { TimeHelpers } from "../helpers/time.helpers";
 import { UserNotificationService } from "./user.notification.services";
 import { SocketService } from './socket.services';
+
 export class AssignmentService {
   
   // ========== COMPLETE ASSIGNMENT ==========
@@ -11,7 +12,7 @@ static async completeAssignment(
   assignmentId: string,
   userId: string,
   data: {
-    photoUrl?: string;
+    photoUrl?: string;  
     notes?: string;
   }
 ) {
