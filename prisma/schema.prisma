@@ -308,6 +308,9 @@ model Assignment {
   weekEnd       DateTime? // ← CHANGED TO OPTIONAL (allow NULL)
   assignmentDay DayOfWeek?
 
+  expired    Boolean   @default(false)  // Mark assignments from past weeks
+  expiredAt  DateTime?
+
   // Relationships
   task         Task          @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
   user         User          @relation("UserAssignments", fields: [userId], references: [id])
