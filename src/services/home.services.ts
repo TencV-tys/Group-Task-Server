@@ -4,6 +4,8 @@ import prisma from "../prisma";
 export class HomeServices {
  // services/home.services.ts - FIXED with proper day-by-day counting
 
+// services/home.services.ts - UPDATED with expired field filtering
+
 static async getHomeData(userId: string) {
   try {
     console.log(`Fetching home data for user: ${userId}`);
@@ -72,12 +74,12 @@ static async getHomeData(userId: string) {
     console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
     console.log(`📅 Today: ${today.toISOString()}`);
 
-    // ===== FIXED: Count tasks due this week (from today until Sunday) =====
-    // Tasks due from today until the end of the week (NOT COMPLETED)
+    // ===== UPDATED: Count tasks due this week (excluding expired) =====
     const tasksDueThisWeek = await prisma.assignment.count({
       where: {
         userId: userId,
         completed: false,
+        expired: false, // ← ADD THIS
         dueDate: {
           gte: today, // From today (not the start of week)
           lte: currentWeekEnd // Until end of week
@@ -87,22 +89,24 @@ static async getHomeData(userId: string) {
 
     console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
 
-    // ===== FIXED: Count overdue tasks (due before today and not completed) =====
+    // ===== UPDATED: Count overdue tasks (excluding expired) =====
     const overdueTasks = await prisma.assignment.count({
       where: {
         userId: userId,
         completed: false,
+        expired: false, // ← ADD THIS
         dueDate: { lt: today } // Before today
       }
     });
 
     console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
-    // Get current week assignments for display (including overdue for separate display)
+    // ===== UPDATED: Get current week assignments (excluding expired) =====
     const currentWeekAssignments = await prisma.assignment.findMany({
       where: {
         userId: userId,
         completed: false,
+        expired: false, // ← ADD THIS
         dueDate: {
           gte: currentWeekStart,
           lte: currentWeekEnd
@@ -137,7 +141,7 @@ static async getHomeData(userId: string) {
       assignment => assignment.dueDate >= today
     );
 
-    // Get completed tasks count
+    // Get completed tasks count (expired doesn't matter for completed)
     const completedTasks = await prisma.assignment.count({
       where: {
         userId: userId,
@@ -236,8 +240,8 @@ static async getHomeData(userId: string) {
         },
         stats: {
           groupsCount,
-          tasksDueThisWeek, // ← This decreases day by day as tasks become overdue
-          overdueTasks,     // ← This increases as tasks are missed
+          tasksDueThisWeek, // ← Now excludes expired tasks
+          overdueTasks,     // ← Now excludes expired tasks
           completedTasks,
           totalTasks,
           swapRequests,

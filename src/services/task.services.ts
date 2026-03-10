@@ -1025,7 +1025,7 @@ return {
   }
 
   // Rotate group tasks - FIXED: Add type safety
-  // services/task.services.ts - FIXED rotateGroupTasks with proper null checks
+ // Rotate group tasks - UPDATED with expired field handling
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -1040,6 +1040,27 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     if (!group) {
       return { success: false, message: "Group not found" };
     }
+
+    // ✅ STEP 1: Mark previous week's incomplete assignments as expired
+    const previousWeek = group.currentRotationWeek;
+    
+    const expiredCount = await prisma.assignment.updateMany({
+      where: {
+        task: {
+          groupId: groupId
+        },
+        rotationWeek: previousWeek,
+        completed: false,
+        expired: false
+      },
+      data: {
+        expired: true,
+        expiredAt: new Date(),
+        notes: `[EXPIRED: Week ended without completion on ${new Date().toLocaleDateString()}]`
+      }
+    });
+
+    console.log(`✅ Marked ${expiredCount.count} incomplete assignments from week ${previousWeek} as expired`);
 
     // Get all recurring tasks with their points
     const tasks = await prisma.task.findMany({
@@ -1175,67 +1196,68 @@ static async rotateGroupTasks(groupId: string, userId: string) {
                 weekEnd,
                 assignmentDay: TaskHelpers.getDayOfWeekFromIndex(day),
                 completed: false,
+                expired: false,
                 ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
               }
             });
           }
         }
-      }else if (task.executionFrequency === 'WEEKLY') {
-  // Weekly tasks: parse selected days
-  let selectedDays: DayOfWeek[] = [];
-  
-  if (task.selectedDays) {
-    try {
-      selectedDays = JSON.parse(task.selectedDays as string);
-    } catch {
-      selectedDays = [];
-    }
-  }
-  
-  if (selectedDays.length === 0 && task.dayOfWeek) {
-    selectedDays = [task.dayOfWeek];
-  }
-  
-  if (selectedDays.length === 0) {
-    selectedDays = ['MONDAY']; // Default fallback
-  }
-  
-  for (const day of selectedDays) {
-    // FIX: Pass the day and a timeSlot object with startTime from weekStart
-    // Create a time slot object with the weekStart time
-    const weekStartTime = weekStart.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-    
-    const baseDueDate = TaskHelpers.calculateDueDate(day, { startTime: weekStartTime });
-    
-    for (const timeSlot of timeSlots) {
-      const timeParts = timeSlot.startTime.split(':');
-      const hours = Number(timeParts[0]) || 0;
-      const minutes = Number(timeParts[1]) || 0;
-      
-      const slotDueDate = new Date(baseDueDate);
-      slotDueDate.setHours(hours, minutes, 0, 0);
-      
-      await prisma.assignment.create({
-        data: {
-          taskId: task.id,
-          userId: member.userId,
-          dueDate: slotDueDate,
-          points: timeSlot.points || task.totalPoints,
-          rotationWeek: newWeek,
-          weekStart,
-          weekEnd,
-          assignmentDay: day,
-          completed: false,
-          ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+      } else if (task.executionFrequency === 'WEEKLY') {
+        // Weekly tasks: parse selected days
+        let selectedDays: DayOfWeek[] = [];
+        
+        if (task.selectedDays) {
+          try {
+            selectedDays = JSON.parse(task.selectedDays as string);
+          } catch {
+            selectedDays = [];
+          }
         }
-      });
-    }
-  }
-}
+        
+        if (selectedDays.length === 0 && task.dayOfWeek) {
+          selectedDays = [task.dayOfWeek];
+        }
+        
+        if (selectedDays.length === 0) {
+          selectedDays = ['MONDAY']; // Default fallback
+        }
+        
+        for (const day of selectedDays) {
+          // Create a time slot object with the weekStart time
+          const weekStartTime = weekStart.toLocaleTimeString('en-US', { 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+          
+          const baseDueDate = TaskHelpers.calculateDueDate(day, { startTime: weekStartTime });
+          
+          for (const timeSlot of timeSlots) {
+            const timeParts = timeSlot.startTime.split(':');
+            const hours = Number(timeParts[0]) || 0;
+            const minutes = Number(timeParts[1]) || 0;
+            
+            const slotDueDate = new Date(baseDueDate);
+            slotDueDate.setHours(hours, minutes, 0, 0);
+            
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: member.userId,
+                dueDate: slotDueDate,
+                points: timeSlot.points || task.totalPoints,
+                rotationWeek: newWeek,
+                weekStart,
+                weekEnd,
+                assignmentDay: day,
+                completed: false,
+                expired: false,
+                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+              }
+            });
+          }
+        }
+      }
 
       // Update member's cumulative points (add this week's points)
       const taskPoints = task.totalPoints;
@@ -1317,7 +1339,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
- 
 // In task.services.ts - Add this new method
 static async rotateAssignedTasks(groupId: string, userId: string, taskIds: string[]) {
   try {
