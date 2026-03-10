@@ -1,4 +1,4 @@
-// utils/devRotation.ts - FIXED
+// utils/devRotation.ts - FIXED to force rotation
 import prisma from '../prisma';
 import { TaskService } from '../services/task.services';
 
@@ -23,8 +23,6 @@ export async function checkAndFixRotation() {
     );
     
     const earliestTask = sortedTasks[0];
-
-    // ✅ Add null check
     if (!earliestTask) continue;
 
     const now = new Date();
@@ -49,12 +47,29 @@ export async function checkAndFixRotation() {
       if (admin) {
         console.log(`🔄 Auto-rotating group ${group.id} from week ${currentWeek} to ${expectedWeek}`);
         
-        // ✅ Rotate multiple times to catch up
+        // 🔥 FORCE ROTATION for each week behind
         for (let i = 0; i < weeksBehind; i++) {
-          await TaskService.rotateGroupTasks(group.id, admin.userId);
+          console.log(`   Rotation ${i + 1}/${weeksBehind}...`);
+          const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
+          
+          if (result.success) {
+            console.log(`   ✅ Rotated to week ${currentWeek + i + 1}`);
+          } else {
+            console.log(`   ❌ Rotation failed: ${result.message}`);
+            break;
+          }
         }
-        console.log(`✅ Group ${group.id} now at week ${expectedWeek}`);
+        
+        // Verify final week
+        const updatedGroup = await prisma.group.findUnique({
+          where: { id: group.id },
+          select: { currentRotationWeek: true }
+        });
+        
+        console.log(`✅ Group ${group.id} now at week ${updatedGroup?.currentRotationWeek}`);
       }
+    } else {
+      console.log(`✅ Group ${group.id} is already at correct week ${currentWeek}`);
     }
   }
   
