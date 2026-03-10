@@ -35,6 +35,9 @@ import { initReminderCron } from "./cron/reminderCron";
 import { initNeglectDetectionCron } from "./cron/neglectDetection.cron";
 import { CronService } from './cron/rotateGroupTask.cron';
 
+// ========== ADD THIS IMPORT ==========
+import { checkAndFixRotation } from './utils/devRotation';
+
 // Socket.IO imports
 import { setupSocketIO, setIO } from './socket';
 
@@ -116,12 +119,6 @@ svr.get('/forgot-password', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/forgot-password.html'));
 });
 
-// ========== CRON JOBS ==========
-console.log('⏰ Initializing cron jobs...');
-initSwapRequestCron();
-initReminderCron();
-initNeglectDetectionCron();
-CronService.initialize();
 // ========== CREATE HTTP SERVER ==========
 const server = http.createServer(svr);
 
@@ -131,13 +128,13 @@ const io = setupSocketIO(server);
 setIO(io);
 console.log('✅ Socket.IO initialized');
 
-// ========== SERVER START ==========
+// ========== SERVER START WITH AUTO-ROTATION ==========
 
 const MY_IP = '10.123.17.2'; 
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                     SERVER STARTED                         ║
@@ -164,7 +161,27 @@ server.listen(PORT, () => {
    ├─ Task routes:      50 requests/hour    (task operations)
    ├─ Swap requests:    30 requests/hour    (swap operations)
    └─ Password reset:   3 requests/hour     (very strict!)
+    `);
 
+    // ===== DEVELOPMENT AUTO-ROTATION CHECK =====
+    if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Development mode: Checking rotation status...');
+        try {
+            await checkAndFixRotation();
+            console.log('✅ Development rotation check complete');
+        } catch (error) {
+            console.error('❌ Development rotation check failed:', error);
+        }
+    }
+
+    // ========== CRON JOBS ==========
+    console.log('⏰ Initializing cron jobs...');
+    initSwapRequestCron();
+    initReminderCron();
+    initNeglectDetectionCron();
+    CronService.initialize();
+    
+    console.log(`
 📡 Routes registered:
    ├─ /api/auth/users
    ├─ /api/auth/admins  
@@ -181,6 +198,7 @@ server.listen(PORT, () => {
    ├─ Swap request expiration
    ├─ Task reminders
    └─ Neglect detection
+   └─ Weekly task rotation (Sundays 00:01 AM)
 
 ✅ Server is ready to handle requests!
     `);

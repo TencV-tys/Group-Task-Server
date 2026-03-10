@@ -631,7 +631,9 @@ export class TaskController {
       });
     }
   }
-  static async getRotationStatus(req: UserAuthRequest, res: Response) {
+ 
+// In task.controller.ts - KEEP THIS ONE (remove the other)
+static async getRotationStatus(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
     const { groupId } = req.params as {groupId:string};
@@ -640,6 +642,7 @@ export class TaskController {
       return res.status(401).json({ success: false, message: "Not authenticated" });
     }
 
+    // This already includes the expected week calculation now!
     const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
     
     return res.json({
