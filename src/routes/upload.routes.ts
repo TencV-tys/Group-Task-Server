@@ -43,7 +43,7 @@ router.delete(
   UserAuthMiddleware,
   UploadController.deleteAvatar
 );
-
+ 
 router.post(
   '/group/:groupId/avatar',
   UserAuthMiddleware,

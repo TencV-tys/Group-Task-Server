@@ -2,7 +2,7 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
-import prisma from '../prisma';
+import prisma from '../prisma'; 
 import { UserAuthRequest } from '../middlewares/user.auth.middleware';
 
 export class UploadController {
