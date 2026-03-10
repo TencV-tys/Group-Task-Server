@@ -4,301 +4,299 @@ import prisma from "../prisma";
 export class HomeServices {
  // services/home.services.ts - FIXED with proper day-by-day counting
 
-// services/home.services.ts - UPDATED with expired field filtering
+  static async getHomeData(userId: string) {
+    try {
+      console.log(`Fetching home data for user: ${userId}`);
 
-static async getHomeData(userId: string) {
-  try {
-    console.log(`Fetching home data for user: ${userId}`);
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { 
+          id: true,
+          fullName: true,
+          email: true,
+          avatarUrl: true
+        }
+      });
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { 
-        id: true,
-        fullName: true,
-        email: true,
-        avatarUrl: true
+      if (!user) {
+        return {
+          success: false,
+          message: "User not found"
+        };
       }
-    });
 
-    if (!user) {
-      return {
-        success: false,
-        message: "User not found"
-      };
-    }
-
-    // Get user's group memberships
-    const userMemberships = await prisma.groupMember.findMany({
-      where: { userId: userId },
-      include: {
-        group: {
-          select: {
-            id: true,
-            name: true,
-            avatarUrl: true,
-            currentRotationWeek: true,
-            lastRotationUpdate: true,
-            _count: {
-              select: {
-                tasks: {
-                  where: { isRecurring: true }
-                },
-                members: true
+      // Get user's group memberships
+      const userMemberships = await prisma.groupMember.findMany({
+        where: { userId: userId },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              avatarUrl: true,
+              currentRotationWeek: true,
+              lastRotationUpdate: true,
+              _count: {
+                select: {
+                  tasks: {
+                    where: { isRecurring: true }
+                  },
+                  members: true
+                }
               }
             }
           }
-        }
-      },
-      orderBy: { joinedAt: 'desc' }
-    });
-
-    const groupsCount = userMemberships.length;
-
-    // ===== FIXED: Calculate date ranges correctly =====
-    const now = new Date();
-    const today = new Date(now);
-    today.setHours(0, 0, 0, 0);
-    
-    // Get start of current week (Monday)
-    const currentWeekStart = new Date(now);
-    const day = currentWeekStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
-    currentWeekStart.setDate(diff);
-    currentWeekStart.setHours(0, 0, 0, 0);
-    
-    // Get end of current week (Sunday)
-    const currentWeekEnd = new Date(currentWeekStart);
-    currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
-    currentWeekEnd.setHours(23, 59, 59, 999);
-
-    console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
-    console.log(`📅 Today: ${today.toISOString()}`);
-
-    // ===== UPDATED: Count tasks due this week (excluding expired) =====
-    const tasksDueThisWeek = await prisma.assignment.count({
-      where: {
-        userId: userId,
-        completed: false,
-        expired: false, // ← ADD THIS
-        dueDate: {
-          gte: today, // From today (not the start of week)
-          lte: currentWeekEnd // Until end of week
-        }
-      }
-    });
-
-    console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
-
-    // ===== UPDATED: Count overdue tasks (excluding expired) =====
-    const overdueTasks = await prisma.assignment.count({
-      where: {
-        userId: userId,
-        completed: false,
-        expired: false, // ← ADD THIS
-        dueDate: { lt: today } // Before today
-      }
-    });
-
-    console.log(`📊 Overdue tasks: ${overdueTasks}`);
-
-    // ===== UPDATED: Get current week assignments (excluding expired) =====
-    const currentWeekAssignments = await prisma.assignment.findMany({
-      where: {
-        userId: userId,
-        completed: false,
-        expired: false, // ← ADD THIS
-        dueDate: {
-          gte: currentWeekStart,
-          lte: currentWeekEnd
-        }
-      },
-      include: {
-        task: {
-          select: {
-            id: true,
-            title: true,
-            points: true,
-            timeOfDay: true,
-            dayOfWeek: true,
-            group: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { dueDate: 'asc' }
-    });
-
-    // Separate into overdue and upcoming for better UX
-    const overdueAssignments = currentWeekAssignments.filter(
-      assignment => assignment.dueDate < today
-    );
-    
-    const upcomingAssignmentsThisWeek = currentWeekAssignments.filter(
-      assignment => assignment.dueDate >= today
-    );
-
-    // Get completed tasks count (expired doesn't matter for completed)
-    const completedTasks = await prisma.assignment.count({
-      where: {
-        userId: userId,
-        completed: true
-      }
-    });
-
-    // Get total assignments count
-    const totalTasks = await prisma.assignment.count({
-      where: { userId: userId }
-    });
-
-    // Get pending swap requests
-    const swapRequests = await prisma.swapRequest.count({
-      where: {
-        assignment: {
-          userId: userId
         },
-        status: "PENDING"
-      }
-    });
+        orderBy: { joinedAt: 'desc' }
+      });
 
-    // Get recent activity (notifications)
-    const recentActivity = await prisma.userNotification.findMany({
-      where: { userId: userId },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-      select: {
-        id: true,
-        type: true,
-        title: true,
-        message: true,
-        createdAt: true,
-        read: true
-      }
-    });
+      const groupsCount = userMemberships.length;
 
-    // Calculate points earned this week
-    const completedAssignmentsThisWeek = await prisma.assignment.findMany({
-      where: {
-        userId: userId,
-        completed: true,
-        completedAt: {
-          gte: currentWeekStart
-        }
-      },
-      include: {
-        task: {
-          select: {
-            points: true
+      // Calculate date ranges
+      const now = new Date();
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
+      
+      // Get start of current week (Monday)
+      const currentWeekStart = new Date(now);
+      const day = currentWeekStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+      currentWeekStart.setDate(diff);
+      currentWeekStart.setHours(0, 0, 0, 0);
+      
+      // Get end of current week (Sunday)
+      const currentWeekEnd = new Date(currentWeekStart);
+      currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+      currentWeekEnd.setHours(23, 59, 59, 999);
+
+      console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
+      console.log(`📅 Today: ${today.toISOString()}`);
+
+      // ✅ FIXED: Count tasks due this week (excluding expired)
+      const tasksDueThisWeek = await prisma.assignment.count({
+        where: {
+          userId: userId,
+          completed: false,
+          expired: false, // ← ADD THIS
+          dueDate: {
+            gte: today,
+            lte: currentWeekEnd
           }
         }
-      }
-    });
+      });
 
-    const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
-      sum + (assignment.task.points || 0), 0
-    );
+      console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
 
-    // Format groups with rotation info
-    const groups = userMemberships.map(member => {
-      const group = member.group;
-      const tasksForThisGroup = currentWeekAssignments.filter(
-        assignment => assignment.task.group.id === group.id
+      // ✅ FIXED: Count overdue tasks (excluding expired)
+      const overdueTasks = await prisma.assignment.count({
+        where: {
+          userId: userId,
+          completed: false,
+          expired: false, // ← ADD THIS
+          dueDate: { lt: today }
+        }
+      });
+
+      console.log(`📊 Overdue tasks: ${overdueTasks}`);
+
+      // ✅ FIXED: Get current week assignments (excluding expired)
+      const currentWeekAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: false,
+          expired: false, // ← ADD THIS
+          dueDate: {
+            gte: currentWeekStart,
+            lte: currentWeekEnd
+          }
+        },
+        include: {
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              timeOfDay: true,
+              dayOfWeek: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { dueDate: 'asc' }
+      });
+
+      // Separate into overdue and upcoming
+      const overdueAssignments = currentWeekAssignments.filter(
+        assignment => assignment.dueDate < today
+      );
+      
+      const upcomingAssignmentsThisWeek = currentWeekAssignments.filter(
+        assignment => assignment.dueDate >= today
       );
 
+      // Get completed tasks count
+      const completedTasks = await prisma.assignment.count({
+        where: {
+          userId: userId,
+          completed: true
+        }
+      });
+
+      // Get total assignments count
+      const totalTasks = await prisma.assignment.count({
+        where: { userId: userId }
+      });
+
+      // Get pending swap requests
+      const swapRequests = await prisma.swapRequest.count({
+        where: {
+          assignment: {
+            userId: userId
+          },
+          status: "PENDING"
+        }
+      });
+
+      // Get recent activity (notifications)
+      const recentActivity = await prisma.userNotification.findMany({
+        where: { userId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          message: true,
+          createdAt: true,
+          read: true
+        }
+      });
+
+      // Calculate points earned this week
+      const completedAssignmentsThisWeek = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true,
+          completedAt: {
+            gte: currentWeekStart
+          }
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          }
+        }
+      });
+
+      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
+        sum + (assignment.task.points || 0), 0
+      );
+
+      // Format groups with rotation info
+      const groups = userMemberships.map(member => {
+        const group = member.group;
+        const tasksForThisGroup = currentWeekAssignments.filter(
+          assignment => assignment.task.group.id === group.id
+        );
+
+        return {
+          id: group.id,
+          name: group.name,
+          avatarUrl: group.avatarUrl,
+          role: member.groupRole,
+          rotationOrder: member.rotationOrder,
+          isActive: member.isActive,
+          currentRotationWeek: group.currentRotationWeek,
+          lastRotationUpdate: group.lastRotationUpdate,
+          stats: {
+            totalTasks: group._count.tasks,
+            totalMembers: group._count.members,
+            yourTasksThisWeek: tasksForThisGroup.length,
+            recurringTasks: group._count.tasks
+          }
+        };
+      });
+
+      // Sort groups by activity
+      groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
+
       return {
-        id: group.id,
-        name: group.name,
-        avatarUrl: group.avatarUrl,
-        role: member.groupRole,
-        rotationOrder: member.rotationOrder,
-        isActive: member.isActive,
-        currentRotationWeek: group.currentRotationWeek,
-        lastRotationUpdate: group.lastRotationUpdate,
-        stats: {
-          totalTasks: group._count.tasks,
-          totalMembers: group._count.members,
-          yourTasksThisWeek: tasksForThisGroup.length,
-          recurringTasks: group._count.tasks
+        success: true,
+        data: {
+          user: {
+            ...user,
+            groupsCount,
+            pointsThisWeek,
+            totalPoints: await this.getTotalPoints(userId)
+          },
+          stats: {
+            groupsCount,
+            tasksDueThisWeek,
+            overdueTasks,
+            completedTasks,
+            totalTasks,
+            swapRequests,
+            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+            pointsThisWeek
+          },
+          currentWeekTasks: upcomingAssignmentsThisWeek.map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task.id,
+            title: assignment.task.title,
+            points: assignment.task.points,
+            timeOfDay: assignment.task.timeOfDay,
+            dayOfWeek: assignment.task.dayOfWeek,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            groupName: assignment.task.group.name,
+            groupId: assignment.task.group.id,
+            isOverdue: false,
+            daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          })),
+          overdueTasks: overdueAssignments.map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task.id,
+            title: assignment.task.title,
+            points: assignment.task.points,
+            timeOfDay: assignment.task.timeOfDay,
+            dayOfWeek: assignment.task.dayOfWeek,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            groupName: assignment.task.group.name,
+            groupId: assignment.task.group.id,
+            isOverdue: true,
+            daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
+          })),
+          groups: groups,
+          recentActivity: recentActivity.map(activity => ({
+            ...activity,
+            icon: this.getActivityIcon(activity.type),
+            timeAgo: this.getTimeAgo(activity.createdAt)
+          })),
+          rotationInfo: {
+            currentWeekStart,
+            currentWeekEnd,
+            nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
+            daysUntilNextRotation: Math.max(0, Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+          }
         }
       };
-    });
 
-    // Sort groups by activity
-    groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
-
-    return {
-      success: true,
-      data: {
-        user: {
-          ...user,
-          groupsCount,
-          pointsThisWeek,
-          totalPoints: await this.getTotalPoints(userId)
-        },
-        stats: {
-          groupsCount,
-          tasksDueThisWeek, // ← Now excludes expired tasks
-          overdueTasks,     // ← Now excludes expired tasks
-          completedTasks,
-          totalTasks,
-          swapRequests,
-          completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-          pointsThisWeek
-        },
-        currentWeekTasks: upcomingAssignmentsThisWeek.map(assignment => ({
-          id: assignment.id,
-          taskId: assignment.task.id,
-          title: assignment.task.title,
-          points: assignment.task.points,
-          timeOfDay: assignment.task.timeOfDay,
-          dayOfWeek: assignment.task.dayOfWeek,
-          dueDate: assignment.dueDate,
-          completed: assignment.completed,
-          groupName: assignment.task.group.name,
-          groupId: assignment.task.group.id,
-          isOverdue: false,
-          daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-        })),
-        overdueTasks: overdueAssignments.map(assignment => ({
-          id: assignment.id,
-          taskId: assignment.task.id,
-          title: assignment.task.title,
-          points: assignment.task.points,
-          timeOfDay: assignment.task.timeOfDay,
-          dayOfWeek: assignment.task.dayOfWeek,
-          dueDate: assignment.dueDate,
-          completed: assignment.completed,
-          groupName: assignment.task.group.name,
-          groupId: assignment.task.group.id,
-          isOverdue: true,
-          daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
-        })),
-        groups: groups,
-        recentActivity: recentActivity.map(activity => ({
-          ...activity,
-          icon: this.getActivityIcon(activity.type),
-          timeAgo: this.getTimeAgo(activity.createdAt)
-        })),
-        rotationInfo: {
-          currentWeekStart,
-          currentWeekEnd,
-          nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
-          daysUntilNextRotation: Math.max(0, Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-        }
-      }
-    };
-
-  } catch (e: any) {
-    console.error("HomeServices error:", e);
-    return {
-      success: false,
-      message: e.message || "Internal server error"
-    };
+    } catch (e: any) {
+      console.error("HomeServices error:", e);
+      return {
+        success: false,
+        message: e.message || "Internal server error"
+      };
+    }
   }
-}
     
   static async getWeeklySummary(userId: string) {
     try {
