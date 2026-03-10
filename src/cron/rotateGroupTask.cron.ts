@@ -1,4 +1,4 @@
-// cron/rotateGroupTask.cron.ts - FINAL VERSION
+// cron/rotateGroupTask.cron.ts - UPDATED VERSION
 import cron from 'node-cron';
 import { TaskService } from '../services/task.services';
 import prisma from '../prisma';
@@ -6,7 +6,7 @@ import prisma from '../prisma';
 export class CronService {
   
   static initialize() {
-    console.log('⏰ Initializing cron jobs...');
+    console.log('⏰ Initializing cron jobs...'); 
     
     // Run every day at 00:01 AM
     cron.schedule('1 0 * * *', async () => {
@@ -25,12 +25,21 @@ export class CronService {
                 id: true,
                 title: true,
                 createdAt: true,
-                currentAssignee: true, // Has assigned member?
-                assignments: {
-                  where: {
-                    completed: false
-                  },
-                  select: { id: true }
+                currentAssignee: true,
+                points: true,
+                timeSlots: {
+                  select: { points: true }
+                }
+              }
+            },
+            members: {
+              where: { isActive: true },
+              select: {
+                userId: true,
+                cumulativePoints: true,
+                rotationOrder: true,
+                user: {
+                  select: { fullName: true }
                 }
               }
             }
@@ -46,25 +55,37 @@ export class CronService {
             continue;
           }
 
+          // Skip groups with no members
+          if (group.members.length === 0) {
+            console.log(`⏭️ Group ${group.name || group.id} has no active members`);
+            continue;
+          }
+
           // Check if rotation is needed based on group creation
           const shouldRotate = await this.shouldRotateGroup(group);
           
           if (shouldRotate) {
             console.log(`🔄 Processing group ${group.name || group.id}...`);
             
-            // Separate tasks into assigned and unassigned
-            const assignedTasks = group.tasks.filter(task => {
-              // Task has a current assignee AND has active assignments
-              const hasAssignee = !!task.currentAssignee;
-              const hasActiveAssignments = task.assignments && task.assignments.length > 0;
-              return hasAssignee || hasActiveAssignments;
+            // Calculate total points for each task
+            const tasksWithPoints = group.tasks.map(task => {
+              const totalPoints = task.timeSlots?.reduce((sum, slot) => sum + (slot.points || 0), 0) || task.points || 0;
+              return { ...task, totalPoints };
             });
 
-            const unassignedTasks = group.tasks.filter(task => {
-              const hasAssignee = !!task.currentAssignee;
-              const hasActiveAssignments = task.assignments && task.assignments.length > 0;
-              return !hasAssignee && !hasActiveAssignments;
-            });
+            // Sort tasks by points (highest to lowest)
+            const sortedTasks = [...tasksWithPoints].sort((a, b) => b.totalPoints - a.totalPoints);
+            
+            // Sort members by cumulative points (lowest to highest)
+            const sortedMembers = [...group.members].sort((a, b) => a.cumulativePoints - b.cumulativePoints);
+
+            console.log(`   📊 Fair Rotation Analysis:`);
+            console.log(`      Members (lowest points first):`, sortedMembers.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
+            console.log(`      Tasks (highest points first):`, sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
+
+            // Separate tasks into assigned and unassigned
+            const assignedTasks = sortedTasks.filter(task => !!task.currentAssignee);
+            const unassignedTasks = sortedTasks.filter(task => !task.currentAssignee);
 
             console.log(`   📋 Assigned tasks: ${assignedTasks.length}`);
             console.log(`   📭 Unassigned tasks: ${unassignedTasks.length}`);
@@ -79,7 +100,7 @@ export class CronService {
 
             // Only rotate tasks that have assigned members
             if (assignedTasks.length > 0) {
-              console.log(`   🔄 Rotating ${assignedTasks.length} assigned tasks...`);
+              console.log(`   🔄 Rotating ${assignedTasks.length} assigned tasks with fair algorithm...`);
               
               try {
                 // Find an admin to perform rotation
@@ -97,20 +118,18 @@ export class CronService {
                   continue;
                 }
 
-                // Perform rotation ONLY for assigned tasks
-                const result = await TaskService.rotateAssignedTasks(
-                  group.id, 
-                  admin.userId,
-                  assignedTasks.map(t => t.id) // Only pass assigned task IDs
-                );
+                // Use rotateGroupTasks instead of rotateAssignedTasks
+                const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
                  
                 if (result.success) {
                   console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
+                  console.log(`   📊 Fairness Metrics:`, result.fairnessMetrics);
                   
-                  // Log which tasks rotated
-                  assignedTasks.forEach(task => {
-                    console.log(`      ✓ ${task.title} (assigned to member)`);
-                  });
+                  // Log the fairness proof
+                  console.log(`   📋 ROTATION PROOF:`);
+                  console.log(`      Lowest points member (${result.fairnessMetrics?.lowestPointsMember}) → got highest task (${result.fairnessMetrics?.gotHighestTask} - ${result.fairnessMetrics?.gotHighestPoints}pts)`);
+                  console.log(`      Highest points member (${result.fairnessMetrics?.highestPointsMember}) → got lowest task (${result.fairnessMetrics?.gotLowestTask} - ${result.fairnessMetrics?.gotLowestPoints}pts)`);
+                  console.log(`      Fairness Score: ${result.fairnessMetrics?.fairnessScore}%`);
                 } else {
                   console.log(`   ❌ Rotation failed: ${result.message}`);
                 }

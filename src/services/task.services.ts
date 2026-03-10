@@ -1317,7 +1317,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
-
+ 
 // In task.services.ts - Add this new method
 static async rotateAssignedTasks(groupId: string, userId: string, taskIds: string[]) {
   try {
@@ -1540,60 +1540,121 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
   }
 }
 
-  // ... reassignTask method - FIXED: Add type safety
-  static async reassignTask(taskId: string, userId: string, targetUserId: string) {
-    try {
-      const task = await prisma.task.findUnique({
-        where: { id: taskId },
-        include: { 
-          group: true,
-          timeSlots: { orderBy: { sortOrder: 'asc' } }
+ // In task.services.ts - UPDATED reassignTask method
+static async reassignTask(taskId: string, userId: string, targetUserId: string) {
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: { 
+        group: {
+          include: {
+            members: {
+              where: { isActive: true },
+              include: {
+                user: {
+                  select: { id: true, fullName: true, avatarUrl: true }
+                }
+              }
+            }
+          }
+        },
+        timeSlots: { orderBy: { sortOrder: 'asc' } }
+      }
+    });
+
+    if (!task) {
+      return { success: false, message: "Task not found" };
+    }
+
+    // Check if user is admin
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId: task.groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only group admins can reassign tasks" };
+    }
+
+    // ✅ Check if target user is an active member of the group
+    const targetMember = task.group.members.find(m => m.userId === targetUserId);
+    
+    if (!targetMember) {
+      return { success: false, message: "Target user is not an active member of this group" };
+    }
+
+    // ✅ Get all active members for rotation update
+    const allActiveMembers = task.group.members.map(m => ({
+      userId: m.userId,
+      fullName: m.user.fullName,
+      avatarUrl: m.user.avatarUrl,
+      rotationOrder: m.rotationOrder,
+      groupRole: m.groupRole
+    }));
+
+    // ✅ Update task's rotationMembers to include all active members
+    await prisma.task.update({
+      where: { id: taskId },
+      data: {
+        rotationMembers: allActiveMembers as any
+      }
+    });
+
+    const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
+
+    // Delete existing assignments for current week
+    await prisma.assignment.deleteMany({
+      where: { 
+        taskId, 
+        rotationWeek: task.group.currentRotationWeek 
+      }
+    });
+
+    // Create new assignments for target user
+    if (task.executionFrequency === 'DAILY') {
+      for (let i = 0; i < 7; i++) {
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + i);
+        
+        for (const timeSlot of task.timeSlots) {
+          const timeParts = timeSlot.startTime.split(':');
+          const hours = Number(timeParts[0]) || 18;
+          const minutes = Number(timeParts[1]) || 0;
+          
+          const slotDueDate = new Date(dueDate);
+          slotDueDate.setHours(hours, minutes, 0, 0);
+          
+          const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
+
+          await prisma.assignment.create({
+            data: {
+              taskId,
+              userId: targetUserId,
+              dueDate: slotDueDate,
+              points: assignmentPoints,
+              rotationWeek: task.group.currentRotationWeek,
+              weekStart,
+              weekEnd,
+              assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
+              completed: false,
+              timeSlotId: timeSlot.id
+            }
+          });
         }
-      });
-
-      if (!task) {
-        return { success: false, message: "Task not found" };
       }
-
-      // Check if user is admin
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId: task.groupId, groupRole: "ADMIN" }
-      });
-
-      if (!membership) {
-        return { success: false, message: "Only group admins can reassign tasks" };
-      }
-
-      // Check if target user is in rotation
-      const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
-      const targetUser = rotationMembers.find((m: any) => m.userId === targetUserId);
+    } else if (task.executionFrequency === 'WEEKLY') {
+      const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
+                           (task.dayOfWeek ? [task.dayOfWeek] : []);
       
-      if (!targetUser) {
-        return { success: false, message: "Target user is not in the rotation for this task" };
-      }
-
-      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
-
-      // Delete existing assignments for current week
-      await prisma.assignment.deleteMany({
-        where: { 
-          taskId, 
-          rotationWeek: task.group.currentRotationWeek 
-        }
-      });
-
-      // Create new assignments for target user
-      if (task.executionFrequency === 'DAILY') {
-        for (let i = 0; i < 7; i++) {
-          const dueDate = new Date();
-          dueDate.setDate(dueDate.getDate() + i);
+      if (selectedDays && selectedDays.length > 0) {
+        for (const day of selectedDays) {
+          const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
           
           for (const timeSlot of task.timeSlots) {
             const timeParts = timeSlot.startTime.split(':');
             const hours = Number(timeParts[0]) || 18;
             const minutes = Number(timeParts[1]) || 0;
             
-            const slotDueDate = new Date(dueDate);
+            const slotDueDate = new Date(baseDueDate);
             slotDueDate.setHours(hours, minutes, 0, 0);
             
             const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
@@ -1607,80 +1668,46 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
                 rotationWeek: task.group.currentRotationWeek,
                 weekStart,
                 weekEnd,
-                assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
+                assignmentDay: day,
                 completed: false,
                 timeSlotId: timeSlot.id
               }
             });
           }
         }
-      } else if (task.executionFrequency === 'WEEKLY') {
-        const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
-                             (task.dayOfWeek ? [task.dayOfWeek] : []);
-        
-        // FIXED: Add type guard
-        if (selectedDays && selectedDays.length > 0) {
-          for (const day of selectedDays) {
-            const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
-            
-            for (const timeSlot of task.timeSlots) {
-              const timeParts = timeSlot.startTime.split(':');
-              const hours = Number(timeParts[0]) || 18;
-              const minutes = Number(timeParts[1]) || 0;
-              
-              const slotDueDate = new Date(baseDueDate);
-              slotDueDate.setHours(hours, minutes, 0, 0);
-              
-              const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
-
-              await prisma.assignment.create({
-                data: {
-                  taskId,
-                  userId: targetUserId,
-                  dueDate: slotDueDate,
-                  points: assignmentPoints,
-                  rotationWeek: task.group.currentRotationWeek,
-                  weekStart,
-                  weekEnd,
-                  assignmentDay: day,
-                  completed: false,
-                  timeSlotId: timeSlot.id
-                }
-              });
-            }
-          }
-        }
       }
+    }
 
     // Update task with new assignee
-await prisma.task.update({
-  where: { id: taskId },
-  data: { 
-    currentAssignee: targetUserId,
-    lastAssignedAt: new Date()
-  }
-});
+    await prisma.task.update({
+      where: { id: taskId },
+      data: { 
+        currentAssignee: targetUserId,
+        lastAssignedAt: new Date()
+      }
+    });
 
-// 🔴 EMIT SOCKET EVENT FOR TASK ASSIGNED
-await SocketService.emitTaskAssigned(
-  taskId,
-  task.title,
-  targetUserId,
-  userId,
-  task.groupId,
-  new Date() // or use appropriate due date
-);
+    // 🔴 EMIT SOCKET EVENT FOR TASK ASSIGNED
+    await SocketService.emitTaskAssigned(
+      taskId,
+      task.title,
+      targetUserId,
+      userId,
+      task.groupId,
+      new Date()
+    );
 
-return {
-  success: true,
-  message: "Task reassigned successfully",
-  newAssignee: targetUser
-};
-    } catch (error: any) {
-      console.error("TaskService.reassignTask error:", error);
-      return { success: false, message: error.message || "Error reassigning task" };
-    }
+    return {
+      success: true,
+      message: "Task reassigned successfully",
+      newAssignee: targetMember.user
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.reassignTask error:", error);
+    return { success: false, message: error.message || "Error reassigning task" };
   }
+}
 
   // Get task points summary - FIXED: Handle undefined points
   static async getTaskPointsSummary(taskId: string, userId: string) {
