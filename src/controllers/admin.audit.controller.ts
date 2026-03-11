@@ -33,7 +33,7 @@ export class AdminAuditController {
         startDate: startDate ? new Date(startDate as string) : undefined,
         endDate: endDate ? new Date(endDate as string) : undefined,
         limit: Number(limit),
-        offset: Number(offset)
+        offset: Number(offset) 
       });
 
       return res.json(result);
