@@ -32,6 +32,7 @@ import AdminNotificationsRoutes from './routes/admin.notifications.routes';
 import UserReportRoutes from './routes/user.report.routes';
 import AdminReportRoutes from './routes/admin.report.routes';
 import AdminAuditRoutes from './routes/admin.audit.routes';
+import AdminDashboardRoutes from './routes/admin.dashboard.routes';
 
 import { initSwapRequestCron } from "./cron/swapRequest.cron";
 import { initReminderCron } from "./cron/reminderCron";
@@ -115,6 +116,7 @@ svr.use('/api/admin/notifications', AdminNotificationsRoutes);
 svr.use('/api/reports', UserReportRoutes);
 svr.use('/api/admin/reports', AdminReportRoutes);
 svr.use('/api/admin/audit', AdminAuditRoutes);
+svr.use('/api/admin/dashboard', AdminDashboardRoutes);
 
 // HTML Pages for password reset
 svr.get('/reset-password-form', (req, res) => {
