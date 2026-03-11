@@ -1,26 +1,29 @@
-// routes/admin.report.routes.ts
+// routes/admin.report.routes.ts - ADD AUDIT
 import { Router } from "express";
 import { AdminReportController } from "../controllers/admin.report.controller";
 import { AdminAuthMiddleware } from "../middlewares/admin.auth.middleware";
+import { AuditLog } from "../middlewares/admin.audit.middleware"; // 👈 ADD
 
 const router = Router();
 
-// All admin report routes require admin authentication
 router.use(AdminAuthMiddleware);
 
-// Get all reports (with filters)
+// View routes (NO AUDIT)
 router.get('/', AdminReportController.getAllReports);
-
-// Get report statistics
 router.get('/statistics', AdminReportController.getReportStatistics);
-
-// Get single report details
 router.get('/:reportId', AdminReportController.getReportDetails);
 
-// Update report status
-router.put('/:reportId/status', AdminReportController.updateReportStatus);
+// Modify routes (WITH AUDIT)
+router.put(
+  '/:reportId/status', 
+  AuditLog('UPDATE_REPORT_STATUS', (req) => req.params.reportId as string), // 👈 ADD AUDIT
+  AdminReportController.updateReportStatus
+);
 
-// Bulk update reports
-router.post('/bulk-update', AdminReportController.bulkUpdateReports);
+router.post(
+  '/bulk-update', 
+  AuditLog('BULK_UPDATE_REPORTS'), // 👈 ADD AUDIT
+  AdminReportController.bulkUpdateReports
+);
 
 export default router;

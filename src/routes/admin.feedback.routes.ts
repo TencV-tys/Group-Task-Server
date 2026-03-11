@@ -1,27 +1,29 @@
+// routes/admin.feedback.routes.ts - ADD AUDIT
 import { Router } from "express";
 import { AdminFeedbackController } from "../controllers/admin.feedback.controller";
 import { AdminAuthMiddleware } from "../middlewares/admin.auth.middleware";
+import { AuditLog } from "../middlewares/admin.audit.middleware"; // 👈 ADD
 
 const router = Router();
 
-// All routes require admin authentication
 router.use(AdminAuthMiddleware);
 
-// ========== FEEDBACK MANAGEMENT ROUTES ==========
-// Get all feedback with filters
+// View routes (NO AUDIT)
 router.get('/', AdminFeedbackController.getFeedback);
-
-// Get feedback stats
 router.get('/stats', AdminFeedbackController.getFeedbackStats);
-
-// Get single feedback details
 router.get('/:feedbackId', AdminFeedbackController.getFeedbackById);
 
-// Update feedback status
-router.patch('/:feedbackId/status', AdminFeedbackController.updateFeedbackStatus);
+// Modify routes (WITH AUDIT)
+router.patch(
+  '/:feedbackId/status', 
+  AuditLog('UPDATE_FEEDBACK_STATUS', (req) => req.params.feedbackId as string), // 👈 ADD AUDIT
+  AdminFeedbackController.updateFeedbackStatus
+);
 
-
-// Delete feedback
-router.delete('/:feedbackId', AdminFeedbackController.deleteFeedback);
+router.delete(
+  '/:feedbackId', 
+  AuditLog('DELETE_FEEDBACK', (req) => req.params.feedbackId as string), // 👈 ADD AUDIT
+  AdminFeedbackController.deleteFeedback
+);
 
 export default router;
