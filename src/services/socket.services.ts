@@ -42,7 +42,7 @@ export class SocketService {
       const payload: TaskUpdatedPayload = {
         task,
         updatedBy,
-        groupId
+        groupId 
       };
       
       emitToGroup(groupId, SERVER_EVENTS.TASK_UPDATED, payload);
