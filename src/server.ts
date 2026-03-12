@@ -13,9 +13,12 @@ import {
   swapRequestLimiter,
   groupActivityLimiter,
   adminLimiter,
-  auditLogLimiter,
-  reportsLimiter,
-  feedbackLimiter
+  userNotificationLimiter,
+  userFeedbackLimiter,
+  userReportsLimiter,
+  homeLimiter,
+  groupLimiter,
+  assignmentLimiter
 } from './middlewares/rateLimiter';
 
 // ========== ADD CACHE AND THROTTLE IMPORTS ==========
@@ -81,11 +84,27 @@ svr.use('/api/swap-requests', swapRequestLimiter);
 // Password reset (strictest)
 svr.use('/api/auth/users/reset-password', passwordResetLimiter);
 
-// Group activity
+// Group routes
+svr.use('/api/group', groupLimiter);
 svr.use('/api/group-activity', groupActivityLimiter);
 
-// Admin routes
-svr.use('/api/admin', adminLimiter);
+// User notification routes
+svr.use('/api/notifications', userNotificationLimiter);
+
+// User feedback routes
+svr.use('/api/feedback', userFeedbackLimiter);
+
+// User report routes
+svr.use('/api/reports', userReportsLimiter);
+
+// Assignment routes
+svr.use('/api/assignments', assignmentLimiter);
+
+// Home routes
+svr.use('/api/home', homeLimiter);
+
+// ALL ADMIN ROUTES - ONE LIMITER
+//svr.use('/api/admin', adminLimiter);
 
 // ========== CACHE MIDDLEWARE - FOR READ-ONLY ENDPOINTS ==========
 console.log('💾 Applying cache middleware...');
@@ -95,8 +114,6 @@ svr.use('/api/admin/groups', cacheMiddleware(30 * 1000)); // Cache for 30 second
 svr.use('/api/admin/feedback', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
 svr.use('/api/admin/reports', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
 svr.use('/api/admin/users', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
-svr.use('/api/group', cacheMiddleware(20 * 1000)); // Cache for 20 seconds
-svr.use('/api/home', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
 
 // ========== THROTTLE MIDDLEWARE - PREVENT ABUSE ==========
 console.log('⏱️ Applying throttle middleware...');
@@ -111,11 +128,11 @@ svr.use('/api/auth/users/reset-password', strictThrottle); // 3 requests per 10 
 svr.use('/api/tasks', lightThrottle); // 10 requests per 10 seconds
 svr.use('/api/swap-requests', lightThrottle); // 10 requests per 10 seconds
 svr.use('/api/feedback', lightThrottle); // 10 requests per 10 seconds
-
-// Specific admin route limiters (keep these for hourly limits)
-svr.use('/api/admin/audit', auditLogLimiter);
-svr.use('/api/admin/reports', reportsLimiter);
-svr.use('/api/admin/feedback', feedbackLimiter);
+svr.use('/api/notifications', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/reports', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/group', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/home', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/assignments', lightThrottle); // 10 requests per 10 seconds
 
 // ========== CRITICAL UPDATES START ==========
 
@@ -175,7 +192,7 @@ svr.use('/api/reports', UserReportRoutes);
 svr.use('/api/admin/reports', AdminReportRoutes);
 svr.use('/api/admin/audit', AdminAuditRoutes);
 svr.use('/api/admin/dashboard', AdminDashboardRoutes);
-svr.use('/api/admin/groups', AdminGroupsRoutes);
+svr.use('/api/admin/groups', AdminGroupsRoutes); 
 
 // HTML Pages for password reset
 svr.get('/reset-password-form', (req, res) => {
@@ -221,17 +238,20 @@ server.listen(PORT, async () => {
    ├─ ${path.join(__dirname, '../uploads/task-photos')}
    └─ ${path.join(__dirname, '../uploads/group-avatars')}
    
-🛡️ RATE LIMITING ENABLED:
-   ├─ Auth routes:      10 requests/hour    (login/register)
-   ├─ Upload routes:    20 requests/hour    (file uploads)
-   ├─ Task routes:      50 requests/hour    (task operations)
-   ├─ Swap requests:    30 requests/hour    (swap operations)
-   ├─ Password reset:   3 requests/hour     (very strict!)
-   ├─ Group activity:   100 requests/hour   (activity feeds)
-   ├─ Admin routes:     200 requests/hour   (admin operations)
-   ├─ Audit logs:       100 requests/hour   (audit log views)
-   ├─ Reports:          100 requests/hour   (report views)
-   └─ Feedback:         100 requests/hour   (feedback views)
+🛡️ RATE LIMITING ENABLED (3-HOUR WINDOW):
+   ├─ Auth routes:          50 requests/3 hours    (login/register)
+   ├─ Upload routes:        50 requests/3 hours    (file uploads)
+   ├─ Task routes:          200 requests/3 hours   (task operations)
+   ├─ Swap requests:        100 requests/3 hours   (swap operations)
+   ├─ Password reset:       5 requests/3 hours     (very strict!)
+   ├─ Group routes:         300 requests/3 hours   (group operations)
+   ├─ Group activity:       300 requests/3 hours   (activity feeds)
+   ├─ Notifications:        200 requests/3 hours   (user notifications)
+   ├─ User feedback:        100 requests/3 hours   (user feedback)
+   ├─ User reports:         50 requests/3 hours    (user reports)
+   ├─ Assignments:          200 requests/3 hours   (assignment operations)
+   ├─ Home page:            300 requests/3 hours   (home data)
+   ├─ Admin routes:         500 requests/3 hours   (ALL admin operations)
 
 💾 CACHE ENABLED:
    ├─ Statistics:       30 seconds 
