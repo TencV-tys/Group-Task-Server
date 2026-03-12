@@ -11,9 +11,50 @@ export interface AuditLogFilters {
   offset?: number;
 }
 
+// Define which actions are important enough to log
+const IMPORTANT_ACTIONS = [
+  'ADMIN_DELETE_GROUP',
+  'ADMIN_HARD_DELETE_GROUP',
+  'ADMIN_BULK_DELETE_GROUPS',
+  'ADMIN_REMOVE_GROUP_MEMBER',
+  'ADMIN_DELETE_USER',
+  'ADMIN_SUSPEND_USER',
+  'ADMIN_BAN_USER',
+  'ADMIN_UPDATE_USER_ROLE',
+  'ADMIN_DELETE_FEEDBACK',
+  'ADMIN_UPDATE_REPORT_STATUS',
+  'ADMIN_DISMISS_REPORT',
+  'ADMIN_RESOLVE_REPORT',
+  'ADMIN_SEND_NOTIFICATION',
+  'ADMIN_CREATE_NOTIFICATION',
+  'ADMIN_DELETE_NOTIFICATION',
+  'ADMIN_LOGIN',
+  'ADMIN_LOGOUT',
+  'ADMIN_PASSWORD_CHANGE',
+  'ADMIN_PERMISSIONS_UPDATE'
+];
+
+// Skip logging these frequent actions
+const SKIP_ACTIONS = [
+  'ADMIN_VIEW_AUDIT_LOGS',
+  'ADMIN_VIEW_AUDIT_STATISTICS',
+  'ADMIN_VIEW_AUDIT_LOG_DETAIL',
+  'ADMIN_VIEWED_GROUPS',
+  'ADMIN_VIEWED_GROUP_STATISTICS',
+  'ADMIN_VIEWED_GROUP_DETAILS',
+  'ADMIN_VIEWED_USERS',
+  'ADMIN_VIEWED_USER_DETAILS',
+  'ADMIN_VIEWED_FEEDBACK',
+  'ADMIN_VIEWED_FEEDBACK_STATS',
+  'ADMIN_VIEWED_REPORTS',
+  'ADMIN_VIEWED_REPORT_STATS',
+  'ADMIN_VIEWED_DASHBOARD',
+  'ADMIN_VIEWED_NOTIFICATIONS'
+];
+
 export class AdminAuditService {
   
-  // ========== CREATE AUDIT LOG ==========
+  // ========== CREATE AUDIT LOG - ONLY FOR IMPORTANT ACTIONS ==========
   static async createLog(
     adminId: string,
     action: string,
@@ -25,6 +66,12 @@ export class AdminAuditService {
     }
   ) {
     try {
+      // Skip logging for view actions (read-only)
+      if (SKIP_ACTIONS.includes(action)) {
+        return null; // Don't log these
+      }
+
+      // For important actions, log with full details
       const log = await prisma.adminAuditLog.create({
         data: {
           adminId,
@@ -36,330 +83,181 @@ export class AdminAuditService {
         }
       });
 
-      console.log(`📝 Audit log created: ${action} by admin ${adminId}`);
+      console.log(`📝 Important audit log: ${action}`);
       return log;
 
     } catch (error) {
       console.error('Error creating audit log:', error);
-      // Don't throw - audit logging should never break the main flow
       return null;
     }
   }
 
   // ========== GET AUDIT LOGS ==========
- static async getLogs(filters: AuditLogFilters = {}) {
-  try {
-    const where: any = {};
+  static async getLogs(filters: AuditLogFilters = {}) {
+    try {
+      const where: any = {};
 
-    if (filters.adminId) where.adminId = filters.adminId;
-    if (filters.targetUserId) where.targetUserId = filters.targetUserId;
-    if (filters.action) where.action = filters.action;
-    
-    // FIX: Convert string dates to Date objects
-    if (filters.startDate || filters.endDate) {
-      where.createdAt = {};
+      if (filters.adminId) where.adminId = filters.adminId;
+      if (filters.targetUserId) where.targetUserId = filters.targetUserId;
+      if (filters.action) where.action = filters.action;
       
-      if (filters.startDate) {
-        // Create date range for the entire day
-        const start = new Date(filters.startDate);
-        start.setHours(0, 0, 0, 0);
-        where.createdAt.gte = start;
+      if (filters.startDate || filters.endDate) {
+        where.createdAt = {};
+        if (filters.startDate) where.createdAt.gte = filters.startDate;
+        if (filters.endDate) where.createdAt.lte = filters.endDate;
       }
-      
-      if (filters.endDate) {
-        // Create date range for the entire day
-        const end = new Date(filters.endDate);
-        end.setHours(23, 59, 59, 999);
-        where.createdAt.lte = end;
-      }
-    }
 
-    console.log('Prisma where clause:', JSON.stringify(where, null, 2)); // Debug
-
-    const [logs, total] = await Promise.all([
-      prisma.adminAuditLog.findMany({
-        where,
-        include: {
-          admin: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true
-            }
+      const [logs, total] = await Promise.all([
+        prisma.adminAuditLog.findMany({
+          where,
+          include: {
+            admin: { select: { id: true, fullName: true, email: true } },
+            targetUser: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
           },
-          targetUser: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true
-            }
-          }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: filters.limit || 50,
-        skip: filters.offset || 0
-      }),
-      prisma.adminAuditLog.count({ where })
-    ]);
+          orderBy: { createdAt: 'desc' },
+          take: filters.limit || 50,
+          skip: filters.offset || 0
+        }),
+        prisma.adminAuditLog.count({ where })
+      ]);
 
-    return {
-      success: true,
-      logs,
-      pagination: {
-        total,
-        limit: filters.limit || 50,
-        offset: filters.offset || 0,
-        hasMore: total > (filters.offset || 0) + (filters.limit || 50)
-      }
-    };
+      return {
+        success: true,
+        logs,
+        pagination: {
+          total,
+          limit: filters.limit || 50,
+          offset: filters.offset || 0,
+          hasMore: total > (filters.offset || 0) + (filters.limit || 50)
+        }
+      };
 
-  } catch (error: any) {
-    console.error('Error fetching audit logs:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to fetch audit logs'
-    };
+    } catch (error: any) {
+      console.error('Error fetching audit logs:', error);
+      return { success: false, message: error.message || 'Failed to fetch audit logs' };
+    }
   }
- }
+
   // ========== GET AUDIT LOG BY ID ==========
   static async getLogById(logId: string) {
     try {
       const log = await prisma.adminAuditLog.findUnique({
         where: { id: logId },
         include: {
-          admin: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true
-            }
-          },
-          targetUser: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true
-            }
-          }
+          admin: { select: { id: true, fullName: true, email: true } },
+          targetUser: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
         }
       });
 
-      if (!log) {
-        return {
-          success: false,
-          message: 'Audit log not found'
-        };
-      }
-
-      return {
-        success: true,
-        log
-      };
+      if (!log) return { success: false, message: 'Audit log not found' };
+      return { success: true, log };
 
     } catch (error: any) {
       console.error('Error fetching audit log:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to fetch audit log'
-      };
+      return { success: false, message: error.message || 'Failed to fetch audit log' };
     }
   }
 
-// services/admin.audit.services.ts
-
-// ========== GET AUDIT LOG STATISTICS ==========
+  // ========== GET AUDIT LOG STATISTICS ==========
 static async getStatistics(filters?: { startDate?: Date; endDate?: Date }) {
   try {
     const where: any = {};
-    
-    // FIX: Handle date filters properly
     if (filters?.startDate || filters?.endDate) {
       where.createdAt = {};
-      
-      if (filters.startDate) {
-        const start = new Date(filters.startDate);
-        start.setHours(0, 0, 0, 0);
-        where.createdAt.gte = start;
-      }
-      
-      if (filters.endDate) {
-        const end = new Date(filters.endDate);
-        end.setHours(23, 59, 59, 999);
-        where.createdAt.lte = end;
-      }
+      if (filters.startDate) where.createdAt.gte = filters.startDate;
+      if (filters.endDate) where.createdAt.lte = filters.endDate;
     }
 
-    console.log('Statistics where clause:', JSON.stringify(where, null, 2)); // Debug
-
-    const [
-      totalLogs,
-      logsByAction,
-      logsByAdmin,
-      recentActivity
-    ] = await Promise.all([
-      // Total logs count
+    const [totalLogs, logsByAction, logsByAdmin, recentActivity] = await Promise.all([
       prisma.adminAuditLog.count({ where }),
-      
-      // Group by action type
-      prisma.adminAuditLog.groupBy({
-        by: ['action'],
-        _count: true,
+      prisma.adminAuditLog.groupBy({ 
+        by: ['action'], 
+        _count: true, 
         where,
-        orderBy: {
-          _count: {
-            action: 'desc'
-          }
-        }
+        orderBy: { _count: { action: 'desc' } }
       }),
-      
-      // Top admins by activity
-      prisma.adminAuditLog.groupBy({
-        by: ['adminId'],
-        _count: true,
+      prisma.adminAuditLog.groupBy({ 
+        by: ['adminId'], 
+        _count: true, 
         where,
-        orderBy: {
-          _count: {
-            adminId: 'desc'
-          }
-        },
+        orderBy: { _count: { adminId: 'desc' } },
         take: 5
       }),
-      
-      // Recent activity
       prisma.adminAuditLog.findMany({
         where,
-        include: {
-          admin: {
-            select: { 
-              id: true,
-              fullName: true,
-              email: true 
-            }
-          },
-          targetUser: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true
-            }
-          }
-        },
+        include: { admin: { select: { fullName: true } } },
         orderBy: { createdAt: 'desc' },
         take: 10
       })
     ]);
 
-    // Get admin names for top admins
+    // Fix: Handle the groupBy results correctly
+    // logsByAction is an array of objects with action and _count (number)
+    const formattedByAction = logsByAction.map((item: any) => ({
+      action: item.action,
+      count: Number(item._count)
+    }));
+
+    // Fix: Handle top admins
     const topAdmins = await Promise.all(
-      logsByAdmin.map(async (item) => {
+      logsByAdmin.map(async (item: any) => {
         try {
           const admin = await prisma.systemAdmin.findUnique({
             where: { id: item.adminId },
-            select: { fullName: true, email: true }
+            select: { fullName: true }
           });
           return {
             adminId: item.adminId,
             adminName: admin?.fullName || 'Unknown Admin',
-            adminEmail: admin?.email || 'No email',
-            count: item._count
+            count: Number(item._count)
           };
         } catch (error) {
-          console.error(`Error fetching admin ${item.adminId}:`, error);
           return {
             adminId: item.adminId,
             adminName: 'Unknown Admin',
-            adminEmail: 'No email',
-            count: item._count
+            count: Number(item._count)
           };
         }
       })
     );
 
-    // Format recent activity
-    const formattedRecentActivity = recentActivity.map(log => ({
-      id: log.id,
-      action: log.action,
-      adminId: log.adminId,
-      adminName: log.admin?.fullName || 'Unknown Admin',
-      adminEmail: log.admin?.email || 'No email',
-      targetUserId: log.targetUserId,
-      targetUserName: log.targetUser?.fullName,
-      targetUserEmail: log.targetUser?.email,
-      createdAt: log.createdAt,
-      ipAddress: log.ipAddress,
-      details: log.details
-    }));
-
-    // Get daily activity for the last 30 days (optional)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
-
-    const dailyActivity = await prisma.$queryRaw`
-      SELECT 
-        DATE(createdAt) as date,
-        COUNT(*) as count
-      FROM admin_audit_logs
-      WHERE createdAt >= ${thirtyDaysAgo}
-      ${filters?.endDate ? `AND createdAt <= ${new Date(filters.endDate)}` : ''}
-      GROUP BY DATE(createdAt)
-      ORDER BY date DESC
-      LIMIT 30
-    `;
-
     return {
       success: true,
       statistics: {
-        total: totalLogs,
-        byAction: logsByAction.map(item => ({
-          action: item.action,
-          count: item._count
-        })),
+        total: Number(totalLogs),
+        byAction: formattedByAction,
         topAdmins,
-        recentActivity: formattedRecentActivity,
-        dailyActivity: dailyActivity || []
+        recentActivity: recentActivity.map(log => ({
+          id: log.id,
+          action: log.action,
+          adminName: log.admin?.fullName || 'Unknown',
+          createdAt: log.createdAt
+        }))
       }
     };
 
   } catch (error: any) {
     console.error('Error fetching audit statistics:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to fetch statistics'
-    };
+    return { success: false, message: error.message || 'Failed to fetch statistics' };
   }
 }
-  
 
-  // ========== CLEAN OLD LOGS (for cron job) ==========
+  // ========== CLEAN OLD LOGS ==========
   static async cleanOldLogs(daysToKeep: number = 90) {
     try {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
 
       const result = await prisma.adminAuditLog.deleteMany({
-        where: {
-          createdAt: {
-            lt: cutoffDate
-          }
-        }
+        where: { createdAt: { lt: cutoffDate } }
       });
 
-      console.log(`🧹 Cleaned ${result.count} audit logs older than ${daysToKeep} days`);
-      
-      return {
-        success: true,
-        deletedCount: result.count
-      };
+      console.log(`🧹 Cleaned ${result.count} old audit logs`);
+      return { success: true, deletedCount: result.count };
 
     } catch (error: any) {
       console.error('Error cleaning old logs:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to clean old logs'
-      };
+      return { success: false, message: error.message || 'Failed to clean old logs' };
     }
   }
 }

@@ -6,14 +6,27 @@ import path from 'path';
 import fs from 'fs';
 import http from 'http';
 import { 
-  generalLimiter, 
   authLimiter, 
   uploadLimiter, 
   taskLimiter,
   passwordResetLimiter,
   swapRequestLimiter,
-  groupActivityLimiter 
+  groupActivityLimiter,
+  adminLimiter,
+  auditLogLimiter,
+  reportsLimiter,
+  feedbackLimiter
 } from './middlewares/rateLimiter';
+
+// ========== ADD CACHE AND THROTTLE IMPORTS ==========
+import { cacheMiddleware } from './middlewares/cache.middleware';
+import { 
+  throttleMiddleware, 
+  strictThrottle, 
+  mediumThrottle, 
+  lightThrottle,
+  heavyThrottle
+} from './middlewares/throttle.middleware';
 
 import UserAuthRoutes from './routes/user.auth.routes';
 import AdminAuthRoutes from './routes/admin.auth.routes'; 
@@ -52,13 +65,57 @@ const svr = express();
 
 // ========== RATE LIMITING - APPLY BEFORE ROUTES ==========
 console.log('🛡️ Applying rate limiters...');
-//svr.use('/api', generalLimiter);           // 🛡️ All /api routes
-//svr.use('/api/auth', authLimiter);         // 🛡️ Auth routes (stricter)
-svr.use('/api/uploads', uploadLimiter);    // 🛡️ Upload routes
-svr.use('/api/tasks', taskLimiter);        // 🛡️ Task routes
-svr.use('/api/swap-requests', swapRequestLimiter); // 🛡️ Swap routes
-svr.use('/api/auth/users/reset-password', passwordResetLimiter); // 🛡️ Password reset (strictest)
+
+// Auth routes (stricter)
+svr.use('/api/auth', authLimiter);
+
+// Upload routes
+svr.use('/api/uploads', uploadLimiter);
+
+// Task routes
+svr.use('/api/tasks', taskLimiter);
+
+// Swap routes
+svr.use('/api/swap-requests', swapRequestLimiter);
+
+// Password reset (strictest)
+svr.use('/api/auth/users/reset-password', passwordResetLimiter);
+
+// Group activity
 svr.use('/api/group-activity', groupActivityLimiter);
+
+// Admin routes
+svr.use('/api/admin', adminLimiter);
+
+// ========== CACHE MIDDLEWARE - FOR READ-ONLY ENDPOINTS ==========
+console.log('💾 Applying cache middleware...');
+svr.use('/api/admin/audit/statistics', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+svr.use('/api/admin/dashboard', cacheMiddleware(60 * 1000)); // Cache for 1 minute
+svr.use('/api/admin/groups', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+svr.use('/api/admin/feedback', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+svr.use('/api/admin/reports', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+svr.use('/api/admin/users', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+svr.use('/api/group', cacheMiddleware(20 * 1000)); // Cache for 20 seconds
+svr.use('/api/home', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
+
+// ========== THROTTLE MIDDLEWARE - PREVENT ABUSE ==========
+console.log('⏱️ Applying throttle middleware...');
+svr.use('/api/admin/audit', mediumThrottle); // 5 requests per 10 seconds
+svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 2)); // 2 exports per minute
+svr.use('/api/admin/users', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/admin/groups', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/admin/feedback', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/admin/reports', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/auth', strictThrottle); // 3 requests per 10 seconds for auth
+svr.use('/api/auth/users/reset-password', strictThrottle); // 3 requests per 10 seconds
+svr.use('/api/tasks', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/swap-requests', lightThrottle); // 10 requests per 10 seconds
+svr.use('/api/feedback', lightThrottle); // 10 requests per 10 seconds
+
+// Specific admin route limiters (keep these for hourly limits)
+svr.use('/api/admin/audit', auditLogLimiter);
+svr.use('/api/admin/reports', reportsLimiter);
+svr.use('/api/admin/feedback', feedbackLimiter);
 
 // ========== CRITICAL UPDATES START ==========
 
@@ -93,7 +150,7 @@ svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // CORS and Cookie Parser
 svr.use(cors({
-    origin: true,
+    origin: '*',
     credentials: true
 }));
 svr.use(cookieParser());
@@ -165,12 +222,30 @@ server.listen(PORT, async () => {
    └─ ${path.join(__dirname, '../uploads/group-avatars')}
    
 🛡️ RATE LIMITING ENABLED:
-   ├─ General API:      100 requests/15min  (all /api routes)
    ├─ Auth routes:      10 requests/hour    (login/register)
    ├─ Upload routes:    20 requests/hour    (file uploads)
    ├─ Task routes:      50 requests/hour    (task operations)
    ├─ Swap requests:    30 requests/hour    (swap operations)
-   └─ Password reset:   3 requests/hour     (very strict!)
+   ├─ Password reset:   3 requests/hour     (very strict!)
+   ├─ Group activity:   100 requests/hour   (activity feeds)
+   ├─ Admin routes:     200 requests/hour   (admin operations)
+   ├─ Audit logs:       100 requests/hour   (audit log views)
+   ├─ Reports:          100 requests/hour   (report views)
+   └─ Feedback:         100 requests/hour   (feedback views)
+
+💾 CACHE ENABLED:
+   ├─ Statistics:       30 seconds
+   ├─ Dashboard:        60 seconds
+   ├─ Groups list:      30 seconds
+   ├─ Users list:       30 seconds
+   ├─ Feedback list:    30 seconds
+   └─ Reports list:     30 seconds
+
+⏱️ THROTTLE ENABLED:
+   ├─ Auth:             3 requests/10s
+   ├─ Admin pages:      5 requests/10s
+   ├─ General API:      10 requests/10s
+   └─ Exports:          2 requests/minute
     `);
 
     // ===== DEVELOPMENT AUTO-ROTATION CHECK =====

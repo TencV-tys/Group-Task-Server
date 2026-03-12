@@ -14,7 +14,7 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node prisma/seed.ts --admin-only",
-       "seed:mock:js": "node prisma/seedMockUser.js"
+    "seed:mock:js": "node prisma/seedMockUser.js"
   },
   "keywords": [],
   "author": "",
