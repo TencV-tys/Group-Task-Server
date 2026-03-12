@@ -1,146 +1,158 @@
+// services/group.activity.services.ts - COMPLETE FIXED VERSION
 import prisma from "../prisma";
 
 export class GroupActivityService {
   
   // ========== GET GROUP ACTIVITY SUMMARY (For Admins) ==========
   static async getGroupActivitySummary(groupId: string, userId: string) {
-  try {
-    // Check if user is admin
-    const membership = await prisma.groupMember.findFirst({
-      where: { userId, groupId, groupRole: "ADMIN" }
-    });
+    try {
+      // Check if user is admin
+      const membership = await prisma.groupMember.findFirst({
+        where: { userId, groupId, groupRole: "ADMIN" }
+      });
 
-    if (!membership) {
-      return { success: false, message: "Only admins can view group activity summary" };
-    }
-
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      select: { currentRotationWeek: true }
-    });
-
-    // Get overall statistics
-    const totalMembers = await prisma.groupMember.count({
-      where: { groupId, isActive: true }
-    });
-
-    const totalTasks = await prisma.task.count({
-      where: { groupId }
-    });
-
-    // Current week stats
-    const currentWeekAssignments = await prisma.assignment.findMany({
-      where: {
-        task: { groupId },
-        rotationWeek: group?.currentRotationWeek || 1
-      },
-      include: {
-        user: { select: { id: true, fullName: true, avatarUrl: true } },
-        task: { select: { title: true, points: true } },
-        timeSlot: true
+      if (!membership) {
+        return { success: false, message: "Only admins can view group activity summary" };
       }
-    });
 
-    const totalAssignments = currentWeekAssignments.length;
-    const completedAssignments = currentWeekAssignments.filter(a => a.completed).length;
-    const verifiedAssignments = currentWeekAssignments.filter(a => a.verified === true).length;
-    const pendingVerification = currentWeekAssignments.filter(a => a.completed && a.verified === null).length;
-    const rejectedAssignments = currentWeekAssignments.filter(a => a.verified === false).length;
-    const neglectedAssignments = currentWeekAssignments.filter(a => 
-      !a.completed && new Date(a.dueDate) < new Date()
-    ).length;
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { currentRotationWeek: true }
+      });
 
-    const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
-    const earnedPoints = currentWeekAssignments
-      .filter(a => a.completed)
-      .reduce((sum, a) => sum + a.points, 0);
+      // Get overall statistics
+      const totalMembers = await prisma.groupMember.count({
+        where: { groupId, isActive: true }
+      });
 
-    // ===== REPLACE THIS SECTION =====
-    // Get member contributions this week - using Prisma aggregations
-    const activeMembers = await prisma.groupMember.findMany({
-      where: {
-        groupId,
-        isActive: true
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            avatarUrl: true,
-            assignments: {
-              where: {
-                rotationWeek: group?.currentRotationWeek || 1,
-                task: { groupId }
-              },
-              select: {
-                id: true,
-                completed: true,
-                verified: true,
-                points: true
+      const totalTasks = await prisma.task.count({
+        where: { groupId }
+      });
+
+      // Current week stats
+      const currentWeekAssignments = await prisma.assignment.findMany({
+        where: {
+          task: { groupId },
+          rotationWeek: group?.currentRotationWeek || 1
+        },
+        include: {
+          user: { select: { id: true, fullName: true, avatarUrl: true } },
+          task: { select: { title: true, points: true } },
+          timeSlot: true
+        }
+      });
+
+      // Filter out assignments with null tasks
+      const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
+
+      const totalAssignments = validAssignments.length;
+      const completedAssignments = validAssignments.filter(a => a.completed).length;
+      const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
+      const pendingVerification = validAssignments.filter(a => a.completed && a.verified === null).length;
+      const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
+      const neglectedAssignments = validAssignments.filter(a => 
+        !a.completed && new Date(a.dueDate) < new Date()
+      ).length;
+
+      const totalPoints = validAssignments.reduce((sum, a) => sum + a.points, 0);
+      const earnedPoints = validAssignments
+        .filter(a => a.completed)
+        .reduce((sum, a) => sum + a.points, 0);
+
+      // Get member contributions this week
+      const activeMembers = await prisma.groupMember.findMany({
+        where: {
+          groupId,
+          isActive: true
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true,
+              assignments: {
+                where: {
+                  rotationWeek: group?.currentRotationWeek || 1,
+                  task: { groupId }
+                },
+                select: {
+                  id: true,
+                  completed: true,
+                  verified: true,
+                  points: true,
+                  task: {
+                    select: {
+                      title: true
+                    }
+                  }
+                }
               }
             }
           }
         }
-      }
-    });
+      });
 
-    // Transform the data
-    const memberContributions = activeMembers.map(item => {
-      const assignments = item.user.assignments;
-      const totalAssignments = assignments.length;
-      const completedAssignments = assignments.filter(a => a.completed).length;
-      const verifiedAssignments = assignments.filter(a => a.verified === true).length;
-      const earnedPoints = assignments
-        .filter(a => a.completed)
-        .reduce((sum, a) => sum + a.points, 0);
+      // Transform the data with null checks
+      const memberContributions = activeMembers
+        .map(item => {
+          // Filter assignments that still have tasks
+          const validUserAssignments = item.user.assignments.filter(a => a.task !== null);
+          
+          const totalAssignments = validUserAssignments.length;
+          const completedAssignments = validUserAssignments.filter(a => a.completed).length;
+          const verifiedAssignments = validUserAssignments.filter(a => a.verified === true).length;
+          const earnedPoints = validUserAssignments
+            .filter(a => a.completed)
+            .reduce((sum, a) => sum + a.points, 0);
+
+          return {
+            id: item.user.id,
+            fullName: item.user.fullName,
+            avatarUrl: item.user.avatarUrl,
+            totalAssignments,
+            completedAssignments,
+            verifiedAssignments,
+            earnedPoints
+          };
+        })
+        // Filter out members with no valid assignments
+        .filter(m => m.totalAssignments > 0);
+
+      // Sort by earnedPoints descending
+      memberContributions.sort((a, b) => b.earnedPoints - a.earnedPoints);
 
       return {
-        id: item.user.id,
-        fullName: item.user.fullName,
-        avatarUrl: item.user.avatarUrl,
-        totalAssignments,
-        completedAssignments,
-        verifiedAssignments,
-        earnedPoints
-      };
-    });
-
-    // Sort by earnedPoints descending
-    memberContributions.sort((a, b) => b.earnedPoints - a.earnedPoints);
-    // ===== END OF REPLACEMENT =====
-
-    return {
-      success: true,
-      message: "Group activity summary retrieved",
-      data: {
-        summary: {
-          totalMembers,
-          totalTasks,
-          currentWeek: group?.currentRotationWeek || 1,
-          assignments: {
-            total: totalAssignments,
-            completed: completedAssignments,
-            pendingVerification,
-            verified: verifiedAssignments,
-            rejected: rejectedAssignments,
-            neglected: neglectedAssignments
+        success: true,
+        message: "Group activity summary retrieved",
+        data: {
+          summary: {
+            totalMembers,
+            totalTasks,
+            currentWeek: group?.currentRotationWeek || 1,
+            assignments: {
+              total: totalAssignments,
+              completed: completedAssignments,
+              pendingVerification,
+              verified: verifiedAssignments,
+              rejected: rejectedAssignments,
+              neglected: neglectedAssignments
+            },
+            points: {
+              total: totalPoints,
+              earned: earnedPoints,
+              completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
+            }
           },
-          points: {
-            total: totalPoints,
-            earned: earnedPoints,
-            completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
-          }
-        },
-        memberContributions
-      }
-    };
+          memberContributions
+        }
+      };
 
-  } catch (error: any) {
-    console.error("GroupActivityService.getGroupActivitySummary error:", error);
-    return { success: false, message: error.message || "Error retrieving activity summary" };
+    } catch (error: any) {
+      console.error("GroupActivityService.getGroupActivitySummary error:", error);
+      return { success: false, message: error.message || "Error retrieving activity summary" };
+    }
   }
-}
 
   // ========== GET COMPLETION HISTORY (All members) ==========
   static async getCompletionHistory(
@@ -204,10 +216,13 @@ export class GroupActivityService {
         prisma.assignment.count({ where })
       ]);
 
-      const formattedHistory = history.map(item => ({
+      // Filter out items with null tasks
+      const validHistory = history.filter(item => item.task !== null);
+
+      const formattedHistory = validHistory.map(item => ({
         id: item.id,
         taskId: item.taskId,
-        taskTitle: item.task.title,
+        taskTitle: item.task!.title,
         user: item.user,
         points: item.points,
         completedAt: item.completedAt,
@@ -224,7 +239,7 @@ export class GroupActivityService {
         message: "Completion history retrieved",
         data: {
           history: formattedHistory,
-          total,
+          total: validHistory.length,
           currentWeek: filters?.week || null,
           memberId: filters?.memberId || null
         }
@@ -284,13 +299,18 @@ export class GroupActivityService {
         orderBy: [{ rotationWeek: 'desc' }, { dueDate: 'asc' }]
       });
 
+      // Filter out assignments with null tasks
+      const validAssignments = assignments.filter(a => a.task !== null);
+
       // Group by week
       const weeks: Record<number, any> = {};
       
-      assignments.forEach(assignment => {
-        if (!weeks[assignment.rotationWeek]) {
-          weeks[assignment.rotationWeek] = {
-            week: assignment.rotationWeek,
+      validAssignments.forEach(assignment => {
+        const weekNum = assignment.rotationWeek;
+        
+        if (!weeks[weekNum]) {
+          weeks[weekNum] = {
+            week: weekNum,
             totalAssignments: 0,
             completedAssignments: 0,
             totalPoints: 0,
@@ -299,17 +319,17 @@ export class GroupActivityService {
           };
         }
 
-        weeks[assignment.rotationWeek].totalAssignments++;
-        weeks[assignment.rotationWeek].totalPoints += assignment.points;
+        weeks[weekNum].totalAssignments++;
+        weeks[weekNum].totalPoints += assignment.points;
 
         if (assignment.completed) {
-          weeks[assignment.rotationWeek].completedAssignments++;
-          weeks[assignment.rotationWeek].earnedPoints += assignment.points;
+          weeks[weekNum].completedAssignments++;
+          weeks[weekNum].earnedPoints += assignment.points;
         }
 
-        weeks[assignment.rotationWeek].assignments.push({
+        weeks[weekNum].assignments.push({
           id: assignment.id,
-          taskTitle: assignment.task.title,
+          taskTitle: assignment.task!.title,
           dueDate: assignment.dueDate,
           completed: assignment.completed,
           completedAt: assignment.completedAt,
@@ -324,10 +344,10 @@ export class GroupActivityService {
       const weeksArray = Object.values(weeks).sort((a: any, b: any) => b.week - a.week);
 
       // Calculate totals
-      const totalAssignments = assignments.length;
-      const completedAssignments = assignments.filter(a => a.completed).length;
-      const totalPoints = assignments.reduce((sum, a) => sum + a.points, 0);
-      const earnedPoints = assignments
+      const totalAssignments = validAssignments.length;
+      const completedAssignments = validAssignments.filter(a => a.completed).length;
+      const totalPoints = validAssignments.reduce((sum, a) => sum + a.points, 0);
+      const earnedPoints = validAssignments
         .filter(a => a.completed)
         .reduce((sum, a) => sum + a.points, 0);
 
@@ -395,19 +415,25 @@ export class GroupActivityService {
         take: 100
       });
 
+      // Filter out items with null tasks
+      const validHistory = history.filter(item => item.task !== null);
+
       // Group by task
       const taskGroups: Record<string, any> = {};
 
-      history.forEach(item => {
-        if (!taskGroups[item.taskId]) {
-          taskGroups[item.taskId] = {
+      validHistory.forEach(item => {
+        const taskId = item.taskId;
+        if (!taskId) return;
+        
+        if (!taskGroups[taskId]) {
+          taskGroups[taskId] = {
             taskId: item.taskId,
-            taskTitle: item.task.title,
+            taskTitle: item.task!.title,
             completions: []
           };
         }
 
-        taskGroups[item.taskId].completions.push({
+        taskGroups[taskId].completions.push({
           userId: item.userId,
           userName: item.user.fullName,
           userAvatar: item.user.avatarUrl,
@@ -423,7 +449,7 @@ export class GroupActivityService {
         message: "Task completion history retrieved",
         data: {
           tasks: Object.values(taskGroups),
-          totalCompletions: history.length
+          totalCompletions: validHistory.length
         }
       };
 

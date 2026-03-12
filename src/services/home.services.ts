@@ -1,8 +1,7 @@
-// services/home.services.ts - COMPLETE UPDATED VERSION
+// services/home.services.ts - COMPLETE UPDATED VERSION WITH NULL SAFETY
 import prisma from "../prisma";
 
 export class HomeServices {
- // services/home.services.ts - FIXED with proper day-by-day counting
 
   static async getHomeData(userId: string) {
     try {
@@ -72,12 +71,12 @@ export class HomeServices {
       console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
       console.log(`📅 Today: ${today.toISOString()}`);
 
-      // ✅ FIXED: Count tasks due this week (excluding expired)
+      // Count tasks due this week (excluding expired)
       const tasksDueThisWeek = await prisma.assignment.count({
         where: {
           userId: userId,
           completed: false,
-          expired: false, // ← ADD THIS
+          expired: false,
           dueDate: {
             gte: today,
             lte: currentWeekEnd
@@ -87,24 +86,24 @@ export class HomeServices {
 
       console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
 
-      // ✅ FIXED: Count overdue tasks (excluding expired)
+      // Count overdue tasks (excluding expired)
       const overdueTasks = await prisma.assignment.count({
         where: {
           userId: userId,
           completed: false,
-          expired: false, // ← ADD THIS
+          expired: false,
           dueDate: { lt: today }
         }
       });
 
       console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
-      // ✅ FIXED: Get current week assignments (excluding expired)
+      // Get current week assignments (excluding expired)
       const currentWeekAssignments = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
-          expired: false, // ← ADD THIS
+          expired: false,
           dueDate: {
             gte: currentWeekStart,
             lte: currentWeekEnd
@@ -177,7 +176,7 @@ export class HomeServices {
         }
       });
 
-      // Calculate points earned this week
+      // Calculate points earned this week - FIXED with null safety
       const completedAssignmentsThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -195,15 +194,16 @@ export class HomeServices {
         }
       });
 
-      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
-        sum + (assignment.task.points || 0), 0
-      );
+      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => {
+        const points = assignment.task?.points || assignment.taskPoints || 0;
+        return sum + points;
+      }, 0);
 
       // Format groups with rotation info
       const groups = userMemberships.map(member => {
         const group = member.group;
         const tasksForThisGroup = currentWeekAssignments.filter(
-          assignment => assignment.task.group.id === group.id
+          assignment => assignment.task?.group?.id === group.id
         );
 
         return {
@@ -246,34 +246,38 @@ export class HomeServices {
             completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
             pointsThisWeek
           },
-          currentWeekTasks: upcomingAssignmentsThisWeek.map(assignment => ({
-            id: assignment.id,
-            taskId: assignment.task.id,
-            title: assignment.task.title,
-            points: assignment.task.points,
-            timeOfDay: assignment.task.timeOfDay,
-            dayOfWeek: assignment.task.dayOfWeek,
-            dueDate: assignment.dueDate,
-            completed: assignment.completed,
-            groupName: assignment.task.group.name,
-            groupId: assignment.task.group.id,
-            isOverdue: false,
-            daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-          })),
-          overdueTasks: overdueAssignments.map(assignment => ({
-            id: assignment.id,
-            taskId: assignment.task.id,
-            title: assignment.task.title,
-            points: assignment.task.points,
-            timeOfDay: assignment.task.timeOfDay,
-            dayOfWeek: assignment.task.dayOfWeek,
-            dueDate: assignment.dueDate,
-            completed: assignment.completed,
-            groupName: assignment.task.group.name,
-            groupId: assignment.task.group.id,
-            isOverdue: true,
-            daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
-          })),
+          currentWeekTasks: upcomingAssignmentsThisWeek
+            .filter(assignment => assignment.task !== null) // Filter out null tasks
+            .map(assignment => ({
+              id: assignment.id,
+              taskId: assignment.task!.id,
+              title: assignment.task!.title,
+              points: assignment.task!.points,
+              timeOfDay: assignment.task!.timeOfDay,
+              dayOfWeek: assignment.task!.dayOfWeek,
+              dueDate: assignment.dueDate,
+              completed: assignment.completed,
+              groupName: assignment.task!.group?.name || 'Unknown Group',
+              groupId: assignment.task!.group?.id,
+              isOverdue: false,
+              daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+            })),
+          overdueTasks: overdueAssignments
+            .filter(assignment => assignment.task !== null) // Filter out null tasks
+            .map(assignment => ({
+              id: assignment.id,
+              taskId: assignment.task!.id,
+              title: assignment.task!.title,
+              points: assignment.task!.points,
+              timeOfDay: assignment.task!.timeOfDay,
+              dayOfWeek: assignment.task!.dayOfWeek,
+              dueDate: assignment.dueDate,
+              completed: assignment.completed,
+              groupName: assignment.task!.group?.name || 'Unknown Group',
+              groupId: assignment.task!.group?.id,
+              isOverdue: true,
+              daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
+            })),
           groups: groups,
           recentActivity: recentActivity.map(activity => ({
             ...activity,
@@ -309,7 +313,7 @@ export class HomeServices {
       weekEnd.setDate(weekEnd.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
 
-      // Get completed tasks this week
+      // Get completed tasks this week - FIXED with null safety
       const completedThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -334,7 +338,7 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       });
 
-      // Get pending tasks for this week - FIXED with null checks
+      // Get pending tasks for this week - FIXED with null safety
       const pendingThisWeek = await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -366,10 +370,11 @@ export class HomeServices {
         }
       });
 
-      // Calculate points
-      const totalPoints = completedThisWeek.reduce((sum, assignment) => 
-        sum + (assignment.task.points || 0), 0
-      );
+      // Calculate points - FIXED with null safety
+      const totalPoints = completedThisWeek.reduce((sum, assignment) => {
+        const points = assignment.task?.points || assignment.taskPoints || 0;
+        return sum + points;
+      }, 0);
 
       // Group by day
       const byDay: Record<string, any> = {};
@@ -380,7 +385,8 @@ export class HomeServices {
             byDay[day] = { count: 0, points: 0 };
           }
           byDay[day].count++;
-          byDay[day].points += assignment.task.points || 0;
+          const points = assignment.task?.points || assignment.taskPoints || 0;
+          byDay[day].points += points;
         }
       });
 
@@ -390,19 +396,23 @@ export class HomeServices {
           completedTasks: completedThisWeek.length,
           pendingTasks: pendingThisWeek.length,
           totalPoints,
-          completedTasksList: completedThisWeek.map(task => ({
-            title: task.task.title,
-            points: task.task.points,
-            group: task.task.group.name,
-            completedAt: task.completedAt
-          })),
-          pendingTasksList: pendingThisWeek.map(task => ({
-            title: task.task.title,
-            points: task.task.points,
-            timeOfDay: task.task.timeOfDay,
-            dayOfWeek: task.task.dayOfWeek,
-            dueDate: task.dueDate
-          })),
+          completedTasksList: completedThisWeek
+            .filter(item => item.task !== null) // Filter out null tasks
+            .map(item => ({
+              title: item.task!.title,
+              points: item.task!.points,
+              group: item.task!.group?.name || 'Unknown Group',
+              completedAt: item.completedAt
+            })),
+          pendingTasksList: pendingThisWeek
+            .filter(item => item.task !== null) // Filter out null tasks
+            .map(item => ({
+              title: item.task!.title,
+              points: item.task!.points,
+              timeOfDay: item.task!.timeOfDay,
+              dayOfWeek: item.task!.dayOfWeek,
+              dueDate: item.dueDate
+            })),
           dailyStats: byDay
         }
       };
@@ -416,7 +426,7 @@ export class HomeServices {
     }
   }
 
-  // Helper method to get total points
+  // Helper method to get total points - FIXED with null safety
   private static async getTotalPoints(userId: string): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
@@ -434,7 +444,10 @@ export class HomeServices {
         }
       });
 
-      return completedAssignments.reduce((sum, a) => sum + (a.task.points || 0), 0);
+      return completedAssignments.reduce((sum, a) => {
+        const points = a.task?.points || a.taskPoints || 0;
+        return sum + points;
+      }, 0);
     } catch (error) {
       return 0;
     }

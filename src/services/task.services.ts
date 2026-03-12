@@ -1802,7 +1802,7 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
     }
   }
 
-  // Delete a task - HARD DELETE with history preservation
+ // Delete a task - HARD DELETE with history preservation
 static async deleteTask(taskId: string, userId: string) {
   try {
     const task = await prisma.task.findUnique({
@@ -1836,7 +1836,6 @@ static async deleteTask(taskId: string, userId: string) {
     
     // STEP 1: Store task info on all assignments before deletion
     if (task.assignments && task.assignments.length > 0) {
-      // First update the assignment data with task info
       await prisma.$executeRaw`
         UPDATE assignments 
         SET taskTitle = ${task.title},
@@ -1859,7 +1858,7 @@ static async deleteTask(taskId: string, userId: string) {
       console.log(`✅ Deleted swap requests for ${assignmentIds.length} assignments`);
     }
 
-    // STEP 3: Delete time slots (these belong only to this task)
+    // STEP 3: Delete time slots
     if (task.timeSlots && task.timeSlots.length > 0) {
       await prisma.timeSlot.deleteMany({
         where: { taskId: task.id }
@@ -1867,7 +1866,7 @@ static async deleteTask(taskId: string, userId: string) {
       console.log(`✅ Deleted ${task.timeSlots.length} time slots`);
     }
 
-    // STEP 4: HARD DELETE the task itself
+    // STEP 4: HARD DELETE the task
     await prisma.task.delete({
       where: { id: taskId }
     });
@@ -1897,22 +1896,6 @@ static async deleteTask(taskId: string, userId: string) {
       });
     }
 
-    // STEP 6: Create admin audit log
-    await prisma.adminAuditLog.create({
-      data: {
-        adminId: userId,
-        action: "TASK_DELETED",
-        details: {
-          taskId: task.id,
-          taskTitle: task.title,
-          groupId: task.groupId,
-          groupName: task.group.name,
-          preservedAssignments: task.assignments?.length || 0,
-          deletedAt: new Date().toISOString()
-        }
-      }
-    });
-
     // 🔴 EMIT SOCKET EVENT
     await SocketService.emitTaskDeleted(taskId, task.title, task.groupId, userId);
 
@@ -1930,29 +1913,13 @@ static async deleteTask(taskId: string, userId: string) {
   } catch (error: any) {
     console.error("TaskService.deleteTask error:", error);
     
-    try {
-      await prisma.adminAuditLog.create({
-        data: {
-          adminId: userId,
-          action: "TASK_DELETE_FAILED",
-          details: {
-            taskId,
-            error: error.message,
-            timestamp: new Date().toISOString()
-          }
-        }
-      });
-    } catch (logError) {
-      console.error("Failed to log delete error:", logError);
-    }
-
+    // Don't try to log to adminAuditLog - just return error
     return { 
       success: false, 
       message: error.message || "Error deleting task" 
     };
   }
 }
-
   // Get task statistics
   static async getTaskStatistics(groupId: string, userId: string) {
     try {

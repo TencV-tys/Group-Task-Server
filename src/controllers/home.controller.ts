@@ -73,7 +73,6 @@ export class HomeController {
       });
     }
   }
-  
   static async getDashboardStats(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
@@ -130,14 +129,18 @@ export class HomeController {
       }
     });
 
-    // Calculate points
-    const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => 
-      sum + (assignment.task.points || 0), 0
-    );
+    // Calculate points - ✅ FIXED: Handle null tasks
+    const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => {
+      // If task exists, use task.points, otherwise use assignment.points (for deleted tasks)
+      const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+      return sum + points;
+    }, 0);
     
-    const totalPoints = allCompletedAssignments.reduce((sum, assignment) => 
-      sum + (assignment.task.points || 0), 0
-    );
+    const totalPoints = allCompletedAssignments.reduce((sum, assignment) => {
+      // If task exists, use task.points, otherwise use assignment.points (for deleted tasks)
+      const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+      return sum + points;
+    }, 0);
 
     const [
       groupsCount,
@@ -147,8 +150,8 @@ export class HomeController {
     ] = await Promise.all([
       // Groups count
       prisma.groupMember.count({ where: { userId: userId } }),
-      
-      // ✅ FIXED: Tasks due this week - use dueDate instead of weekStart/weekEnd
+       
+      // Tasks due this week
       prisma.assignment.count({
         where: {
           userId: userId,
@@ -179,6 +182,15 @@ export class HomeController {
       })
     ]);
 
+    // Also get historical assignments count (deleted tasks with preserved data)
+    const historicalAssignmentsCount = await prisma.assignment.count({
+      where: {
+        userId: userId,
+        taskId: null,
+        taskTitle: { not: null }
+      }
+    });
+
     console.log(`📊 User ${userId} has ${tasksDueThisWeek} tasks due this week`);
 
     return res.json({
@@ -187,11 +199,12 @@ export class HomeController {
       data: {
         stats: {
           groupsCount,
-          tasksDueThisWeek,  // ← NOW THIS WILL BE CORRECT!
+          tasksDueThisWeek,
           completedThisWeek,
           pointsThisWeek,
           totalPoints,
-          recentNotifications
+          recentNotifications,
+          historicalAssignments: historicalAssignmentsCount // Track deleted tasks
         },
         currentWeek: {
           start: weekStart,

@@ -1,3 +1,4 @@
+// cron/reminderCron.ts - FIXED VERSION
 import cron from 'node-cron';
 import prisma from '../prisma';
 import { AssignmentService } from '../services/assignment.services';
@@ -43,14 +44,17 @@ const sendDailyTaskReminders = async () => {
       }
     });
 
+    // Filter out assignments with null tasks
+    const validAssignments = todaysAssignments.filter(a => a.task !== null);
+
     // Group by user
     const userTasks: Record<string, any> = {};
     
-    todaysAssignments.forEach(assignment => {
+    validAssignments.forEach(assignment => {
       if (!userTasks[assignment.userId]) {
         userTasks[assignment.userId] = {
           userId: assignment.userId,
-          userName: assignment.user.fullName,
+          userName: assignment.user?.fullName || 'User',
           tasks: []
         };
       }
@@ -65,8 +69,8 @@ const sendDailyTaskReminders = async () => {
       }
       
       userTasks[assignment.userId].tasks.push({
-        taskId: assignment.task.id,
-        title: assignment.task.title,
+        taskId: assignment.task!.id,
+        title: assignment.task!.title,
         timeSlot: timeInfo,
         points: assignment.points,
         startTime: assignment.timeSlot?.startTime || 'Scheduled',

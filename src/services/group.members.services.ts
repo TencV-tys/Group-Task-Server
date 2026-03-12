@@ -77,165 +77,231 @@ export class GroupMembersService {
     }
   }
 
-  // Get group members with detailed rotation info
-  static async getGroupMembersWithRotation(groupId: string, userId: string) {
-    try {
-      // Check if user is a member of the group
-      const userMembership = await prisma.groupMember.findFirst({
-        where: {
-          userId: userId,
-          groupId: groupId
-        }
-      });
-
-      if (!userMembership) {
-        return {
-          success: false,
-          message: "You are not a member of this group"
-        };
+ // Get group members with detailed rotation info
+static async getGroupMembersWithRotation(groupId: string, userId: string) {
+  try {
+    // Check if user is a member of the group
+    const userMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId
       }
+    });
 
-      // Get group info
-      const group = await prisma.group.findUnique({
-        where: { id: groupId }
-      });
+    if (!userMembership) {
+      return {
+        success: false,
+        message: "You are not a member of this group"
+      };
+    }
 
-      if (!group) {
-        return {
-          success: false,
-          message: "Group not found"
-        };
-      }
+    // Get group info
+    const group = await prisma.group.findUnique({
+      where: { id: groupId }
+    });
 
-      // Get all members with rotation details
-      const members = await prisma.groupMember.findMany({
-        where: {
-          groupId: groupId
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true
-            }
-          }
-        },
-        orderBy: [
-          { rotationOrder: 'asc' },
-          { joinedAt: 'asc' }
-        ]
-      });
+    if (!group) {
+      return {
+        success: false,
+        message: "Group not found"
+      };
+    }
 
-      // Get assignments for current week for each member
-      const currentWeekAssignments = await prisma.assignment.findMany({
-        where: {
-          task: {
-            groupId: groupId
-          },
-          rotationWeek: group.currentRotationWeek
-        },
-        include: {
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true
-            }
-          },
-          user: {
-            select: {
-              id: true,
-              fullName: true
-            }
+    // Get all members with rotation details
+    const members = await prisma.groupMember.findMany({
+      where: {
+        groupId: groupId
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true
           }
         }
-      });
+      },
+      orderBy: [
+        { rotationOrder: 'asc' },
+        { joinedAt: 'asc' }
+      ]
+    });
 
-      // Get all recurring tasks to calculate rotation
-      const recurringTasks = await prisma.task.findMany({
-        where: {
-          groupId: groupId,
-          isRecurring: true
-        },
-        orderBy: { rotationOrder: 'asc' }
-      });
+    // Get assignments for current week for each member
+    // Get assignments for current week for each member
+const currentWeekAssignments = await prisma.assignment.findMany({
+  where: {
+    task: {
+      groupId: groupId
+    },
+    rotationWeek: group.currentRotationWeek
+  },
+  include: {
+    task: {
+      select: {
+        id: true,
+        title: true,
+        points: true
+      }
+    },
+    user: {
+      select: {
+        id: true,
+        fullName: true
+      }
+    },
+    swapRequests: { // ✅ ADD THIS: Include swap requests
+      where: {
+        status: "PENDING"
+      },
+      select: {
+        id: true,
+        status: true
+      }
+    }
+  }
+});
+    // Get all recurring tasks to calculate rotation
+    const recurringTasks = await prisma.task.findMany({
+      where: {
+        groupId: groupId,
+        isRecurring: true
+      },
+      orderBy: { rotationOrder: 'asc' }
+    });
 
-      // Format response with rotation calculations
-      const formattedMembers = members.map(member => {
-        // Get current week assignments for this member
-        const memberCurrentAssignments = currentWeekAssignments
-          .filter(assignment => assignment.userId === member.userId)
-          .map(assignment => ({
-            id: assignment.id,
-            taskId: assignment.taskId,
-            taskTitle: assignment.task.title,
-            points: assignment.task.points,
-            completed: assignment.completed
-          }));
+    // Format response with rotation calculations
+    const formattedMembers = members.map(member => {
+      // Get current week assignments for this member (tasks that still exist)
+      const memberCurrentAssignments = currentWeekAssignments
+        .filter(assignment => assignment.userId === member.userId)
+        .filter(assignment => assignment.task !== null)
+        .map(assignment => ({
+          id: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.task!.title,
+          points: assignment.task!.points,
+          completed: assignment.completed,
+          isHistorical: false
+        }));
 
-        // Calculate which tasks this member would get in upcoming weeks
-        const upcomingTasks = [];
-        for (let weekOffset = 0; weekOffset < 4; weekOffset++) {
-          const tasksThisWeek = recurringTasks.filter(task => {
+      // Get historical assignments (tasks that were deleted)
+      const memberHistoricalAssignments = currentWeekAssignments
+        .filter(assignment => 
+          assignment.userId === member.userId && 
+          assignment.task === null &&
+          (assignment.taskTitle || assignment.taskPoints) // Has preserved data
+        )
+        .map(assignment => ({
+          id: assignment.id,
+          taskId: null,
+          taskTitle: assignment.taskTitle || "Deleted Task",
+          points: assignment.taskPoints || assignment.points,
+          completed: assignment.completed,
+          isHistorical: true,
+          originalTaskId: assignment.taskId // Keep for reference
+        }));
+
+      // Combine current and historical assignments
+      const allAssignments = [...memberCurrentAssignments, ...memberHistoricalAssignments];
+
+      // Calculate cumulative points for this member
+      const cumulativePoints = allAssignments
+        .filter(a => a.completed)
+        .reduce((sum, a) => sum + a.points, 0);
+
+      // Calculate which tasks this member would get in upcoming weeks
+      const upcomingTasks = [];
+      for (let weekOffset = 0; weekOffset < 4; weekOffset++) {
+        const tasksThisWeek = recurringTasks
+          .filter(task => !task.isDeleted) // Only include non-deleted tasks
+          .filter(task => {
             const taskIndex = (task.rotationOrder || 1) - 1;
             const memberIndex = members.findIndex(m => m.userId === member.userId);
             const assigneeIndex = (taskIndex + weekOffset) % members.length;
             return assigneeIndex === memberIndex;
           });
 
-          upcomingTasks.push({
-            week: group.currentRotationWeek + weekOffset,
-            tasks: tasksThisWeek.map(task => ({
-              id: task.id,
-              title: task.title,
-              points: task.points
-            }))
-          });
-        }
+        upcomingTasks.push({
+          week: group.currentRotationWeek + weekOffset,
+          tasks: tasksThisWeek.map(task => ({
+            id: task.id,
+            title: task.title,
+            points: task.points
+          }))
+        });
+      }
 
-        return {
-          id: member.id,
-          userId: member.userId,
-          fullName: member.user.fullName,
-          email: member.user.email,
-          avatarUrl: member.user.avatarUrl,
-          role: member.groupRole,
-          rotationOrder: member.rotationOrder,
-          isActive: member.isActive,
-          joinedAt: member.joinedAt,
-          currentTasks: memberCurrentAssignments,
-          upcomingTasks: upcomingTasks
-        };
-      });
+      // Get member's swap requests status
+  // Get member's swap requests status
+const pendingSwapRequests = currentWeekAssignments
+  .filter(a => a.userId === member.userId)
+  .reduce((count, a) => count + (a.swapRequests?.length || 0), 0);
 
       return {
-        success: true,
-        message: "Members with rotation details retrieved",
-        members: formattedMembers,
-        userRole: userMembership.groupRole,
-        group: {
-          id: group.id,
-          name: group.name,
-          currentRotationWeek: group.currentRotationWeek,
-          lastRotationUpdate: group.lastRotationUpdate
+        id: member.id,
+        userId: member.userId,
+        fullName: member.user.fullName,
+        email: member.user.email,
+        avatarUrl: member.user.avatarUrl,
+        role: member.groupRole,
+        rotationOrder: member.rotationOrder,
+        isActive: member.isActive,
+        joinedAt: member.joinedAt,
+        stats: {
+          currentTasks: allAssignments.length,
+          completedTasks: allAssignments.filter(a => a.completed).length,
+          pendingTasks: allAssignments.filter(a => !a.completed).length,
+          cumulativePoints: cumulativePoints,
+          historicalTasks: memberHistoricalAssignments.length,
+          pendingSwapRequests: pendingSwapRequests
         },
-        rotationStats: {
-          totalMembers: members.length,
-          activeMembers: members.filter(m => m.isActive).length,
-          recurringTasks: recurringTasks.length
-        }
+        currentTasks: allAssignments,
+        upcomingTasks: upcomingTasks,
+        // Add historical tasks separately if needed
+        historicalTasks: memberHistoricalAssignments
       };
+    });
 
-    } catch (error: any) {
-      console.error("GroupMembersService.getGroupMembersWithRotation error:", error);
-      return {
-        success: false,
-        message: error.message || "Error retrieving members with rotation details"
-      };
-    }
+    // Calculate overall group statistics
+    const groupStats = {
+      totalMembers: formattedMembers.length,
+      activeMembers: formattedMembers.filter(m => m.isActive).length,
+      totalTasksCompleted: formattedMembers.reduce((sum, m) => sum + m.stats.completedTasks, 0),
+      totalPointsEarned: formattedMembers.reduce((sum, m) => sum + m.stats.cumulativePoints, 0),
+      totalHistoricalTasks: formattedMembers.reduce((sum, m) => sum + m.stats.historicalTasks, 0)
+    };
+
+    return {
+      success: true,
+      message: "Members with rotation details retrieved",
+      members: formattedMembers,
+      userRole: userMembership.groupRole,
+      group: {
+        id: group.id,
+        name: group.name,
+        currentRotationWeek: group.currentRotationWeek,
+        lastRotationUpdate: group.lastRotationUpdate,
+        createdAt: group.createdAt
+      },
+      rotationStats: {
+        totalMembers: members.length,
+        activeMembers: members.filter(m => m.isActive).length,
+        recurringTasks: recurringTasks.length,
+        deletedTasksPreserved: groupStats.totalHistoricalTasks
+      },
+      groupStats: groupStats
+    };
+
+  } catch (error: any) {
+    console.error("GroupMembersService.getGroupMembersWithRotation error:", error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving members with rotation details"
+    };
   }
+}
 
   // Remove a member from group (admin only) - UPDATED FOR ROTATION
   static async removeMember(groupId: string, memberId: string, adminId: string) {
