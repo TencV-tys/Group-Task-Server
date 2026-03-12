@@ -234,7 +234,7 @@ server.listen(PORT, async () => {
    └─ Feedback:         100 requests/hour   (feedback views)
 
 💾 CACHE ENABLED:
-   ├─ Statistics:       30 seconds
+   ├─ Statistics:       30 seconds 
    ├─ Dashboard:        60 seconds
    ├─ Groups list:      30 seconds
    ├─ Users list:       30 seconds

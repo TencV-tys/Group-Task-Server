@@ -98,7 +98,7 @@ async function main() {
         data: {
           userId: user.id,
           groupId: existingGroup.id,
-          groupRole: i === 0 ? 'ADMIN' : 'MEMBER',
+          groupRole: 'MEMBER',
           rotationOrder: i + 1,
           isActive: true,
         }

@@ -1,10 +1,13 @@
 // middlewares/rateLimiter.ts
 import rateLimit from 'express-rate-limit';
 
-// Strict limiter for authentication routes (prevent brute force)
+// Fix windowMs to actually be 1 hour (60 * 60 * 1000)
+const ONE_HOUR = 60 * 60 * 3000;
+
+// Strict limiter for authentication routes
 export const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 50, // Increased from 10 to 50
+  windowMs: ONE_HOUR,
+  max: 50,
   message: {
     success: false,
     message: 'Too many authentication attempts, please try again after an hour'
@@ -16,8 +19,8 @@ export const authLimiter = rateLimit({
 
 // File upload limiter
 export const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 50, // Increased from 20 to 50
+  windowMs: ONE_HOUR,
+  max: 50,
   message: {
     success: false,
     message: 'Too many upload attempts, please try again after an hour'
@@ -28,8 +31,8 @@ export const uploadLimiter = rateLimit({
 
 // Task operations limiter
 export const taskLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 200, // Increased from 50 to 200
+  windowMs: ONE_HOUR,
+  max: 200,
   message: {
     success: false,
     message: 'Too many task operations, please try again after an hour'
@@ -40,8 +43,8 @@ export const taskLimiter = rateLimit({
 
 // Password reset limiter (keep strict)
 export const passwordResetLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // Increased from 3 to 5
+  windowMs: ONE_HOUR,
+  max: 5,
   message: {
     success: false,
     message: 'Too many password reset attempts, please try again after an hour'
@@ -52,8 +55,8 @@ export const passwordResetLimiter = rateLimit({
 
 // Swap request limiter
 export const swapRequestLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 100, // Increased from 30 to 100
+  windowMs: ONE_HOUR,
+  max: 100,
   message: {
     success: false,
     message: 'Too many swap requests, please try again after an hour'
@@ -64,8 +67,8 @@ export const swapRequestLimiter = rateLimit({
 
 // Group activity limiter
 export const groupActivityLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 300, // Increased from 100 to 300
+  windowMs: ONE_HOUR,
+  max: 300,
   message: {
     success: false,
     message: 'Too many activity requests, please try again after an hour'
@@ -76,8 +79,8 @@ export const groupActivityLimiter = rateLimit({
 
 // Admin routes limiter
 export const adminLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 500, // Increased from 200 to 500
+  windowMs: ONE_HOUR,
+  max: 500,
   message: {
     success: false,
     message: 'Too many admin requests, please try again after an hour'
@@ -88,8 +91,8 @@ export const adminLimiter = rateLimit({
 
 // Audit logs limiter
 export const auditLogLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 300, // Increased from 100 to 300
+  windowMs: ONE_HOUR,
+  max: 300,
   message: {
     success: false,
     message: 'Too many audit log requests, please try again after an hour'
@@ -100,8 +103,8 @@ export const auditLogLimiter = rateLimit({
 
 // Reports limiter
 export const reportsLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 300, // Increased from 100 to 300
+  windowMs: ONE_HOUR,
+  max: 300,
   message: {
     success: false,
     message: 'Too many report requests, please try again after an hour'
@@ -112,8 +115,8 @@ export const reportsLimiter = rateLimit({
 
 // Feedback limiter
 export const feedbackLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 300, // Increased from 100 to 300
+  windowMs: ONE_HOUR,
+  max: 300,
   message: {
     success: false,
     message: 'Too many feedback requests, please try again after an hour'
