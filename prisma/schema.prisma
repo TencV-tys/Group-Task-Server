@@ -6,8 +6,8 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
-}
-
+} 
+ 
 // ============= ENUMS =============
 enum UserRole {
   USER
@@ -281,7 +281,7 @@ model TimeSlot {
 
 model Assignment {
   id      String   @id @default(uuid())
-  taskId  String
+  taskId  String?  // ← Already nullable
   userId  String
   dueDate DateTime
 
@@ -304,17 +304,22 @@ model Assignment {
 
   // Rotation tracking
   rotationWeek  Int        @default(0)
-  weekStart     DateTime? // ← CHANGED TO OPTIONAL (allow NULL)
-  weekEnd       DateTime? // ← CHANGED TO OPTIONAL (allow NULL)
+  weekStart     DateTime?
+  weekEnd       DateTime?
   assignmentDay DayOfWeek?
+ 
+  // ✅ ADD THESE FIELDS FOR DELETED TASK PRESERVATION
+  taskTitle    String? // Store task title at time of deletion
+  taskPoints   Int?    // Store task points at time of deletion
+  taskCategory String? // Store category at time of deletion
 
-  expired    Boolean   @default(false)  // Mark assignments from past weeks
+  expired    Boolean   @default(false)
   expiredAt  DateTime?
 
-  // Relationships
-  task         Task          @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: Cascade)
+  // Relationships - FIXED: Task is now optional with SetNull
+  task         Task?         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: SetNull)
   user         User          @relation("UserAssignments", fields: [userId], references: [id])
-  swapRequests SwapRequest[] @relation("AssignmentSwapRequests") // ← CHANGED to one-to-many
+  swapRequests SwapRequest[] @relation("AssignmentSwapRequests")
   timeSlot     TimeSlot?     @relation("TimeSlotAssignments", fields: [timeSlotId], references: [id])
 
   createdAt DateTime @default(now())
@@ -329,7 +334,6 @@ model Assignment {
   @@index([timeSlotId])
   @@map("assignments")
 }
-
 model SwapRequest {
   id           String  @id @default(uuid())
   assignmentId String

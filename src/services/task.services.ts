@@ -5,7 +5,7 @@ import { TaskHelpers } from "../helpers/task.helpers";
 import { TimeHelpers } from "../helpers/time.helpers";
 import { SocketService } from "./socket.services";
 import { RotationHelpers } from "../helpers/rotation.helpers";
-export class TaskService {
+export class TaskService { 
   
   // Create task with distributed points across time slots
   static async createTask(
@@ -78,27 +78,29 @@ export class TaskService {
         return { success: false, message: timeSlotsValidation.error };
       }
              const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
-    
-    // If this is a recurring task and we don't have enough tasks for all members
-    if (data.isRecurring && !analysis.hasEnoughTasks) {
-      const tasksNeeded = analysis.tasksNeeded;
-      const memberCount = analysis.totalMembers;
-      const currentTasks = analysis.totalTasks;
-      
-      // If this will be the task that completes the set, allow it with warning
-      if (currentTasks + 1 === memberCount) {
-        // Perfect - this task will complete the set
-        console.log(`✅ This task will complete the rotation set (${memberCount}/${memberCount})`);
-      } else {
-        // Still need more tasks
-        return {
-          success: false,
-          message: `Cannot create task yet. You have ${memberCount} members but only ${currentTasks} recurring tasks. You need ${tasksNeeded} more task(s) for perfect rotation. Each member should have one task.`,
-          warning: true,
-          analysis
-        };
-      }
-    }
+
+// If this is a recurring task
+if (data.isRecurring) {
+  const memberCount = analysis.totalMembers;
+  const currentTasks = analysis.totalTasks;
+  
+  // ✅ ALLOW creation as long as we haven't exceeded member count
+  if (currentTasks < memberCount) {
+    // We're still building up to perfect rotation - ALLOW IT!
+    console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation`);
+    // Continue with task creation - don't block!
+  } else if (currentTasks === memberCount) {
+    // We've reached perfect rotation - allow creating extra tasks
+    console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
+    // Continue with task creation
+  } else {
+    // Already have more tasks than members - still allow creation
+    console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
+    // Continue with task creation
+  }
+  
+ 
+}
       // Get rotation members
       let targetMemberIds = data.rotationMemberIds || [];
       let rotationMembers = [];
@@ -472,7 +474,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     return { success: false, message: error.message || "Error retrieving tasks" };
   }
 }
-  // In task.services.ts - Update getUserTasks method
+ // In task.services.ts - Update getUserTasks method
 static async getUserTasks(groupId: string, userId: string, week?: number) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -492,15 +494,20 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
     const weekOffset = targetWeek - group.currentRotationWeek;
     const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(weekOffset);
 
-    // ADD THIS: Get today's date info
+    // Get today's date info
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const assignments = await prisma.assignment.findMany({
-      where: { userId, task: { groupId }, rotationWeek: targetWeek },
+    // ✅ FIXED: Get CURRENT assignments (tasks still exist)
+    const currentAssignments = await prisma.assignment.findMany({
+      where: { 
+        userId, 
+        task: { groupId }, // This automatically filters out assignments with taskId = null
+        rotationWeek: targetWeek 
+      },
       include: {
         task: {
           include: { 
@@ -530,21 +537,47 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
       orderBy: { dueDate: 'asc' }
     });
 
-    const tasks = assignments.map(assignment => ({
-      id: assignment.task.id,
-      title: assignment.task.title,
-      description: assignment.task.description,
-      points: assignment.task.points,
-      executionFrequency: assignment.task.executionFrequency,
-      timeFormat: assignment.task.timeFormat,
-      timeSlots: assignment.task.timeSlots || [],
-      selectedDays: TaskHelpers.safeJsonParse(assignment.task.selectedDays),
-      dayOfWeek: assignment.task.dayOfWeek,
-      isRecurring: assignment.task.isRecurring,
-      category: assignment.task.category,
-      rotationOrder: assignment.task.rotationOrder,
-      createdAt: assignment.task.createdAt,
-      creator: assignment.task.creator,
+    // ✅ NEW: Get HISTORICAL assignments (tasks that were deleted)
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: { 
+        userId, 
+        taskId: null, // Tasks that were deleted
+        taskTitle: { not: null } // Only ones with preserved data
+      },
+      include: {
+        timeSlot: { 
+          select: { 
+            id: true, 
+            startTime: true, 
+            endTime: true, 
+            label: true,
+            points: true 
+          }
+        }
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    // Format current assignments
+const currentTasks = currentAssignments
+  .filter(assignment => assignment.task !== null) // Filter out null tasks
+  .map(assignment => {
+    const task = assignment.task!; // Now safe to use ! assertion
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      points: task.points,
+      executionFrequency: task.executionFrequency,
+      timeFormat: task.timeFormat,
+      timeSlots: task.timeSlots || [],
+      selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
+      dayOfWeek: task.dayOfWeek,
+      isRecurring: task.isRecurring,
+      category: task.category,
+      rotationOrder: task.rotationOrder,
+      createdAt: task.createdAt,
+      creator: task.creator,
       assignment: {
         id: assignment.id,
         dueDate: assignment.dueDate,
@@ -558,22 +591,65 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
         weekEnd: assignment.weekEnd,
         rotationWeek: assignment.rotationWeek,
         timeSlot: assignment.timeSlot,
-        // ADD THIS: Is due today flag
-        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
+        isHistorical: false
+      }
+    };
+  });
+
+    // Format historical assignments
+    const historicalTasks = historicalAssignments.map(assignment => ({
+      id: `historical-${assignment.id}`, // Unique ID for historical tasks
+      title: assignment.taskTitle || "Deleted Task",
+      description: null,
+      points: assignment.taskPoints || assignment.points,
+      category: assignment.taskCategory,
+      executionFrequency: null,
+      timeFormat: null,
+      timeSlots: [],
+      selectedDays: [],
+      dayOfWeek: null,
+      isRecurring: false,
+      rotationOrder: null,
+      createdAt: assignment.createdAt,
+      creator: null,
+      assignment: {
+        id: assignment.id,
+        dueDate: assignment.dueDate,
+        assignmentDay: assignment.assignmentDay,
+        completed: assignment.completed,
+        completedAt: assignment.completedAt,
+        verified: assignment.verified,
+        photoUrl: assignment.photoUrl,
+        points: assignment.points,
+        weekStart: assignment.weekStart,
+        weekEnd: assignment.weekEnd,
+        rotationWeek: assignment.rotationWeek,
+        timeSlot: assignment.timeSlot,
+        isDueToday: false, // Never due today
+        isHistorical: true,
+        deletedTaskName: assignment.taskTitle
       }
     }));
+
+    // Combine both types of tasks
+    const allTasks = [...currentTasks, ...historicalTasks];
 
     return {
       success: true,
       message: "Your tasks retrieved successfully",
-      tasks,
+      tasks: allTasks,
       currentWeek: group.currentRotationWeek,
       weekStart,
       weekEnd,
-      // ADD THIS: Current date info
       currentDate: {
         today,
         tomorrow
+      },
+      stats: {
+        total: allTasks.length,
+        current: currentTasks.length,
+        historical: historicalTasks.length
       }
     };  
 
@@ -582,7 +658,6 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
     return { success: false, message: error.message || "Error retrieving your tasks" };
   }
 }
-   
 // In task.services.ts - Update getTaskDetails method
 static async getTaskDetails(taskId: string, userId: string) {
   try {
@@ -1024,7 +1099,7 @@ return {
     }
   }
 
-  // Rotate group tasks - FIXED: Add type safety
+ 
  // Rotate group tasks - UPDATED with expired field handling
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
@@ -1339,114 +1414,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
-// In task.services.ts - Add this new method
-static async rotateAssignedTasks(groupId: string, userId: string, taskIds: string[]) {
-  try {
-    console.log(`🔄 Rotating ${taskIds.length} assigned tasks for group ${groupId}`);
-    
-    // Get only the tasks that are assigned
-    const tasks = await prisma.task.findMany({
-      where: { 
-        id: { in: taskIds },
-        isRecurring: true,
-        isDeleted: false,
-        currentAssignee: { not: null } // Ensure they have assignees
-      },
-      include: {
-        timeSlots: true,
-        assignments: {
-          where: { completed: false },
-          take: 1
-        }
-      }
-    });
 
-    if (tasks.length === 0) {
-      return { success: false, message: "No assigned tasks to rotate" };
-    }
-
-    // Get members with cumulative points
-    const members = await prisma.groupMember.findMany({
-      where: { groupId, isActive: true },
-      include: { user: { select: { fullName: true } } },
-      orderBy: { cumulativePoints: 'asc' }
-    });
-
-    // Sort tasks by points (highest to lowest)
-    const sortedTasks = [...tasks].sort((a, b) => (b.points || 0) - (a.points || 0));
-
-    console.log('🎯 Fair rotation for assigned tasks:');
-    console.log('Members (lowest points first):', members.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
-    console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.points}pts)`));
-
-    // Perform fair rotation
-    const rotatedTasks = [];
-    const newWeek = (await prisma.group.findUnique({ where: { id: groupId } }))!.currentRotationWeek + 1;
-    const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(1);
-
-    for (let i = 0; i < tasks.length; i++) {
-      const member = members[i % members.length]; // Cycle through members
-      const task = sortedTasks[i];
-      
-      if (!task || !member) continue;
-
-      console.log(`   Assigning ${member.user.fullName} → ${task.title}`);
-
-      // Update task with new assignee
-      await prisma.task.update({
-        where: { id: task.id },
-        data: { 
-          currentAssignee: member.userId,
-          lastAssignedAt: new Date()
-        }
-      });
-
-      // Delete old assignments for next week
-      await prisma.assignment.deleteMany({
-        where: { 
-          taskId: task.id, 
-          rotationWeek: newWeek 
-        }
-      });
-
-      // Create new assignments (simplified - you have your full logic)
-      // ... your assignment creation logic here ...
-
-      // Update member's cumulative points
-      await prisma.groupMember.update({
-        where: { id: member.id },
-        data: {
-          cumulativePoints: { increment: task.points || 0 }
-        }
-      });
-
-      rotatedTasks.push({
-        taskId: task.id,
-        title: task.title,
-        assignedTo: member.user.fullName
-      });
-    }
-
-    // Update group rotation week
-    await prisma.group.update({
-      where: { id: groupId },
-      data: { 
-        currentRotationWeek: newWeek,
-        lastRotationUpdate: new Date()
-      }
-    });
-
-    return {
-      success: true,
-      message: `Rotated ${rotatedTasks.length} assigned tasks`,
-      rotatedTasks
-    };
-
-  } catch (error: any) {
-    console.error("Error rotating assigned tasks:", error);
-    return { success: false, message: error.message };
-  }
-}
 
 // Get rotation schedule - FIXED to show ACTUAL assignments
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
@@ -1834,8 +1802,8 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
     }
   }
 
-  // Delete a task
-  static async deleteTask(taskId: string, userId: string) {
+  // Delete a task - HARD DELETE with history preservation
+static async deleteTask(taskId: string, userId: string) {
   try {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
@@ -1847,7 +1815,8 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
               select: { id: true, fullName: true }
             }
           }
-        }
+        },
+        timeSlots: true
       }
     });
 
@@ -1863,53 +1832,124 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
       return { success: false, message: "Only group admins can delete tasks" };
     }
 
-    // ===== SOFT DELETE - mark as deleted instead of actual delete =====
-    await prisma.task.update({
-      where: { id: taskId },
-      data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: userId,
-        title: `[DELETED] ${task.title}` // Optional: mark title as deleted
-      }
-    });
+    // ===== HARD DELETE WITH HISTORY PRESERVATION =====
+    
+    // STEP 1: Store task info on all assignments before deletion
+    if (task.assignments && task.assignments.length > 0) {
+      // First update the assignment data with task info
+      await prisma.$executeRaw`
+        UPDATE assignments 
+        SET taskTitle = ${task.title},
+            taskPoints = ${task.points},
+            taskCategory = ${task.category},
+            taskId = NULL
+        WHERE taskId = ${task.id}
+      `;
+      
+      console.log(`✅ Preserved ${task.assignments.length} assignments with task history`);
+    }
 
-    // Create notifications for affected users (optional)
+    // STEP 2: Delete swap requests associated with this task's assignments
+    const assignmentIds = task.assignments?.map(a => a.id) || [];
+    
+    if (assignmentIds.length > 0) {
+      await prisma.swapRequest.deleteMany({
+        where: { assignmentId: { in: assignmentIds } }
+      });
+      console.log(`✅ Deleted swap requests for ${assignmentIds.length} assignments`);
+    }
+
+    // STEP 3: Delete time slots (these belong only to this task)
+    if (task.timeSlots && task.timeSlots.length > 0) {
+      await prisma.timeSlot.deleteMany({
+        where: { taskId: task.id }
+      });
+      console.log(`✅ Deleted ${task.timeSlots.length} time slots`);
+    }
+
+    // STEP 4: HARD DELETE the task itself
+    await prisma.task.delete({
+      where: { id: taskId }
+    });
+    console.log(`✅ Hard deleted task: ${task.title}`);
+
+    // STEP 5: Create notifications for affected users
     const affectedUserIds = new Set<string>();
     task.assignments?.forEach(assignment => {
       affectedUserIds.add(assignment.userId);
     });
 
-    // Create notifications for each affected user
     for (const affectedUserId of affectedUserIds) {
       await prisma.userNotification.create({
         data: {
           userId: affectedUserId,
           type: "TASK_DELETED",
           title: "🗑️ Task Deleted",
-          message: `The task "${task.title}" has been deleted by an admin. Your history and points are preserved.`,
+          message: `The task "${task.title}" has been permanently deleted by an admin. Your history and points are preserved.`,
           data: {
             taskId: task.id,
             taskTitle: task.title,
             groupId: task.groupId,
-            groupName: task.group.name
+            groupName: task.group.name,
+            preservedAssignments: task.assignments?.length || 0
           }
         }
       });
     }
 
-    // 🔴 EMIT SOCKET EVENT FOR TASK DELETED
+    // STEP 6: Create admin audit log
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: userId,
+        action: "TASK_DELETED",
+        details: {
+          taskId: task.id,
+          taskTitle: task.title,
+          groupId: task.groupId,
+          groupName: task.group.name,
+          preservedAssignments: task.assignments?.length || 0,
+          deletedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    // 🔴 EMIT SOCKET EVENT
     await SocketService.emitTaskDeleted(taskId, task.title, task.groupId, userId);
 
     return { 
       success: true, 
-      message: "Task deleted successfully. User history and points preserved.",
-      preservedAssignments: task.assignments?.length || 0
+      message: `Task permanently deleted. ${task.assignments?.length || 0} historical assignments preserved.`,
+      preservedAssignments: task.assignments?.length || 0,
+      deletedTask: {
+        id: task.id,
+        title: task.title,
+        groupId: task.groupId
+      }
     };
 
   } catch (error: any) {
     console.error("TaskService.deleteTask error:", error);
-    return { success: false, message: error.message || "Error deleting task" };
+    
+    try {
+      await prisma.adminAuditLog.create({
+        data: {
+          adminId: userId,
+          action: "TASK_DELETE_FAILED",
+          details: {
+            taskId,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          }
+        }
+      });
+    } catch (logError) {
+      console.error("Failed to log delete error:", logError);
+    }
+
+    return { 
+      success: false, 
+      message: error.message || "Error deleting task" 
+    };
   }
 }
 
