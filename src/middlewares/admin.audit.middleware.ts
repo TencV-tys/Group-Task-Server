@@ -1,4 +1,4 @@
-// middlewares/admin.audit.middleware.ts
+// middlewares/admin.audit.middleware.ts - UPDATED
 import { Response, NextFunction } from "express";
 import { AdminAuthRequest } from "./admin.auth.middleware";
 import { AdminAuditService } from "../services/admin.audit.services";
@@ -10,38 +10,42 @@ export const AuditLog = (action: string, getTargetUserId?: (req: AdminAuthReques
     
     // Override json method to capture response
     res.json = function(body) {
-      // Only log successful actions
-      if (body.success) {
-        let targetUserId: string | undefined;
+      // ✅ CRITICAL: ONLY LOG IF REQUEST WAS SUCCESSFUL
+      // Check all conditions:
+      // 1. Response indicates success (body.success === true)
+      // 2. Admin is authenticated (req.admin?.id exists)
+      // 3. Response status code is in 2xx range
+      if (body?.success === true && req.admin?.id && res.statusCode >= 200 && res.statusCode < 300) {
         
-        if (getTargetUserId) {
-          const result = getTargetUserId(req);
-          // Handle if result is an array (like from req.params)
-          if (Array.isArray(result)) {
-            targetUserId = result[0]; // Take first element if array
-          } else {
-            targetUserId = result;
-          }
-        }
-        
-        // Log asynchronously - don't await
+        // Log asynchronously - with error handling
         AdminAuditService.createLog(
-          req.admin?.id!,
+          req.admin.id,
           action,
           {
-            targetUserId,
+            targetUserId: getTargetUserId ? getTargetUserId(req) : undefined,
             details: {
               method: req.method,
               path: req.path,
               params: req.params,
               query: req.query,
-              body: req.body,
-              response: body
+              // Don't log entire body for large requests
+              body: req.body && Object.keys(req.body).length > 10 ? '[TRUNCATED]' : req.body,
+              statusCode: res.statusCode
             },
             ipAddress: req.ip,
             userAgent: req.get('user-agent')
           }
-        ).catch(err => console.error('Failed to create audit log:', err));
+        ).catch(err => {
+          // Silent fail in production
+          if (process.env.NODE_ENV !== 'production') {
+            console.error('Audit log failed (non-critical):', err.message);
+          }
+        });
+      } else {
+        // Track failed requests for rate limiting
+        if (req.ip) {
+          AdminAuditService.trackFailedRequest(req.ip, req.admin?.id);
+        }
       }
       
       // Call original json
@@ -49,5 +53,5 @@ export const AuditLog = (action: string, getTargetUserId?: (req: AdminAuthReques
     };
     
     next();
-  };
+  }; 
 };

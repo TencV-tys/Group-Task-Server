@@ -150,7 +150,7 @@ svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // CORS and Cookie Parser
 svr.use(cors({
-    origin: '*',
+    origin: true,
     credentials: true
 }));
 svr.use(cookieParser());
@@ -159,7 +159,7 @@ svr.use(cookieParser());
 console.log('📡 Registering routes...');
 svr.use('/api/auth/users', UserAuthRoutes);
 svr.use('/api/auth/admins', AdminAuthRoutes);
-svr.use('/api/group', GroupRoutes);
+svr.use('/api/group', GroupRoutes); 
 svr.use('/api/home', HomeRoute);
 svr.use('/api/tasks', TaskRoutes);
 svr.use('/api/uploads', UploadRoutes); 
@@ -287,4 +287,30 @@ server.listen(PORT, async () => {
 
 ✅ Server is ready to handle requests!
     `);
+});
+
+// Add this at the bottom of your server.ts
+process.on('SIGINT', async () => {
+  console.log('\n📦 Shutting down server...');
+  
+  // Force process remaining audit logs
+  const { getAuditQueueStats, AdminAuditService } = require('./services/admin.audit.services');
+  const stats = getAuditQueueStats();
+  
+  if (stats.queueSize > 0) {
+    console.log(`📊 Processing ${stats.queueSize} remaining audit logs...`);
+    await AdminAuditService.forceProcessQueue();
+  }
+  
+  console.log('✅ Shutdown complete');
+  process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  // Don't exit immediately, let the process continue
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
