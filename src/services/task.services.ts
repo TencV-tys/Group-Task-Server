@@ -8,254 +8,284 @@ import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService { 
   
   // Create task with distributed points across time slots
-  static async createTask(
-    userId: string,
-    groupId: string,
-    data: { 
-      title: string;
-      description?: string;
-      points?: number; // TOTAL task points to be distributed
-      category?: string;
-      executionFrequency: TaskExecutionFrequency;
-      timeFormat?: string;
-      selectedDays?: any[];
-      dayOfWeek?: any;
-      isRecurring?: boolean;
-      rotationMemberIds?: string[];
-      rotationOrder?: number;
-      timeSlots?: Array<{
-        startTime: string;
-        endTime: string;
-        label?: string;
-        points?: string | number; // Points for THIS specific time slot
-      }>;
-      initialAssigneeId?: string;
-    }
-  ) {
-    try {
-      // Validate user membership and permissions
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
-
-      if (!membership) {
-        return { success: false, message: "You are not a member in this group" };
-      }
-
-      if (membership.groupRole !== "ADMIN") {
-        return { success: false, message: "Only group admins can create tasks" };
-      }
-
-      const group = await prisma.group.findUnique({ where: { id: groupId } });
-      if (!group) {
-        return { success: false, message: "Group not found" };
-      }
-
-      // Validate required fields
-      if (!data.title?.trim()) {
-        return { success: false, message: "Task title is required" };
-      }
-
-      // Total task points (to be distributed)
-      const totalPoints = data.points !== undefined ? Math.max(1, Number(data.points)) : 1;
-
-      // Validate execution frequency requirements
-      if (data.executionFrequency === 'DAILY' && (!data.timeSlots || data.timeSlots.length === 0)) {
-        return { success: false, message: "Daily tasks require time slots" };
-      }
-
-      if (data.executionFrequency === 'WEEKLY' && !data.selectedDays?.length && !data.dayOfWeek) {
-        return { success: false, message: "Weekly tasks require at least one day selection" };
-      }
-
-      // Validate time slot points distribution
-      const timeSlotsValidation = TaskHelpers.validateAndCalculateTimeSlotPoints(
-        data.timeSlots || [],
-        totalPoints
-      );
-      
-      if (!timeSlotsValidation.isValid) {
-        return { success: false, message: timeSlotsValidation.error };
-      }
-             const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
-
-// If this is a recurring task
-if (data.isRecurring) {
-  const memberCount = analysis.totalMembers;
-  const currentTasks = analysis.totalTasks;
-  
-  // ✅ ALLOW creation as long as we haven't exceeded member count
-  if (currentTasks < memberCount) {
-    // We're still building up to perfect rotation - ALLOW IT!
-    console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation`);
-    // Continue with task creation - don't block!
-  } else if (currentTasks === memberCount) {
-    // We've reached perfect rotation - allow creating extra tasks
-    console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
-    // Continue with task creation
-  } else {
-    // Already have more tasks than members - still allow creation
-    console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
-    // Continue with task creation
+ // Create task with distributed points across time slots
+static async createTask(
+  userId: string,
+  groupId: string,
+  data: { 
+    title: string;
+    description?: string;
+    points?: number;
+    category?: string;
+    executionFrequency: TaskExecutionFrequency;
+    timeFormat?: string;
+    selectedDays?: any[];
+    dayOfWeek?: any;
+    isRecurring?: boolean;
+    rotationMemberIds?: string[];
+    rotationOrder?: number;
+    timeSlots?: Array<{
+      startTime: string;
+      endTime: string;
+      label?: string;
+      points?: string | number;
+    }>;
+    initialAssigneeId?: string;
   }
-  
- 
-}
-      // Get rotation members
-      let targetMemberIds = data.rotationMemberIds || [];
-      let rotationMembers = [];
+) {
+  try {
+    // Validate user membership and permissions
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
 
-      if (targetMemberIds.length > 0) {
-        const validMembers = await prisma.groupMember.findMany({
-          where: { groupId, userId: { in: targetMemberIds }, isActive: true },
-          include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
-          orderBy: { rotationOrder: 'asc' }
-        });
+    if (!membership) {
+      return { success: false, message: "You are not a member in this group" };
+    }
 
-        if (validMembers.length !== targetMemberIds.length) {
-          return { success: false, message: "Some selected members are not in this group or are inactive" };
-        }
-        rotationMembers = validMembers;
+    if (membership.groupRole !== "ADMIN") {
+      return { success: false, message: "Only group admins can create tasks" };
+    }
+
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
+
+    // Validate required fields
+    if (!data.title?.trim()) {
+      return { success: false, message: "Task title is required" };
+    }
+
+    // Total task points (to be distributed)
+    const totalPoints = data.points !== undefined ? Math.max(1, Number(data.points)) : 1;
+
+    // Validate execution frequency requirements
+    if (data.executionFrequency === 'DAILY' && (!data.timeSlots || data.timeSlots.length === 0)) {
+      return { success: false, message: "Daily tasks require time slots" };
+    }
+
+    if (data.executionFrequency === 'WEEKLY' && !data.selectedDays?.length && !data.dayOfWeek) {
+      return { success: false, message: "Weekly tasks require at least one day selection" };
+    }
+
+    // Validate time slot points distribution
+    const timeSlotsValidation = TaskHelpers.validateAndCalculateTimeSlotPoints(
+      data.timeSlots || [],
+      totalPoints
+    );
+    
+    if (!timeSlotsValidation.isValid) {
+      return { success: false, message: timeSlotsValidation.error };
+    }
+    
+    const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
+
+    // If this is a recurring task
+    if (data.isRecurring) {
+      const memberCount = analysis.totalMembers;
+      const currentTasks = analysis.totalTasks;
+      
+      if (currentTasks < memberCount) {
+        console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation`);
+      } else if (currentTasks === memberCount) {
+        console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
       } else {
-        // Get all active members for rotation
-        rotationMembers = await prisma.groupMember.findMany({
-          where: { groupId, isActive: true },
-          include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
-          orderBy: { rotationOrder: 'asc' }
-        });
+        console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
       }
+    }
 
-      if (rotationMembers.length === 0) {
-        return { success: false, message: "No active members available for rotation" };
-      }
+    // ===== UPDATED: Get rotation members - EXCLUDE ADMINS =====
+    let targetMemberIds = data.rotationMemberIds || [];
+    let rotationMembers = [];
 
-      // Determine initial assignee if specified
-      let initialAssignee = null;
-      if (data.initialAssigneeId) {
-        initialAssignee = rotationMembers.find(m => m.userId === data.initialAssigneeId);
-        if (!initialAssignee) {
-          return { success: false, message: "Specified initial assignee is not in the rotation" };
-        }
-      }
-
-      // Determine rotation order
-      let finalRotationOrder: number;
-      if (data.rotationOrder !== undefined) {
-        finalRotationOrder = Math.max(1, Number(data.rotationOrder));
-      } else {
-        const lastTask = await prisma.task.findFirst({
-          where: { groupId },
-          orderBy: { rotationOrder: 'desc' }
-        });
-        finalRotationOrder = (lastTask?.rotationOrder || 0) + 1;
-      }
-
-      // Prepare selected days array for weekly tasks
-      let selectedDaysArray = TaskHelpers.validateSelectedDays(data.selectedDays);
-      if (data.executionFrequency === 'WEEKLY' && !selectedDaysArray && data.dayOfWeek) {
-        selectedDaysArray = TaskHelpers.validateSelectedDays([data.dayOfWeek]);
-      }
-
-      // Prepare rotation members JSON
-      const rotationMembersJson = rotationMembers.map(member => ({
-        userId: member.userId,
-        fullName: member.user.fullName,
-        avatarUrl: member.user.avatarUrl,
-        rotationOrder: member.rotationOrder,
-        groupRole: member.groupRole
-      }));
-
-      // Create the task
-      const taskData: Prisma.TaskCreateInput = {
-        title: data.title.trim(),
-        description: data.description?.trim() || undefined,
-        points: totalPoints, // Store total points for reference
-        executionFrequency: data.executionFrequency,
-        timeFormat: data.timeFormat || '12h',
-        dayOfWeek: data.dayOfWeek || undefined,
-        isRecurring: data.isRecurring !== false,
-        category: data.category?.trim() || undefined,
-        rotationOrder: finalRotationOrder,
-        rotationMembers: rotationMembersJson as any,
-        selectedDays: selectedDaysArray ? selectedDaysArray as any : undefined,
-        // Only set currentAssignee if initialAssignee exists
-        ...(initialAssignee ? {
-          currentAssignee: initialAssignee.userId,
-          lastAssignedAt: new Date()
-        } : {}),
-        group: { connect: { id: groupId } },
-        creator: { connect: { id: userId } }
-      };
-
-      const task = await prisma.task.create({
-        data: taskData
+    if (targetMemberIds.length > 0) {
+      // If specific members are selected, verify they're in rotation
+      const validMembers = await prisma.groupMember.findMany({
+        where: { 
+          groupId, 
+          userId: { in: targetMemberIds }, 
+          isActive: true,
+          inRotation: true // ← ADD THIS
+        },
+        include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
+        orderBy: { rotationOrder: 'asc' }
       });
 
-      // Create time slots with calculated points
-      let createdSlots: any[] = [];
-      if (timeSlotsValidation.calculatedSlots && timeSlotsValidation.calculatedSlots.length > 0) {
-        const timeSlotPromises = timeSlotsValidation.calculatedSlots.map((slot, index) => 
-          prisma.timeSlot.create({
-            data: {
-              taskId: task.id,
-              startTime: slot.startTime,
-              endTime: slot.endTime,
-              label: slot.label || TaskHelpers.getTimeSlotLabel(slot.startTime),
-              points: slot.points, // Store individual time slot points
-              sortOrder: index,
-              isPrimary: index === 0
-            }
-          })
-        );
+      if (validMembers.length !== targetMemberIds.length) {
+        return { success: false, message: "Some selected members are not in rotation or are inactive" };
+      }
+      rotationMembers = validMembers;
+    } else {
+      // Get all active members that are in rotation (exclude admins)
+      rotationMembers = await prisma.groupMember.findMany({
+        where: { 
+          groupId, 
+          isActive: true,
+          inRotation: true // ← ADD THIS
+        },
+        include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
+        orderBy: { rotationOrder: 'asc' }
+      });
+    }
 
-        createdSlots = await Promise.all(timeSlotPromises);
-        
-        // Update task with primary time slot
-        if (createdSlots.length > 0) {
-          await prisma.task.update({
-            where: { id: task.id },
-            data: { primaryTimeSlotId: createdSlots[0].id }
-          });
-        }
-      } else {
-        // Create default time slot with all points
-        const defaultSlot = await prisma.timeSlot.create({
+    if (rotationMembers.length === 0) {
+      return { success: false, message: "No active members available for rotation" };
+    }
+
+    // Determine initial assignee if specified
+    let initialAssignee = null;
+    if (data.initialAssigneeId) {
+      initialAssignee = rotationMembers.find(m => m.userId === data.initialAssigneeId);
+      if (!initialAssignee) {
+        return { success: false, message: "Specified initial assignee is not in the rotation" };
+      }
+    }
+
+    // Determine rotation order
+    let finalRotationOrder: number;
+    if (data.rotationOrder !== undefined) {
+      finalRotationOrder = Math.max(1, Number(data.rotationOrder));
+    } else {
+      const lastTask = await prisma.task.findFirst({
+        where: { groupId },
+        orderBy: { rotationOrder: 'desc' }
+      });
+      finalRotationOrder = (lastTask?.rotationOrder || 0) + 1;
+    }
+
+    // Prepare selected days array for weekly tasks
+    let selectedDaysArray = TaskHelpers.validateSelectedDays(data.selectedDays);
+    if (data.executionFrequency === 'WEEKLY' && !selectedDaysArray && data.dayOfWeek) {
+      selectedDaysArray = TaskHelpers.validateSelectedDays([data.dayOfWeek]);
+    }
+
+    // Prepare rotation members JSON
+    const rotationMembersJson = rotationMembers.map(member => ({
+      userId: member.userId,
+      fullName: member.user.fullName,
+      avatarUrl: member.user.avatarUrl,
+      rotationOrder: member.rotationOrder,
+      groupRole: member.groupRole
+    }));
+
+    // Create the task
+    const taskData: Prisma.TaskCreateInput = {
+      title: data.title.trim(),
+      description: data.description?.trim() || undefined,
+      points: totalPoints,
+      executionFrequency: data.executionFrequency,
+      timeFormat: data.timeFormat || '12h',
+      dayOfWeek: data.dayOfWeek || undefined,
+      isRecurring: data.isRecurring !== false,
+      category: data.category?.trim() || undefined,
+      rotationOrder: finalRotationOrder,
+      rotationMembers: rotationMembersJson as any,
+      selectedDays: selectedDaysArray ? selectedDaysArray as any : undefined,
+      ...(initialAssignee ? {
+        currentAssignee: initialAssignee.userId,
+        lastAssignedAt: new Date()
+      } : {}),
+      group: { connect: { id: groupId } },
+      creator: { connect: { id: userId } }
+    };
+
+    const task = await prisma.task.create({
+      data: taskData
+    });
+
+    // Create time slots with calculated points
+    let createdSlots: any[] = [];
+    if (timeSlotsValidation.calculatedSlots && timeSlotsValidation.calculatedSlots.length > 0) {
+      const timeSlotPromises = timeSlotsValidation.calculatedSlots.map((slot, index) => 
+        prisma.timeSlot.create({
           data: {
             taskId: task.id,
-            startTime: "18:00",
-            endTime: "19:00",
-            label: "Default",
-            points: totalPoints, // All points go to this slot
-            sortOrder: 0,
-            isPrimary: true
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            label: slot.label || TaskHelpers.getTimeSlotLabel(slot.startTime),
+            points: slot.points,
+            sortOrder: index,
+            isPrimary: index === 0
           }
-        });
-        createdSlots = [defaultSlot];
+        })
+      );
+
+      createdSlots = await Promise.all(timeSlotPromises);
+      
+      if (createdSlots.length > 0) {
         await prisma.task.update({
           where: { id: task.id },
-          data: { primaryTimeSlotId: defaultSlot.id }
+          data: { primaryTimeSlotId: createdSlots[0].id }
         });
       }
+    } else {
+      const defaultSlot = await prisma.timeSlot.create({
+        data: {
+          taskId: task.id,
+          startTime: "18:00",
+          endTime: "19:00",
+          label: "Default",
+          points: totalPoints,
+          sortOrder: 0,
+          isPrimary: true
+        }
+      });
+      createdSlots = [defaultSlot];
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { primaryTimeSlotId: defaultSlot.id }
+      });
+    }
 
-      // Create assignments if there's an initial assignee
-      if (initialAssignee) {
-        const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
-        
-        if (data.executionFrequency === 'DAILY') {
-          // Daily tasks: create assignments for each day of the week with each time slot
-          for (let i = 0; i < 7; i++) {
-            const dueDate = new Date();
-            dueDate.setDate(dueDate.getDate() + i);
+    // Create assignments if there's an initial assignee
+    if (initialAssignee) {
+      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
+      
+      if (data.executionFrequency === 'DAILY') {
+        for (let i = 0; i < 7; i++) {
+          const dueDate = new Date();
+          dueDate.setDate(dueDate.getDate() + i);
+          
+          for (const timeSlot of createdSlots) {
+            const timeParts = timeSlot.startTime.split(':');
+            const hours = Number(timeParts[0]) || 18;
+            const minutes = Number(timeParts[1]) || 0;
+            
+            const slotDueDate = new Date(dueDate);
+            slotDueDate.setHours(hours, minutes, 0, 0);
+            
+            const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
+
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: initialAssignee.userId,
+                dueDate: slotDueDate,
+                points: assignmentPoints,
+                rotationWeek: group.currentRotationWeek,
+                weekStart,
+                weekEnd,
+                assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
+                completed: false,
+                timeSlotId: timeSlot.id
+              }
+            });
+          }
+        }
+      } else if (data.executionFrequency === 'WEEKLY') {
+        if (selectedDaysArray) {
+          for (const day of selectedDaysArray) {
+            const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
             
             for (const timeSlot of createdSlots) {
               const timeParts = timeSlot.startTime.split(':');
               const hours = Number(timeParts[0]) || 18;
               const minutes = Number(timeParts[1]) || 0;
               
-              const slotDueDate = new Date(dueDate);
+              const slotDueDate = new Date(baseDueDate);
               slotDueDate.setHours(hours, minutes, 0, 0);
               
-              // Use time slot points (already calculated and stored)
               const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
               await prisma.assignment.create({
@@ -267,94 +297,55 @@ if (data.isRecurring) {
                   rotationWeek: group.currentRotationWeek,
                   weekStart,
                   weekEnd,
-                  assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
+                  assignmentDay: day,
                   completed: false,
                   timeSlotId: timeSlot.id
                 }
               });
             }
           }
-        } else if (data.executionFrequency === 'WEEKLY') {
-          // Weekly tasks: create assignments for selected days with each time slot
-          if (selectedDaysArray) {
-            for (const day of selectedDaysArray) {
-              const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
-              
-              for (const timeSlot of createdSlots) {
-                const timeParts = timeSlot.startTime.split(':');
-                const hours = Number(timeParts[0]) || 18;
-                const minutes = Number(timeParts[1]) || 0;
-                
-                const slotDueDate = new Date(baseDueDate);
-                slotDueDate.setHours(hours, minutes, 0, 0);
-                
-                // Use time slot points (already calculated and stored)
-                const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
-
-                await prisma.assignment.create({
-                  data: {
-                    taskId: task.id,
-                    userId: initialAssignee.userId,
-                    dueDate: slotDueDate,
-                    points: assignmentPoints,
-                    rotationWeek: group.currentRotationWeek,
-                    weekStart,
-                    weekEnd,
-                    assignmentDay: day,
-                    completed: false,
-                    timeSlotId: timeSlot.id
-                  }
-                });
-              }
-            }
-          }
         }
       }
-
-
-    // Fetch complete task with relations
-const completeTask = await prisma.task.findUnique({
-  where: { id: task.id },
-  include: {
-    group: { select: { id: true, name: true, description: true, currentRotationWeek: true } },
-    creator: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
-    timeSlots: { orderBy: { sortOrder: 'asc' } },
-    assignments: {
-      where: { rotationWeek: group.currentRotationWeek },
-      include: { 
-        user: { select: { id: true, fullName: true, avatarUrl: true } },
-        timeSlot: true 
-      },
-      orderBy: { dueDate: 'asc' }
     }
+
+    const completeTask = await prisma.task.findUnique({
+      where: { id: task.id },
+      include: {
+        group: { select: { id: true, name: true, description: true, currentRotationWeek: true } },
+        creator: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
+        timeSlots: { orderBy: { sortOrder: 'asc' } },
+        assignments: {
+          where: { rotationWeek: group.currentRotationWeek },
+          include: { 
+            user: { select: { id: true, fullName: true, avatarUrl: true } },
+            timeSlot: true 
+          },
+          orderBy: { dueDate: 'asc' }
+        }
+      }
+    });
+
+    await SocketService.emitTaskCreated(completeTask, groupId, userId);
+
+    if (initialAssignee) {
+      await SocketService.emitAssignmentCreated(
+        completeTask?.assignments?.[0],
+        initialAssignee.userId,
+        groupId
+      );
+    }
+
+    return {
+      success: true,
+      message: initialAssignee ? "Task created and assigned successfully" : "Task created successfully (not assigned)",
+      task: completeTask
+    };
+
+  } catch (error: any) {
+    console.error('TaskService.createTask error:', error);
+    return { success: false, message: error.message || "Error creating task" };
   }
-});
-
-// 🔴 EMIT SOCKET EVENT FOR TASK CREATED
-await SocketService.emitTaskCreated(completeTask, groupId, userId);
-
-// If assigned to someone, emit assignment created event
-if (initialAssignee) {
-  await SocketService.emitAssignmentCreated(
-    completeTask?.assignments?.[0],
-    initialAssignee.userId,
-    groupId
-  );
 }
-
-return {
-  success: true,
-  message: initialAssignee ? "Task created and assigned successfully" : "Task created successfully (not assigned)",
-  task: completeTask
-};
-
-    } catch (error: any) {
-      console.error('TaskService.createTask error:', error);
-      return { success: false, message: error.message || "Error creating task" };
-    }
-  }
-
-  // Get group tasks with time slots
  // In task.services.ts - Update getGroupTasks method
 static async getGroupTasks(groupId: string, userId: string, week?: number) {
   try {
@@ -1099,7 +1090,6 @@ return {
     }
   }
 
- 
  // Rotate group tasks - UPDATED with expired field handling
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
@@ -1163,11 +1153,12 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       return { success: false, message: "No recurring tasks to rotate" };
     }
 
-    // Get all active members with their cumulative points
+    // ===== UPDATED: Get all active members that are in rotation (EXCLUDE ADMINS) =====
     const members = await prisma.groupMember.findMany({
       where: { 
         groupId, 
-        isActive: true 
+        isActive: true,
+        inRotation: true // ← ADD THIS
       },
       include: { 
         user: { 
@@ -1184,7 +1175,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     });
 
     if (members.length === 0) {
-      return { success: false, message: "No active members in the group" };
+      return { success: false, message: "No active members in rotation" };
     }
 
     // Calculate total points for each task (sum of all time slots)
@@ -1192,7 +1183,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       const totalPoints = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
       return {
         ...task,
-        totalPoints: totalPoints || task.points || 0 // Fallback to task.points if no time slots
+        totalPoints: totalPoints || task.points || 0
       };
     });
 
@@ -1200,7 +1191,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     const sortedTasks = [...tasksWithTotalPoints].sort((a, b) => b.totalPoints - a.totalPoints);
 
     console.log('🔄 FAIR ROTATION ALGORITHM:');
-    console.log('Members (lowest points first):', members.map(m => `${m.user?.fullName || 'Unknown'} (${m.cumulativePoints}pts)`));
+    console.log('Members in rotation (lowest points first):', members.map(m => `${m.user?.fullName || 'Unknown'} (${m.cumulativePoints}pts)`));
     console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
 
     const newWeek = group.currentRotationWeek + 1;
@@ -1209,10 +1200,9 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     // FAIR ASSIGNMENT: Lowest points member gets highest points task
     for (let i = 0; i < members.length; i++) {
-      const member = members[i]; // Lowest points first
-      const task = sortedTasks[i]; // Highest points first
+      const member = members[i];
+      const task = sortedTasks[i];
       
-      // Skip if task is undefined (shouldn't happen if counts match)
       if (!task || !member) {
         console.warn(`Skipping assignment at index ${i}: member or task missing`);
         continue;
@@ -1237,7 +1227,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         }
       });
 
-      // Get the time slots for this task (with their individual points)
+      // Get the time slots for this task
       const timeSlots = task.timeSlots.length > 0 ? task.timeSlots : [{
         id: null,
         startTime: "00:00",
@@ -1247,7 +1237,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
       // Create new assignments based on task frequency
       if (task.executionFrequency === 'DAILY') {
-        // Daily tasks: create for each day of the week
         for (let day = 0; day < 7; day++) {
           const dueDate = new Date(weekStart);
           dueDate.setDate(dueDate.getDate() + day);
@@ -1278,7 +1267,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
           }
         }
       } else if (task.executionFrequency === 'WEEKLY') {
-        // Weekly tasks: parse selected days
         let selectedDays: DayOfWeek[] = [];
         
         if (task.selectedDays) {
@@ -1294,11 +1282,10 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         }
         
         if (selectedDays.length === 0) {
-          selectedDays = ['MONDAY']; // Default fallback
+          selectedDays = ['MONDAY'];
         }
         
         for (const day of selectedDays) {
-          // Create a time slot object with the weekStart time
           const weekStartTime = weekStart.toLocaleTimeString('en-US', { 
             hour12: false, 
             hour: '2-digit', 
@@ -1334,7 +1321,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         }
       }
 
-      // Update member's cumulative points (add this week's points)
+      // Update member's cumulative points
       const taskPoints = task.totalPoints;
       await prisma.groupMember.update({
         where: { id: member.id },
@@ -1367,19 +1354,17 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       }
     });
 
-    // Calculate fairness metrics (with null checks)
+    // Calculate fairness metrics
     const updatedMembers = await prisma.groupMember.findMany({
-      where: { groupId, isActive: true },
+      where: { groupId, isActive: true, inRotation: true },
       include: { user: { select: { fullName: true } } },
       orderBy: { cumulativePoints: 'desc' }
     });
 
-    // Safe access with null checks
     const maxPoints = updatedMembers.length > 0 ? updatedMembers[0]?.cumulativePoints || 0 : 0;
     const minPoints = updatedMembers.length > 0 ? updatedMembers[updatedMembers.length - 1]?.cumulativePoints || 0 : 0;
     const fairnessScore = maxPoints > 0 ? Math.round(100 - ((maxPoints - minPoints) / maxPoints) * 100) : 100;
 
-    // Safe console logs with null checks
     console.log('✅ FAIRNESS PROOF:');
     if (members.length > 0 && sortedTasks.length > 0) {
       console.log(`Lowest points member (${members[0]?.user?.fullName || 'Unknown'} - ${members[0]?.cumulativePoints || 0}pts) → got highest task (${sortedTasks[0]?.title || 'Unknown'} - ${sortedTasks[0]?.totalPoints || 0}pts)`);
@@ -1414,7 +1399,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
-
 
 // Get rotation schedule - FIXED to show ACTUAL assignments
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
@@ -1529,7 +1513,7 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
   }
 }
 
- // In task.services.ts - UPDATED reassignTask method
+// In task.services.ts - UPDATED reassignTask method
 static async reassignTask(taskId: string, userId: string, targetUserId: string) {
   try {
     const task = await prisma.task.findUnique({
@@ -1564,23 +1548,29 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
       return { success: false, message: "Only group admins can reassign tasks" };
     }
 
-    // ✅ Check if target user is an active member of the group
-    const targetMember = task.group.members.find(m => m.userId === targetUserId);
+    // ===== UPDATED: Check if target user is an active member AND in rotation =====
+    const targetMember = task.group.members.find(m => 
+      m.userId === targetUserId && 
+      m.isActive && 
+      m.inRotation // ← ADD THIS
+    );
     
     if (!targetMember) {
-      return { success: false, message: "Target user is not an active member of this group" };
+      return { success: false, message: "Target user is not an active member in rotation" };
     }
 
-    // ✅ Get all active members for rotation update
-    const allActiveMembers = task.group.members.map(m => ({
-      userId: m.userId,
-      fullName: m.user.fullName,
-      avatarUrl: m.user.avatarUrl,
-      rotationOrder: m.rotationOrder,
-      groupRole: m.groupRole
-    }));
+    // ===== UPDATED: Get all active members that are in rotation =====
+    const allActiveMembers = task.group.members
+      .filter(m => m.isActive && m.inRotation) // ← FILTER HERE
+      .map(m => ({
+        userId: m.userId,
+        fullName: m.user.fullName,
+        avatarUrl: m.user.avatarUrl,
+        rotationOrder: m.rotationOrder,
+        groupRole: m.groupRole
+      }));
 
-    // ✅ Update task's rotationMembers to include all active members
+    // Update task's rotationMembers to include only members in rotation
     await prisma.task.update({
       where: { id: taskId },
       data: {
@@ -1676,7 +1666,7 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
       }
     });
 
-    // 🔴 EMIT SOCKET EVENT FOR TASK ASSIGNED
+    // 🔴 EMIT SOCKET EVENT
     await SocketService.emitTaskAssigned(
       taskId,
       task.title,

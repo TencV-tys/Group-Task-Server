@@ -1,83 +1,92 @@
 import prisma from "../prisma";
 import { SocketService } from "./socket.services";
 export class GroupMembersService {
+  
   // Get all members in a group WITH ROTATION INFO
-  static async getGroupMembers(groupId: string, userId: string) {
-    try {
-      // Check if user is a member of the group
-      const userMembership = await prisma.groupMember.findFirst({
-        where: {
-          userId: userId,
-          groupId: groupId
-        }
-      });
-
-      if (!userMembership) {
-        return {
-          success: false,
-          message: "You are not a member of this group"
-        };
+static async getGroupMembers(groupId: string, userId: string) {
+  try {
+    // Check if user is a member of the group
+    const userMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId
       }
+    });
 
-      // Get group info for rotation week
-      const group = await prisma.group.findUnique({
-        where: { id: groupId }
-      });
-
-      // Get all members with their details
-      const members = await prisma.groupMember.findMany({
-        where: {
-          groupId: groupId
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true
-            }
-          }
-        },
-        orderBy: [
-          { rotationOrder: 'asc' },
-          { groupRole: 'desc' } // Admins first
-        ]
-      });
-
-      // Format response with rotation info
-      const formattedMembers = members.map(member => ({
-        id: member.id,
-        userId: member.userId,
-        fullName: member.user.fullName,
-        email: member.user.email,
-        avatarUrl: member.user.avatarUrl,
-        role: member.groupRole,
-        rotationOrder: member.rotationOrder,
-        isActive: member.isActive,
-        joinedAt: member.joinedAt
-      }));
-
-      return {
-        success: true,
-        message: "Members retrieved successfully",
-        members: formattedMembers,
-        userRole: userMembership.groupRole,
-        currentRotationWeek: group?.currentRotationWeek || 1,
-        totalMembers: members.length,
-        activeMembers: members.filter(m => m.isActive).length
-      };
-
-    } catch (error: any) {
-      console.error("GroupMembersService.getGroupMembers error:", error);
+    if (!userMembership) {
       return {
         success: false,
-        message: error.message || "Error retrieving members"
+        message: "You are not a member of this group"
       };
     }
-  }
 
- // Get group members with detailed rotation info
+    // Get group info for rotation week
+    const group = await prisma.group.findUnique({
+      where: { id: groupId }
+    });
+
+    // Get all members with their details
+    const members = await prisma.groupMember.findMany({
+      where: {
+        groupId: groupId
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      },
+      orderBy: [
+        { rotationOrder: 'asc' },
+        { groupRole: 'desc' } // Admins first
+      ]
+    });
+
+    // Format response with rotation info
+    const formattedMembers = members.map(member => ({
+      id: member.id,
+      userId: member.userId,
+      fullName: member.user.fullName,
+      email: member.user.email,
+      avatarUrl: member.user.avatarUrl,
+      role: member.groupRole,
+      rotationOrder: member.rotationOrder,
+      isActive: member.isActive,
+      inRotation: member.inRotation, // ← ADD THIS
+      joinedAt: member.joinedAt
+    }));
+
+    // Calculate rotation stats
+    const membersInRotation = members.filter(m => m.inRotation).length;
+    const admins = members.filter(m => m.groupRole === "ADMIN").length;
+
+    return {
+      success: true,
+      message: "Members retrieved successfully",
+      members: formattedMembers,
+      userRole: userMembership.groupRole,
+      currentRotationWeek: group?.currentRotationWeek || 1,
+      totalMembers: members.length,
+      activeMembers: members.filter(m => m.isActive).length,
+      membersInRotation, // ← ADD THIS
+      admins, // ← ADD THIS
+      hasEnoughForRotation: membersInRotation >= Math.ceil((await prisma.task.count({ where: { groupId, isRecurring: true } })) / 5)
+    };
+
+  } catch (error: any) {
+    console.error("GroupMembersService.getGroupMembers error:", error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving members"
+    };
+  }
+}
+
+// Get group members with detailed rotation info
 static async getGroupMembersWithRotation(groupId: string, userId: string) {
   try {
     // Check if user is a member of the group
@@ -128,40 +137,45 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
       ]
     });
 
-    // Get assignments for current week for each member
-    // Get assignments for current week for each member
-const currentWeekAssignments = await prisma.assignment.findMany({
-  where: {
-    task: {
-      groupId: groupId
-    },
-    rotationWeek: group.currentRotationWeek
-  },
-  include: {
-    task: {
-      select: {
-        id: true,
-        title: true,
-        points: true
-      }
-    },
-    user: {
-      select: {
-        id: true,
-        fullName: true
-      }
-    },
-    swapRequests: { // ✅ ADD THIS: Include swap requests
+    // Get assignments for current week - ONLY for members in rotation
+    const memberIdsInRotation = members
+      .filter(m => m.inRotation)
+      .map(m => m.userId);
+
+    const currentWeekAssignments = await prisma.assignment.findMany({
       where: {
-        status: "PENDING"
+        task: {
+          groupId: groupId
+        },
+        rotationWeek: group.currentRotationWeek,
+        userId: { in: memberIdsInRotation } // Only members in rotation
       },
-      select: {
-        id: true,
-        status: true
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            fullName: true
+          }
+        },
+        swapRequests: {
+          where: {
+            status: "PENDING"
+          },
+          select: {
+            id: true,
+            status: true
+          }
+        }
       }
-    }
-  }
-});
+    });
+
     // Get all recurring tasks to calculate rotation
     const recurringTasks = await prisma.task.findMany({
       where: {
@@ -171,10 +185,15 @@ const currentWeekAssignments = await prisma.assignment.findMany({
       orderBy: { rotationOrder: 'asc' }
     });
 
+    // Get members in rotation for task calculations
+    const membersInRotation = members.filter(m => m.inRotation);
+
     // Format response with rotation calculations
     const formattedMembers = members.map(member => {
-      // Get current week assignments for this member (tasks that still exist)
-      const memberCurrentAssignments = currentWeekAssignments
+      const isInRotation = member.inRotation;
+      
+      // Get current week assignments for this member (only if in rotation)
+      const memberCurrentAssignments = isInRotation ? currentWeekAssignments
         .filter(assignment => assignment.userId === member.userId)
         .filter(assignment => assignment.task !== null)
         .map(assignment => ({
@@ -184,14 +203,14 @@ const currentWeekAssignments = await prisma.assignment.findMany({
           points: assignment.task!.points,
           completed: assignment.completed,
           isHistorical: false
-        }));
+        })) : [];
 
       // Get historical assignments (tasks that were deleted)
       const memberHistoricalAssignments = currentWeekAssignments
         .filter(assignment => 
           assignment.userId === member.userId && 
           assignment.task === null &&
-          (assignment.taskTitle || assignment.taskPoints) // Has preserved data
+          (assignment.taskTitle || assignment.taskPoints)
         )
         .map(assignment => ({
           id: assignment.id,
@@ -200,7 +219,7 @@ const currentWeekAssignments = await prisma.assignment.findMany({
           points: assignment.taskPoints || assignment.points,
           completed: assignment.completed,
           isHistorical: true,
-          originalTaskId: assignment.taskId // Keep for reference
+          originalTaskId: assignment.taskId
         }));
 
       // Combine current and historical assignments
@@ -211,33 +230,34 @@ const currentWeekAssignments = await prisma.assignment.findMany({
         .filter(a => a.completed)
         .reduce((sum, a) => sum + a.points, 0);
 
-      // Calculate which tasks this member would get in upcoming weeks
+      // Calculate which tasks this member would get in upcoming weeks (only if in rotation)
       const upcomingTasks = [];
-      for (let weekOffset = 0; weekOffset < 4; weekOffset++) {
-        const tasksThisWeek = recurringTasks
-          .filter(task => !task.isDeleted) // Only include non-deleted tasks
-          .filter(task => {
-            const taskIndex = (task.rotationOrder || 1) - 1;
-            const memberIndex = members.findIndex(m => m.userId === member.userId);
-            const assigneeIndex = (taskIndex + weekOffset) % members.length;
-            return assigneeIndex === memberIndex;
-          });
+      if (isInRotation && membersInRotation.length > 0) {
+        for (let weekOffset = 0; weekOffset < 4; weekOffset++) {
+          const tasksThisWeek = recurringTasks
+            .filter(task => !task.isDeleted)
+            .filter(task => {
+              const taskIndex = (task.rotationOrder || 1) - 1;
+              const memberIndex = membersInRotation.findIndex(m => m.userId === member.userId);
+              const assigneeIndex = (taskIndex + weekOffset) % membersInRotation.length;
+              return assigneeIndex === memberIndex;
+            });
 
-        upcomingTasks.push({
-          week: group.currentRotationWeek + weekOffset,
-          tasks: tasksThisWeek.map(task => ({
-            id: task.id,
-            title: task.title,
-            points: task.points
-          }))
-        });
+          upcomingTasks.push({
+            week: group.currentRotationWeek + weekOffset,
+            tasks: tasksThisWeek.map(task => ({
+              id: task.id,
+              title: task.title,
+              points: task.points
+            }))
+          });
+        }
       }
 
       // Get member's swap requests status
-  // Get member's swap requests status
-const pendingSwapRequests = currentWeekAssignments
-  .filter(a => a.userId === member.userId)
-  .reduce((count, a) => count + (a.swapRequests?.length || 0), 0);
+      const pendingSwapRequests = currentWeekAssignments
+        .filter(a => a.userId === member.userId)
+        .reduce((count, a) => count + (a.swapRequests?.length || 0), 0);
 
       return {
         id: member.id,
@@ -248,6 +268,7 @@ const pendingSwapRequests = currentWeekAssignments
         role: member.groupRole,
         rotationOrder: member.rotationOrder,
         isActive: member.isActive,
+        inRotation: member.inRotation, // ← ADD THIS
         joinedAt: member.joinedAt,
         stats: {
           currentTasks: allAssignments.length,
@@ -255,19 +276,24 @@ const pendingSwapRequests = currentWeekAssignments
           pendingTasks: allAssignments.filter(a => !a.completed).length,
           cumulativePoints: cumulativePoints,
           historicalTasks: memberHistoricalAssignments.length,
-          pendingSwapRequests: pendingSwapRequests
+          pendingSwapRequests: pendingSwapRequests,
+          isInRotation: isInRotation // ← ADD THIS
         },
         currentTasks: allAssignments,
         upcomingTasks: upcomingTasks,
-        // Add historical tasks separately if needed
         historicalTasks: memberHistoricalAssignments
       };
     });
 
     // Calculate overall group statistics
+    const membersInRotationCount = members.filter(m => m.inRotation).length;
+    const adminsCount = members.filter(m => m.groupRole === "ADMIN").length;
+
     const groupStats = {
       totalMembers: formattedMembers.length,
       activeMembers: formattedMembers.filter(m => m.isActive).length,
+      membersInRotation: membersInRotationCount,
+      admins: adminsCount,
       totalTasksCompleted: formattedMembers.reduce((sum, m) => sum + m.stats.completedTasks, 0),
       totalPointsEarned: formattedMembers.reduce((sum, m) => sum + m.stats.cumulativePoints, 0),
       totalHistoricalTasks: formattedMembers.reduce((sum, m) => sum + m.stats.historicalTasks, 0)
@@ -288,8 +314,11 @@ const pendingSwapRequests = currentWeekAssignments
       rotationStats: {
         totalMembers: members.length,
         activeMembers: members.filter(m => m.isActive).length,
+        membersInRotation: membersInRotationCount,
+        admins: adminsCount,
         recurringTasks: recurringTasks.length,
-        deletedTasksPreserved: groupStats.totalHistoricalTasks
+        deletedTasksPreserved: groupStats.totalHistoricalTasks,
+        hasEnoughForRotation: membersInRotationCount >= Math.ceil(recurringTasks.length / 5)
       },
       groupStats: groupStats
     };
@@ -302,7 +331,6 @@ const pendingSwapRequests = currentWeekAssignments
     };
   }
 }
-
   // Remove a member from group (admin only) - UPDATED FOR ROTATION
   static async removeMember(groupId: string, memberId: string, adminId: string) {
     try {
@@ -409,206 +437,276 @@ return {
       };
     }
   }
-
-  // Promote/demote member (admin only)
-  static async updateMemberRole(groupId: string, memberId: string, newRole: string, adminId: string) {
-    try {
-      // Check if admin is actually admin
-      const adminMembership = await prisma.groupMember.findFirst({
-        where: {
-          userId: adminId,
-          groupId: groupId,
-          groupRole: "ADMIN"
-        }
-      });
-
-      if (!adminMembership) {
-        return {
-          success: false,
-          message: "Only admins can update member roles"
-        };
+// Promote/demote member (admin only)
+static async updateMemberRole(groupId: string, memberId: string, newRole: string, adminId: string) {
+  try {
+    // Check if admin is actually admin
+    const adminMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: adminId,
+        groupId: groupId,
+        groupRole: "ADMIN"
       }
+    });
 
-      // Don't allow demoting the only admin
-      if (newRole === "MEMBER") {
-        const allAdmins = await prisma.groupMember.count({
-          where: {
-            groupId: groupId,
-            groupRole: "ADMIN"
-          }
-        });
-
-        const targetMember = await prisma.groupMember.findFirst({
-          where: {
-            id: memberId,
-            groupId: groupId
-          }
-        });
-
-        if (targetMember?.groupRole === "ADMIN" && allAdmins <= 1) {
-          return {
-            success: false,
-            message: "Cannot demote the only admin. Promote another member to admin first."
-          };
-        }
-      }
-
-     // Update the role
-await prisma.groupMember.update({
-  where: { id: memberId },
-  data: { groupRole: newRole as any }
-});
-
-// Get member and user details for the socket event
-const member = await prisma.groupMember.findUnique({
-  where: { id: memberId },
-  include: {
-    user: {
-      select: { fullName: true }
-    }
-  }
-});
-
-// Get admin name for the socket event
-const admin = await prisma.user.findUnique({
-  where: { id: adminId },
-  select: { fullName: true }
-});
-
-// 🔴 EMIT SOCKET EVENT FOR ROLE CHANGED 
-if (member) {
-  await SocketService.emitGroupMemberRoleChanged(
-    groupId,
-    member.userId,
-    member.user.fullName,
-    member.groupRole, // This is the old role (before update)
-    newRole,
-    adminId,
-    admin?.fullName || 'Admin'
-  );
-}
-
-return {
-  success: true,
-  message: "Member role updated successfully"
-};
-    } catch (error: any) {
-      console.error("GroupMembersService.updateMemberRole error:", error);
+    if (!adminMembership) {
       return {
         success: false,
-        message: error.message || "Error updating member role"
+        message: "Only admins can update member roles"
       };
     }
-  }
 
-  // Update member rotation settings
-  static async updateMemberRotation(
-    groupId: string,
-    memberId: string,
-    adminId: string,
-    rotationOrder?: number,
-    isActive?: boolean
-  ) {
-    try {
-      // Check if admin is actually admin
-      const adminMembership = await prisma.groupMember.findFirst({
+    // Don't allow demoting the only admin
+    if (newRole === "MEMBER") {
+      const allAdmins = await prisma.groupMember.count({
         where: {
-          userId: adminId,
           groupId: groupId,
           groupRole: "ADMIN"
         }
       });
 
-      if (!adminMembership) {
-        return {
-          success: false,
-          message: "Only admins can update rotation settings"
-        };
-      }
-
-      // Check if member exists in group
-      const member = await prisma.groupMember.findFirst({
+      const targetMember = await prisma.groupMember.findFirst({
         where: {
           id: memberId,
           groupId: groupId
         }
       });
 
-      if (!member) {
+      if (targetMember?.groupRole === "ADMIN" && allAdmins <= 1) {
         return {
           success: false,
-          message: "Member not found in this group"
+          message: "Cannot demote the only admin. Promote another member to admin first."
         };
       }
+    }
 
-      // Prepare update data
-      const updateData: any = {};
-      if (rotationOrder !== undefined) updateData.rotationOrder = rotationOrder;
-      if (isActive !== undefined) updateData.isActive = isActive;
+    // Get target member to check current role
+    const targetMember = await prisma.groupMember.findUnique({
+      where: { id: memberId }
+    });
 
-      // If setting to inactive, check if member has current assignments
-      if (isActive === false && member.isActive === true) {
-        const currentWeek = (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1;
-        const currentAssignments = await prisma.assignment.findMany({
-          where: {
-            userId: member.userId,
-            task: {
-              groupId: groupId
-            },
-            rotationWeek: currentWeek,
-            completed: false
-          }
-        });
+    if (!targetMember) {
+      return {
+        success: false,
+        message: "Member not found"
+      };
+    }
 
-        if (currentAssignments.length > 0) {
-          return {
-            success: false,
-            message: `Cannot deactivate member with ${currentAssignments.length} uncompleted tasks for this week`
-          };
-        }
-      }
+    // Prepare update data
+    const updateData: any = {
+      groupRole: newRole as any
+    };
 
-      // Update member
-      const updatedMember = await prisma.groupMember.update({
-        where: { id: memberId },
-        data: updateData,
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true
-            }
-          }
+    // ===== NEW: Auto-manage inRotation based on role =====
+    if (newRole === "ADMIN") {
+      // When promoting to admin, automatically remove from rotation
+      updateData.inRotation = false;
+      
+      // Check if they have current assignments
+      const currentWeek = (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1;
+      const currentAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: targetMember.userId,
+          task: { groupId },
+          rotationWeek: currentWeek,
+          completed: false
         }
       });
 
-      return {
-        success: true,
-        message: "Member rotation settings updated",
-        member: {
-          id: updatedMember.id,
-          userId: updatedMember.userId,
-          fullName: updatedMember.user.fullName,
-          email: updatedMember.user.email,
-          avatarUrl: updatedMember.user.avatarUrl,
-          role: updatedMember.groupRole,
-          rotationOrder: updatedMember.rotationOrder,
-          isActive: updatedMember.isActive,
-          joinedAt: updatedMember.joinedAt
-        }
-      };
+      if (currentAssignments.length > 0) {
+        console.log(`⚠️ Admin ${targetMember.userId} has ${currentAssignments.length} uncompleted tasks that will need reassignment`);
+      }
+    } else if (newRole === "MEMBER" && targetMember.groupRole === "ADMIN") {
+      // When demoting from admin to member, optionally add to rotation
+      // You can decide default behavior - here we set to true
+      updateData.inRotation = true;
+    }
 
-    } catch (error: any) {
-      console.error("GroupMembersService.updateMemberRotation error:", error);
+    // Update the role
+    const updatedMember = await prisma.groupMember.update({
+      where: { id: memberId },
+      data: updateData,
+      include: {
+        user: {
+          select: { fullName: true }
+        }
+      }
+    });
+
+    // Get admin name for the socket event
+    const admin = await prisma.user.findUnique({
+      where: { id: adminId },
+      select: { fullName: true }
+    });
+
+    // 🔴 EMIT SOCKET EVENT FOR ROLE CHANGED 
+    if (updatedMember) {
+      await SocketService.emitGroupMemberRoleChanged(
+        groupId,
+        updatedMember.userId,
+        updatedMember.user.fullName,
+        targetMember.groupRole, // Old role
+        newRole,
+        adminId,
+        admin?.fullName || 'Admin'
+      );
+    }
+
+    return {
+      success: true,
+      message: newRole === "ADMIN" 
+        ? "Member promoted to admin and removed from rotation" 
+        : "Member role updated successfully",
+      member: {
+        id: updatedMember.id,
+        userId: updatedMember.userId,
+        fullName: updatedMember.user.fullName,
+        role: updatedMember.groupRole,
+        inRotation: updatedMember.inRotation
+      }
+    };
+
+  } catch (error: any) {
+    console.error("GroupMembersService.updateMemberRole error:", error);
+    return {
+      success: false,
+      message: error.message || "Error updating member role"
+    };
+  }
+}
+
+// Update member rotation settings
+static async updateMemberRotation(
+  groupId: string,
+  memberId: string,
+  adminId: string,
+  rotationOrder?: number,
+  isActive?: boolean,
+  inRotation?: boolean // ← ADD THIS PARAMETER
+) {
+  try {
+    // Check if admin is actually admin
+    const adminMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: adminId,
+        groupId: groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    if (!adminMembership) {
       return {
         success: false,
-        message: error.message || "Error updating member rotation"
+        message: "Only admins can update rotation settings"
       };
     }
-  }
 
+    // Check if member exists in group
+    const member = await prisma.groupMember.findFirst({
+      where: {
+        id: memberId,
+        groupId: groupId
+      }
+    });
+
+    if (!member) {
+      return {
+        success: false,
+        message: "Member not found in this group"
+      };
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (rotationOrder !== undefined) updateData.rotationOrder = rotationOrder;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (inRotation !== undefined) updateData.inRotation = inRotation; // ← ADD THIS
+
+    // If setting to inactive, check if member has current assignments
+    if (isActive === false && member.isActive === true) {
+      const currentWeek = (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1;
+      const currentAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: member.userId,
+          task: {
+            groupId: groupId
+          },
+          rotationWeek: currentWeek,
+          completed: false
+        }
+      });
+
+      if (currentAssignments.length > 0) {
+        return {
+          success: false,
+          message: `Cannot deactivate member with ${currentAssignments.length} uncompleted tasks for this week`
+        };
+      }
+    }
+
+    // If removing from rotation, check if they have current assignments
+    if (inRotation === false && member.inRotation === true) {
+      const currentWeek = (await prisma.group.findUnique({ where: { id: groupId } }))?.currentRotationWeek || 1;
+      const currentAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: member.userId,
+          task: {
+            groupId: groupId
+          },
+          rotationWeek: currentWeek,
+          completed: false
+        }
+      });
+
+      if (currentAssignments.length > 0) {
+        return {
+          success: false,
+          message: `Cannot remove from rotation with ${currentAssignments.length} uncompleted tasks for this week. Reassign or complete them first.`
+        };
+      }
+    }
+
+    // Update member
+    const updatedMember = await prisma.groupMember.update({
+      where: { id: memberId },
+      data: updateData,
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    return {
+      success: true,
+      message: "Member rotation settings updated",
+      member: {
+        id: updatedMember.id,
+        userId: updatedMember.userId,
+        fullName: updatedMember.user.fullName,
+        email: updatedMember.user.email,
+        avatarUrl: updatedMember.user.avatarUrl,
+        role: updatedMember.groupRole,
+        rotationOrder: updatedMember.rotationOrder,
+        isActive: updatedMember.isActive,
+        inRotation: updatedMember.inRotation, // ← ADD THIS
+        joinedAt: updatedMember.joinedAt
+      }
+    };
+
+  } catch (error: any) {
+    console.error("GroupMembersService.updateMemberRotation error:", error);
+    return {
+      success: false,
+      message: error.message || "Error updating member rotation"
+    };
+  }
+}
   // Reorder rotation sequence
   static async reorderRotationSequence(groupId: string, adminId: string, newOrder: Array<{ memberId: string, rotationOrder: number }>) {
     try {
@@ -881,6 +979,7 @@ return {
           role: m.groupRole,
           rotationOrder: m.rotationOrder,
           isActive: m.isActive,
+          inRotation:m.inRotation,
           joinedAt: m.joinedAt
         })),
         userRole: userMembership.groupRole

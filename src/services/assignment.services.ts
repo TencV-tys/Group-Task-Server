@@ -998,142 +998,182 @@ export class AssignmentService {
   }
 
   // ========== GET GROUP ASSIGNMENTS ==========
-  static async getGroupAssignments(
-    groupId: string,
-    requestingUserId: string,
-    filters: {
-      status?: string;
-      week?: number;
-      userId?: string;
-      limit: number;
-      offset: number;
+static async getGroupAssignments(
+  groupId: string,
+  requestingUserId: string,
+  filters: {
+    status?: string;
+    week?: number;
+    userId?: string;
+    limit: number;
+    offset: number;
+  }
+) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId: requestingUserId, groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only group admins can view all assignments" };
     }
-  ) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId: requestingUserId, groupId, groupRole: "ADMIN" }
-      });
 
-      if (!membership) {
-        return { success: false, message: "Only group admins can view all assignments" };
+    // ===== UPDATED: Get all members that are in rotation =====
+    const membersInRotation = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        isActive: true,
+        inRotation: true // Only members who should get tasks
+      },
+      select: { userId: true }
+    });
+
+    const memberIdsInRotation = membersInRotation.map(m => m.userId);
+
+    const where: any = { 
+      task: { groupId },
+      // Only show assignments for members in rotation
+      userId: { in: memberIdsInRotation }
+    };
+
+    if (filters.status) {
+      switch (filters.status) {
+        case 'pending':
+          where.completed = false;
+          break;
+        case 'completed':
+          where.completed = true;
+          where.verified = null;
+          break;
+        case 'verified':
+          where.completed = true;
+          where.verified = true;
+          break;
+        case 'rejected':
+          where.completed = true;
+          where.verified = false;
+          break;
       }
+    }
 
-      const where: any = { task: { groupId } };
-
-      if (filters.status) {
-        switch (filters.status) {
-          case 'pending':
-            where.completed = false;
-            break;
-          case 'completed':
-            where.completed = true;
-            where.verified = null;
-            break;
-          case 'verified':
-            where.completed = true;
-            where.verified = true;
-            break;
-          case 'rejected':
-            where.completed = true;
-            where.verified = false;
-            break;
-        }
-      }
-
-      if (filters.userId) where.userId = filters.userId;
-      if (filters.week !== undefined) where.rotationWeek = filters.week;
-
-      const [assignments, total] = await Promise.all([
-        prisma.assignment.findMany({
-          where,
-          include: {
-            user: { select: { id: true, fullName: true, avatarUrl: true } },
-            task: { select: { id: true, title: true, points: true, executionFrequency: true } },
-            timeSlot: true
-          },
-          orderBy: [{ dueDate: 'asc' }, { completed: 'asc' }],
-          take: filters.limit,
-          skip: filters.offset
-        }),
-        prisma.assignment.count({ where })
-      ]);
-
-      // Filter out assignments with null tasks
-      const validAssignments = assignments.filter(a => a.task !== null);
-      
-      const formattedAssignments = validAssignments.map(assignment => {
-        const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
-        const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
-        
-        return {
-          id: assignment.id,
-          taskId: assignment.taskId,
-          taskTitle: assignment.task!.title,
-          user: assignment.user,
-          points: assignment.points,
-          completed: assignment.completed,
-          verified: assignment.verified,
-          verificationStatus,
-          photoUrl: assignment.photoUrl,
-          notes: assignment.notes,
-          adminNotes: assignment.adminNotes,
-          dueDate: assignment.dueDate,
-          completedAt: assignment.completedAt,
-          timeUntilDue,
-          timeSlot: assignment.timeSlot,
-          rotationWeek: assignment.rotationWeek
+    // If a specific userId is provided, only include if they're in rotation
+    if (filters.userId) {
+      if (!memberIdsInRotation.includes(filters.userId)) {
+        return { 
+          success: false, 
+          message: "Selected user is not in rotation or does not exist" 
         };
-      });
+      }
+      where.userId = filters.userId;
+    }
 
-      // Also get historical assignments for this group
-      const historicalAssignments = await prisma.assignment.findMany({
-        where: {
-          taskId: null,
-          taskTitle: { not: null },
-          user: { groups: { some: { groupId } } },
-          ...(filters.userId ? { userId: filters.userId } : {}),
-          ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
-        },
+    if (filters.week !== undefined) where.rotationWeek = filters.week;
+
+    const [assignments, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
         include: {
           user: { select: { id: true, fullName: true, avatarUrl: true } },
+          task: { select: { id: true, title: true, points: true, executionFrequency: true } },
           timeSlot: true
         },
-        orderBy: { dueDate: 'asc' }
-      });
+        orderBy: [{ dueDate: 'asc' }, { completed: 'asc' }],
+        take: filters.limit,
+        skip: filters.offset
+      }),
+      prisma.assignment.count({ where })
+    ]);
 
-      const formattedHistorical = historicalAssignments.map(assignment => ({
+    // Filter out assignments with null tasks
+    const validAssignments = assignments.filter(a => a.task !== null);
+    
+    const formattedAssignments = validAssignments.map(assignment => {
+      const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
+      const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
+      
+      return {
         id: assignment.id,
-        taskId: null,
-        taskTitle: assignment.taskTitle || "Deleted Task",
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
         user: assignment.user,
-        points: assignment.taskPoints || assignment.points,
+        points: assignment.points,
         completed: assignment.completed,
         verified: assignment.verified,
-        verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
+        verificationStatus,
         photoUrl: assignment.photoUrl,
         notes: assignment.notes,
         adminNotes: assignment.adminNotes,
         dueDate: assignment.dueDate,
         completedAt: assignment.completedAt,
-        timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
+        timeUntilDue,
         timeSlot: assignment.timeSlot,
-        rotationWeek: assignment.rotationWeek,
-        isHistorical: true
-      }));
-
-      return {
-        success: true,
-        message: "Group assignments retrieved successfully",
-        assignments: [...formattedAssignments, ...formattedHistorical],
-        total: validAssignments.length + historicalAssignments.length,
-        filters
+        rotationWeek: assignment.rotationWeek
       };
+    });
 
-    } catch (error: any) {
-      console.error("AssignmentService.getGroupAssignments error:", error);
-      return { success: false, message: error.message || "Error retrieving group assignments" };
-    }
+    // Also get historical assignments for members in rotation
+    const historicalWhere: any = {
+      taskId: null,
+      taskTitle: { not: null },
+      user: { groups: { some: { groupId } } },
+      userId: { in: memberIdsInRotation } // Only historical assignments for members in rotation
+    };
+
+    if (filters.userId) historicalWhere.userId = filters.userId;
+    if (filters.week !== undefined) historicalWhere.rotationWeek = filters.week;
+
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: historicalWhere,
+      include: {
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    const formattedHistorical = historicalAssignments.map(assignment => ({
+      id: assignment.id,
+      taskId: null,
+      taskTitle: assignment.taskTitle || "Deleted Task",
+      user: assignment.user,
+      points: assignment.taskPoints || assignment.points,
+      completed: assignment.completed,
+      verified: assignment.verified,
+      verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
+      photoUrl: assignment.photoUrl,
+      notes: assignment.notes,
+      adminNotes: assignment.adminNotes,
+      dueDate: assignment.dueDate,
+      completedAt: assignment.completedAt,
+      timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
+      timeSlot: assignment.timeSlot,
+      rotationWeek: assignment.rotationWeek,
+      isHistorical: true
+    }));
+
+    // Also get admin info for context (but admins themselves won't have assignments)
+    const adminCount = await prisma.groupMember.count({
+      where: { groupId, groupRole: "ADMIN", isActive: true }
+    });
+
+    return {
+      success: true,
+      message: "Group assignments retrieved successfully",
+      assignments: [...formattedAssignments, ...formattedHistorical],
+      total: validAssignments.length + historicalAssignments.length,
+      filters,
+      stats: {
+        totalAssignments: validAssignments.length + historicalAssignments.length,
+        membersInRotation: memberIdsInRotation.length,
+        adminsCount: adminCount
+      }
+    };
+
+  } catch (error: any) {
+    console.error("AssignmentService.getGroupAssignments error:", error);
+    return { success: false, message: error.message || "Error retrieving group assignments" };
   }
+}
 
   // ========== CHECK GROUP NEGLECTED ASSIGNMENTS ==========
   private static async checkGroupNeglectedAssignments(groupId: string) {

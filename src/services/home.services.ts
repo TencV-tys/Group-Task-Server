@@ -1,4 +1,4 @@
-// services/home.services.ts - COMPLETE UPDATED VERSION WITH NULL SAFETY
+// services/home.services.ts - COMPLETE UPDATED VERSION WITH ROTATION STATUS
 import prisma from "../prisma";
 
 export class HomeServices {
@@ -24,7 +24,7 @@ export class HomeServices {
         };
       }
 
-      // Get user's group memberships
+      // Get user's group memberships with rotation status
       const userMemberships = await prisma.groupMember.findMany({
         where: { userId: userId },
         include: {
@@ -51,6 +51,12 @@ export class HomeServices {
 
       const groupsCount = userMemberships.length;
 
+      // ===== NEW: Check user's rotation status across groups =====
+      const userInRotation = userMemberships.some(m => m.inRotation);
+      const userIsAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
+      const groupsWhereUserInRotation = userMemberships.filter(m => m.inRotation).length;
+      const groupsWhereUserIsAdmin = userMemberships.filter(m => m.groupRole === "ADMIN").length;
+
       // Calculate date ranges
       const now = new Date();
       const today = new Date(now);
@@ -71,8 +77,8 @@ export class HomeServices {
       console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
       console.log(`📅 Today: ${today.toISOString()}`);
 
-      // Count tasks due this week (excluding expired)
-      const tasksDueThisWeek = await prisma.assignment.count({
+      // Count tasks due this week (excluding expired) - only if user is in rotation
+      const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
           completed: false,
@@ -82,24 +88,24 @@ export class HomeServices {
             lte: currentWeekEnd
           }
         }
-      });
+      }) : 0;
 
       console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
 
-      // Count overdue tasks (excluding expired)
-      const overdueTasks = await prisma.assignment.count({
+      // Count overdue tasks (excluding expired) - only if user is in rotation
+      const overdueTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
           completed: false,
           expired: false,
           dueDate: { lt: today }
         }
-      });
+      }) : 0;
 
       console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
-      // Get current week assignments (excluding expired)
-      const currentWeekAssignments = await prisma.assignment.findMany({
+      // Get current week assignments (excluding expired) - only if user is in rotation
+      const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
@@ -127,7 +133,7 @@ export class HomeServices {
           }
         },
         orderBy: { dueDate: 'asc' }
-      });
+      }) : [];
 
       // Separate into overdue and upcoming
       const overdueAssignments = currentWeekAssignments.filter(
@@ -138,28 +144,28 @@ export class HomeServices {
         assignment => assignment.dueDate >= today
       );
 
-      // Get completed tasks count
-      const completedTasks = await prisma.assignment.count({
+      // Get completed tasks count - only if user is in rotation
+      const completedTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
           completed: true
         }
-      });
+      }) : 0;
 
-      // Get total assignments count
-      const totalTasks = await prisma.assignment.count({
+      // Get total assignments count - only if user is in rotation
+      const totalTasks = userInRotation ? await prisma.assignment.count({
         where: { userId: userId }
-      });
+      }) : 0;
 
-      // Get pending swap requests
-      const swapRequests = await prisma.swapRequest.count({
+      // Get pending swap requests - only if user is in rotation
+      const swapRequests = userInRotation ? await prisma.swapRequest.count({
         where: {
           assignment: {
             userId: userId
           },
           status: "PENDING"
         }
-      });
+      }) : 0;
 
       // Get recent activity (notifications)
       const recentActivity = await prisma.userNotification.findMany({
@@ -176,35 +182,30 @@ export class HomeServices {
         }
       });
 
-      // Calculate points earned this week - FIXED with null safety
-      const completedAssignmentsThisWeek = await prisma.assignment.findMany({
-        where: {
-          userId: userId,
-          completed: true,
-          completedAt: {
-            gte: currentWeekStart
-          }
-        },
-        include: {
-          task: {
-            select: {
-              points: true
-            }
-          }
-        }
-      });
-
-      const pointsThisWeek = completedAssignmentsThisWeek.reduce((sum, assignment) => {
-        const points = assignment.task?.points || assignment.taskPoints || 0;
-        return sum + points;
-      }, 0);
+      // Calculate points earned this week - only if user is in rotation
+      const pointsThisWeek = userInRotation ? await this.getWeeklyPoints(userId, currentWeekStart) : 0;
 
       // Format groups with rotation info
-      const groups = userMemberships.map(member => {
+      const groups = await Promise.all(userMemberships.map(async (member) => {
         const group = member.group;
         const tasksForThisGroup = currentWeekAssignments.filter(
           assignment => assignment.task?.group?.id === group.id
         );
+
+        // Get rotation stats for this group
+        const membersInRotation = await prisma.groupMember.count({
+          where: { 
+            groupId: group.id, 
+            inRotation: true 
+          }
+        });
+
+        const adminsInGroup = await prisma.groupMember.count({
+          where: { 
+            groupId: group.id, 
+            groupRole: "ADMIN" 
+          }
+        });
 
         return {
           id: group.id,
@@ -213,16 +214,19 @@ export class HomeServices {
           role: member.groupRole,
           rotationOrder: member.rotationOrder,
           isActive: member.isActive,
+          inRotation: member.inRotation,
           currentRotationWeek: group.currentRotationWeek,
           lastRotationUpdate: group.lastRotationUpdate,
           stats: {
             totalTasks: group._count.tasks,
             totalMembers: group._count.members,
             yourTasksThisWeek: tasksForThisGroup.length,
-            recurringTasks: group._count.tasks
+            recurringTasks: group._count.tasks,
+            membersInRotation, // Number of members who get tasks
+            admins: adminsInGroup // Number of admins
           }
         };
-      });
+      }));
 
       // Sort groups by activity
       groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
@@ -234,7 +238,11 @@ export class HomeServices {
             ...user,
             groupsCount,
             pointsThisWeek,
-            totalPoints: await this.getTotalPoints(userId)
+            totalPoints: userInRotation ? await this.getTotalPoints(userId) : 0,
+            inRotation: userInRotation,
+            isAdmin: userIsAdmin,
+            groupsWhereUserInRotation,
+            groupsWhereUserIsAdmin
           },
           stats: {
             groupsCount,
@@ -244,10 +252,12 @@ export class HomeServices {
             totalTasks,
             swapRequests,
             completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-            pointsThisWeek
+            pointsThisWeek,
+            userInRotation, // Flag if user gets tasks
+            isAdmin: userIsAdmin // Flag if user is admin
           },
           currentWeekTasks: upcomingAssignmentsThisWeek
-            .filter(assignment => assignment.task !== null) // Filter out null tasks
+            .filter(assignment => assignment.task !== null)
             .map(assignment => ({
               id: assignment.id,
               taskId: assignment.task!.id,
@@ -263,7 +273,7 @@ export class HomeServices {
               daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
             })),
           overdueTasks: overdueAssignments
-            .filter(assignment => assignment.task !== null) // Filter out null tasks
+            .filter(assignment => assignment.task !== null)
             .map(assignment => ({
               id: assignment.id,
               taskId: assignment.task!.id,
@@ -304,6 +314,19 @@ export class HomeServices {
     
   static async getWeeklySummary(userId: string) {
     try {
+      // ===== NEW: Get user's rotation status =====
+      const userMemberships = await prisma.groupMember.findMany({
+        where: { userId: userId },
+        select: {
+          inRotation: true,
+          groupRole: true,
+          groupId: true
+        }
+      });
+
+      const inRotation = userMemberships.some(m => m.inRotation);
+      const isAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
+
       const now = new Date();
       const weekStart = new Date(now);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
@@ -313,8 +336,8 @@ export class HomeServices {
       weekEnd.setDate(weekEnd.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
 
-      // Get completed tasks this week - FIXED with null safety
-      const completedThisWeek = await prisma.assignment.findMany({
+      // Get completed tasks this week - only if user is in rotation
+      const completedThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
@@ -336,10 +359,10 @@ export class HomeServices {
           }
         },
         orderBy: { completedAt: 'desc' }
-      });
+      }) : [];
 
-      // Get pending tasks for this week - FIXED with null safety
-      const pendingThisWeek = await prisma.assignment.findMany({
+      // Get pending tasks for this week - only if user is in rotation
+      const pendingThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
@@ -368,9 +391,9 @@ export class HomeServices {
             }
           }
         }
-      });
+      }) : [];
 
-      // Calculate points - FIXED with null safety
+      // Calculate points
       const totalPoints = completedThisWeek.reduce((sum, assignment) => {
         const points = assignment.task?.points || assignment.taskPoints || 0;
         return sum + points;
@@ -396,8 +419,14 @@ export class HomeServices {
           completedTasks: completedThisWeek.length,
           pendingTasks: pendingThisWeek.length,
           totalPoints,
+          // ===== NEW: Add user role info =====
+          userRole: {
+            inRotation,
+            isAdmin,
+            hasTasks: completedThisWeek.length > 0 || pendingThisWeek.length > 0
+          },
           completedTasksList: completedThisWeek
-            .filter(item => item.task !== null) // Filter out null tasks
+            .filter(item => item.task !== null)
             .map(item => ({
               title: item.task!.title,
               points: item.task!.points,
@@ -405,7 +434,7 @@ export class HomeServices {
               completedAt: item.completedAt
             })),
           pendingTasksList: pendingThisWeek
-            .filter(item => item.task !== null) // Filter out null tasks
+            .filter(item => item.task !== null)
             .map(item => ({
               title: item.task!.title,
               points: item.task!.points,
@@ -426,7 +455,36 @@ export class HomeServices {
     }
   }
 
-  // Helper method to get total points - FIXED with null safety
+  // ===== NEW: Helper method to get weekly points =====
+  private static async getWeeklyPoints(userId: string, weekStart: Date): Promise<number> {
+    try {
+      const completedAssignments = await prisma.assignment.findMany({
+        where: {
+          userId: userId,
+          completed: true,
+          completedAt: {
+            gte: weekStart
+          }
+        },
+        include: {
+          task: {
+            select: {
+              points: true
+            }
+          }
+        }
+      });
+
+      return completedAssignments.reduce((sum, assignment) => {
+        const points = assignment.task?.points || assignment.taskPoints || 0;
+        return sum + points;
+      }, 0);
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  // Helper method to get total points
   private static async getTotalPoints(userId: string): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
