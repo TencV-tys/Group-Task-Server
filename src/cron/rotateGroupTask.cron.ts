@@ -1,6 +1,7 @@
-// cron/rotateGroupTask.cron.ts - UPDATED VERSION
+// cron/rotateGroupTask.cron.ts - UPDATED with real-time events
 import cron from 'node-cron';
 import { TaskService } from '../services/task.services';
+import { SocketService } from '../services/socket.services'; // ADD THIS
 import prisma from '../prisma';
 
 export class CronService {
@@ -38,6 +39,8 @@ export class CronService {
                 userId: true,
                 cumulativePoints: true,
                 rotationOrder: true,
+                groupRole: true,
+                inRotation: true,
                 user: {
                   select: { fullName: true }
                 }
@@ -55,11 +58,18 @@ export class CronService {
             continue;
           }
 
-          // Skip groups with no members
-          if (group.members.length === 0) {
-            console.log(`⏭️ Group ${group.name || group.id} has no active members`);
+          // Filter members who are in rotation
+          const membersInRotation = group.members.filter(m => m.inRotation);
+          
+          // Skip groups with no members in rotation
+          if (membersInRotation.length === 0) {
+            console.log(`⏭️ Group ${group.name || group.id} has no members in rotation`);
             continue;
           }
+
+          // Log rotation stats
+          const admins = group.members.filter(m => m.groupRole === "ADMIN").length;
+          console.log(`   👥 Members in rotation: ${membersInRotation.length}, Admins: ${admins}`);
 
           // Check if rotation is needed based on group creation
           const shouldRotate = await this.shouldRotateGroup(group);
@@ -76,12 +86,14 @@ export class CronService {
             // Sort tasks by points (highest to lowest)
             const sortedTasks = [...tasksWithPoints].sort((a, b) => b.totalPoints - a.totalPoints);
             
-            // Sort members by cumulative points (lowest to highest)
-            const sortedMembers = [...group.members].sort((a, b) => a.cumulativePoints - b.cumulativePoints);
+            // Sort only members in rotation by cumulative points
+            const sortedMembers = [...membersInRotation].sort((a, b) => a.cumulativePoints - b.cumulativePoints);
 
             console.log(`   📊 Fair Rotation Analysis:`);
-            console.log(`      Members (lowest points first):`, sortedMembers.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
-            console.log(`      Tasks (highest points first):`, sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
+            console.log(`      Members in rotation (lowest points first):`, 
+              sortedMembers.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
+            console.log(`      Tasks (highest points first):`, 
+              sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
 
             // Separate tasks into assigned and unassigned
             const assignedTasks = sortedTasks.filter(task => !!task.currentAssignee);
@@ -99,7 +111,7 @@ export class CronService {
             }
 
             // Only rotate tasks that have assigned members
-            if (assignedTasks.length > 0) {
+            if (assignedTasks.length > 0 && sortedMembers.length > 0) {
               console.log(`   🔄 Rotating ${assignedTasks.length} assigned tasks with fair algorithm...`);
               
               try {
@@ -118,18 +130,31 @@ export class CronService {
                   continue;
                 }
 
-                // Use rotateGroupTasks instead of rotateAssignedTasks
+                // Use rotateGroupTasks
                 const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
                  
                 if (result.success) {
                   console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
-                  console.log(`   📊 Fairness Metrics:`, result.fairnessMetrics);
-                  
-                  // Log the fairness proof
-                  console.log(`   📋 ROTATION PROOF:`);
-                  console.log(`      Lowest points member (${result.fairnessMetrics?.lowestPointsMember}) → got highest task (${result.fairnessMetrics?.gotHighestTask} - ${result.fairnessMetrics?.gotHighestPoints}pts)`);
-                  console.log(`      Highest points member (${result.fairnessMetrics?.highestPointsMember}) → got lowest task (${result.fairnessMetrics?.gotLowestTask} - ${result.fairnessMetrics?.gotLowestPoints}pts)`);
-                  console.log(`      Fairness Score: ${result.fairnessMetrics?.fairnessScore}%`);
+              if (result.newWeek && result.weekStart && result.weekEnd) {
+    await SocketService.emitRotationCompleted(
+      group.id,
+      result.newWeek, // Now TypeScript knows this is defined
+      result.rotatedTasks || [],
+      result.weekStart,
+      result.weekEnd
+    );
+    console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
+  } else {
+    console.log(`   ⚠️ Missing rotation data, skipping socket emit`);
+  }
+                  if (result.fairnessMetrics) {
+                    console.log(`   📊 Fairness Metrics:`);
+                    console.log(`      Lowest points member: ${result.fairnessMetrics.lowestPointsMember} (${result.fairnessMetrics.lowestPointsValue}pts)`);
+                    console.log(`      → got highest task: ${result.fairnessMetrics.gotHighestTask} (${result.fairnessMetrics.gotHighestPoints}pts)`);
+                    console.log(`      Highest points member: ${result.fairnessMetrics.highestPointsMember} (${result.fairnessMetrics.highestPointsValue}pts)`);
+                    console.log(`      → got lowest task: ${result.fairnessMetrics.gotLowestTask} (${result.fairnessMetrics.gotLowestPoints}pts)`);
+                    console.log(`      Fairness Score: ${result.fairnessMetrics.fairnessScore}%`);
+                  }
                 } else {
                   console.log(`   ❌ Rotation failed: ${result.message}`);
                 }
@@ -137,7 +162,7 @@ export class CronService {
                 console.error(`   ❌ Error rotating group:`, error);
               }
             } else {
-              console.log(`   ℹ️ No assigned tasks to rotate`);
+              console.log(`   ℹ️ No assigned tasks to rotate or no members in rotation`);
             }
           }
         }
@@ -177,4 +202,4 @@ export class CronService {
 
     return shouldRotate;
   }
-} 
+}

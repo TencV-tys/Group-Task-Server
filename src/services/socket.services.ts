@@ -391,27 +391,29 @@ export class SocketService {
 
   // ========== ROTATION EVENTS ==========
 
-  static async emitRotationCompleted(
-    groupId: string,
-    newWeek: number,
-    rotatedTasks: any[],
-    weekStart: Date,
-    weekEnd: Date
-  ) {
-    try {
-      const payload: RotationCompletedPayload = {
-        groupId,
-        newWeek,
-        rotatedTasks,
-        weekStart,
-        weekEnd
-      };
-      
-      emitToGroup(groupId, SERVER_EVENTS.ROTATION_COMPLETED, payload);
-    } catch (error) {
-      console.error('SocketService.emitRotationCompleted error:', error);
-    }
+ // In socket.services.ts - This method already exists, but here it is for reference
+static async emitRotationCompleted(
+  groupId: string,
+  newWeek: number,
+  rotatedTasks: any[],
+  weekStart: Date,
+  weekEnd: Date
+) {
+  try {
+    const payload: RotationCompletedPayload = {
+      groupId,
+      newWeek,
+      rotatedTasks,
+      weekStart,
+      weekEnd
+    };
+    
+    emitToGroup(groupId, SERVER_EVENTS.ROTATION_COMPLETED, payload);
+    console.log(`📢 Emitted rotation completed for group ${groupId} to week ${newWeek}`);
+  } catch (error) {
+    console.error('SocketService.emitRotationCompleted error:', error);
   }
+}
 
   // ========== NOTIFICATION EVENTS ==========
 
