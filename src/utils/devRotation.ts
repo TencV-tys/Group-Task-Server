@@ -1,25 +1,30 @@
-// utils/devRotation.ts - UPDATED to respect inRotation field
+// utils/devRotation.ts - UPDATED to adapt to current time and trigger notifications
 import prisma from '../prisma';
 import { TaskService } from '../services/task.services';
+import { UserNotificationService } from '../services/user.notification.services';
 
 export async function checkAndFixRotation() {
   console.log('🔄 Checking rotation for all groups...');
+  console.log(`📅 Current time: ${new Date().toISOString()}`);
   
   const groups = await prisma.group.findMany({
     include: {
       tasks: {
         where: { isRecurring: true },
-        select: { id: true, createdAt: true }
+        select: { id: true, title: true, createdAt: true }
       },
       members: {
         where: { 
           isActive: true,
-          inRotation: true // Only count members in rotation
+          inRotation: true
         },
         select: { userId: true }
       }
     }
   });
+
+  let totalRotationsPerformed = 0;
+  let totalNotificationsSent = 0;
 
   for (const group of groups) {
     if (group.tasks.length === 0) {
@@ -52,6 +57,7 @@ export async function checkAndFixRotation() {
     if (expectedWeek > currentWeek) {
       const weeksBehind = expectedWeek - currentWeek;
       console.log(`⚠️ Group ${group.id} is ${weeksBehind} week(s) behind`);
+      console.log(`   Current week: ${currentWeek}, Expected week: ${expectedWeek}`);
       console.log(`   Members in rotation: ${group.members.length}`);
       
       // Find an admin to perform rotation
@@ -60,7 +66,6 @@ export async function checkAndFixRotation() {
           groupId: group.id, 
           groupRole: "ADMIN",
           isActive: true
-          // Note: Admins have inRotation = false, but they can still rotate tasks
         },
         select: { userId: true }
       });
@@ -81,6 +86,11 @@ export async function checkAndFixRotation() {
           
           if (result.success) {
             console.log(`   ✅ Rotated to week ${currentWeek + i + 1}`);
+            totalRotationsPerformed++;
+            
+            // ===== NEW: Send notifications about the rotation =====
+            await sendRotationNotifications(group, result, currentWeek + i + 1);
+            totalNotificationsSent += group.members.length;
             
             // Log fairness metrics if available
             if (result.fairnessMetrics) {
@@ -120,4 +130,65 @@ export async function checkAndFixRotation() {
   }
   
   console.log('✅ Rotation check complete');
+  console.log(`📊 Summary: ${totalRotationsPerformed} rotations performed, ${totalNotificationsSent} notifications sent`);
 }
+
+// ===== NEW: Helper function to send rotation notifications =====
+async function sendRotationNotifications(group: any, rotationResult: any, newWeek: number) {
+  try {
+    // Get all members in the group
+    const members = await prisma.groupMember.findMany({
+      where: { 
+        groupId: group.id,
+        isActive: true
+      },
+      select: { 
+        userId: true,
+        inRotation: true,
+        user: {
+          select: { fullName: true }
+        }
+      }
+    });
+
+    // Get group info
+    const groupInfo = await prisma.group.findUnique({
+      where: { id: group.id },
+      select: { name: true }
+    });
+
+    // Send notification to each member
+    for (const member of members) {
+      // Find which tasks this member got in the rotation
+      const memberTasks = rotationResult.rotatedTasks?.filter(
+        (t: any) => t.newAssignee === member.userId
+      ) || [];
+
+      const taskList = memberTasks.map((t: any) => `• ${t.taskTitle} (${t.taskPoints} pts)`).join('\n');
+
+      await UserNotificationService.createNotification({
+        userId: member.userId,
+        type: "ROTATION_COMPLETED",
+        title: member.inRotation ? "🔄 New Weekly Tasks" : "📢 Rotation Completed",
+        message: member.inRotation 
+          ? `Week ${newWeek} has started! You have ${memberTasks.length} new task(s).`
+          : `Week ${newWeek} has started in ${groupInfo?.name || 'your group'}.`,
+        data: {
+          groupId: group.id,
+          groupName: groupInfo?.name,
+          newWeek,
+          inRotation: member.inRotation,
+          tasks: memberTasks,
+          taskCount: memberTasks.length,
+          taskList,
+          fairnessMetrics: rotationResult.fairnessMetrics,
+          timestamp: new Date()
+        }
+      });
+    }
+
+    console.log(`   📢 Sent rotation notifications to ${members.length} members`);
+  } catch (error) {
+    console.error('   ❌ Failed to send rotation notifications:', error);
+  }
+} 
