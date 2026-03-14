@@ -176,7 +176,7 @@ static async joinGroup(userId: string, inviteCode: string) {
   }
 }
 
-// ===== NEW: Update group max members (admin only) =====
+
 static async updateGroupMaxMembers(
   groupId: string,
   userId: string,
@@ -233,18 +233,7 @@ static async updateGroupMaxMembers(
       }
     });
 
-    // Create audit log
-    await prisma.adminAuditLog.create({
-      data: {
-        adminId: userId,
-        action: "GROUP_MAX_MEMBERS_UPDATED",
-        details: {
-          groupId,
-          oldMax: await prisma.group.findUnique({ where: { id: groupId } }).then(g => g?.maxMembers),
-          newMax: newMaxMembers
-        }
-      }
-    });
+    // ✅ REMOVED: AdminAuditLog creation (causes foreign key error)
 
     return {
       success: true,
@@ -260,7 +249,6 @@ static async updateGroupMaxMembers(
     };
   }
 }
-
 // ===== NEW: Get group with member count and max =====
 static async getGroupWithLimits(groupId: string, userId: string) {
   try {
@@ -717,8 +705,9 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
         };
     }
 }
-     
-   static async getGroupInfo(groupId: string, userId: string) {
+ 
+
+static async getGroupInfo(groupId: string, userId: string) {
   try {
     // Check if user is a member of the group
     const userMembership = await prisma.groupMember.findFirst({
@@ -735,7 +724,7 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
       };
     }
 
-    // Get group info with avatar
+    // Get group info with avatar and maxMembers
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       include: {
@@ -761,7 +750,7 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
       };
     }
 
-    // ===== UPDATED: Get member counts with rotation status =====
+    // Get member counts
     const memberCount = await prisma.groupMember.count({
       where: { groupId: groupId }
     });
@@ -787,7 +776,7 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
       }
     });
 
-    // Format response
+    // Format response with maxMembers
     const formattedGroup = {
       id: group.id,
       name: group.name,
@@ -795,12 +784,13 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
       avatarUrl: group.avatarUrl,
       inviteCode: group.inviteCode,
       currentRotationWeek: group.currentRotationWeek,
+      maxMembers: group.maxMembers || 6, // ← ADD THIS
       createdAt: group.createdAt,
       updatedAt: group.updatedAt,
       memberCount: memberCount,
       adminCount: adminCount,
-      membersInRotation, // ← ADD THIS
-      activeMembers, // ← ADD THIS
+      membersInRotation,
+      activeMembers,
       admins: group.members.map(member => ({
         id: member.user.id,
         fullName: member.user.fullName,
@@ -813,7 +803,7 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
       message: "Group info retrieved successfully",
       group: formattedGroup,
       userRole: userMembership.groupRole,
-      userInRotation: userMembership.inRotation // ← ADD THIS
+      userInRotation: userMembership.inRotation
     };
 
   } catch (error: any) {
@@ -824,6 +814,7 @@ static async getRotationSchedulePreview(groupId: string, userId: string, weeks: 
     };
   }
 }
+
 // Update group info (name, description)
 static async updateGroup(groupId: string, userId: string, updateData: { name?: string, description?: string }) {
   try {
