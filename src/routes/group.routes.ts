@@ -19,6 +19,11 @@ router.get('/:groupId/members-with-rotation', GroupController.getGroupMembersWit
 router.put('/:groupId/members/:memberId/rotation', GroupController.updateMemberRotation);
 router.post('/:groupId/reorder-rotation', GroupController.reorderRotationSequence);
 router.get('/:groupId/rotation-preview', GroupController.getRotationSchedulePreview);
+// NEW: Get group with member limits
+router.get('/:groupId/with-limits', GroupController.getGroupWithLimits);
+
+// NEW: Update max members (admin only)
+router.put('/:groupId/update-max-members', GroupController.updateMaxMembers);
 
 // Mount group member routes under /:groupId
 // This must come AFTER the main routes to avoid conflicts

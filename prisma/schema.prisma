@@ -148,13 +148,16 @@ model Group {
   description String?
   inviteCode  String  @unique
   avatarUrl   String?
+  
+  // ===== NEW: Member limit settings =====
+  maxMembers  Int     @default(6) // Default 6, can be increased up to 10
   settings    Json?   @default("{}")
 
   createdById String
 
   // Rotation tracking
-  currentRotationWeek Int       @default(0) // Current week in rotation cycle
-  lastRotationUpdate  DateTime? // When rotation was last updated
+  currentRotationWeek Int       @default(0)
+  lastRotationUpdate  DateTime?
 
   // Relationships
   members GroupMember[] @relation("GroupMembers")
@@ -167,6 +170,8 @@ model Group {
 
   @@map("groups")
 }
+
+
 model GroupMember {
   id        String          @id @default(uuid())
   userId    String

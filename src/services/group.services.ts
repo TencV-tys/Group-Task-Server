@@ -2,43 +2,49 @@ import prisma from "../prisma";
 import { SocketService } from "./socket.services";
 export class GroupServices {
 
-   static async createGroup(userId: string, groupName: string, description?: string | null) {
+// services/group.services.ts - UPDATED with maxMembers
+
+static async createGroup(userId: string, groupName: string, description?: string | null) {
     
     try { 
-        // Create the group with rotation fields
+        // Create the group with default maxMembers = 6
         const group = await prisma.group.create({
             data: {
                 name: groupName,
                 description: description || null,
                 inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
                 createdById: userId,
-                currentRotationWeek: 1, // Start at week 1
-                lastRotationUpdate: new Date() 
+                currentRotationWeek: 1,
+                lastRotationUpdate: new Date(),
+                maxMembers: 6 // Default to 6
             }
         });
 
-        // ===== UPDATED: Create admin member with inRotation = false =====
+        // Create admin member with inRotation = false
         const member = await prisma.groupMember.create({
             data: {
                 userId: userId,
                 groupId: group.id,
                 groupRole: "ADMIN",
-                rotationOrder: 1, // Still give rotation order for potential future use
+                rotationOrder: 1,
                 isActive: true,
-                inRotation: false // ← ADD THIS - Admins are NOT in rotation
+                inRotation: false
             }
         });
 
         return {
             success: true,
             message: "Group Created!",
-            group: group,
+            group: {
+                ...group,
+                maxMembers: group.maxMembers
+            },
             inviteCode: group.inviteCode,
             adminMember: {
                 id: member.id,
                 groupRole: member.groupRole,
                 rotationOrder: member.rotationOrder,
-                inRotation: member.inRotation, // ← ADD THIS
+                inRotation: member.inRotation,
                 joinedAt: member.joinedAt
             }
         }
@@ -53,7 +59,7 @@ export class GroupServices {
     }
 }
 
- static async joinGroup(userId: string, inviteCode: string) {
+static async joinGroup(userId: string, inviteCode: string) {
   try {
     console.log(`User ${userId} trying to join with code: ${inviteCode}`);
     
@@ -82,6 +88,18 @@ export class GroupServices {
       }
     }
 
+    // ===== CHECK MEMBER COUNT AGAINST GROUP'S MAX MEMBERS =====
+    const currentMemberCount = await prisma.groupMember.count({
+      where: { groupId: group.id }
+    });
+
+    if (currentMemberCount >= group.maxMembers) {
+      return {
+        success: false,
+        message: `This group has reached its maximum capacity of ${group.maxMembers} members`
+      };
+    }
+
     // Get the next available rotation order
     const lastMember = await prisma.groupMember.findFirst({
       where: {
@@ -93,15 +111,15 @@ export class GroupServices {
 
     const nextRotationOrder = (lastMember?.rotationOrder || 0) + 1;
 
-    // ===== UPDATED: Create member with inRotation = true =====
+    // Create member with inRotation = true
     const member = await prisma.groupMember.create({
       data: {
         userId: userId,
         groupId: group.id,
         groupRole: "MEMBER",
-        rotationOrder: nextRotationOrder, // Add to rotation
-        isActive: true, // Active by default
-        inRotation: true // ← ADD THIS - New members start in rotation
+        rotationOrder: nextRotationOrder,
+        isActive: true,
+        inRotation: true
       },
       include: {
         group: {
@@ -109,7 +127,8 @@ export class GroupServices {
             id: true,
             name: true,
             description: true,
-            currentRotationWeek: true
+            currentRotationWeek: true,
+            maxMembers: true
           }
         }
       }
@@ -140,9 +159,11 @@ export class GroupServices {
         role: member.groupRole,
         rotationOrder: member.rotationOrder,
         isActive: member.isActive,
-        inRotation: member.inRotation, // ← ADD THIS
+        inRotation: member.inRotation,
         joinedAt: member.joinedAt
-      }
+      },
+      memberCount: currentMemberCount + 1,
+      maxMembers: group.maxMembers
     }
 
   } catch (e: any) {
@@ -151,6 +172,166 @@ export class GroupServices {
       success: false,
       message: "Error joining group",
       error: e.message
+    };
+  }
+}
+
+// ===== NEW: Update group max members (admin only) =====
+static async updateGroupMaxMembers(
+  groupId: string,
+  userId: string,
+  newMaxMembers: number
+) {
+  try {
+    // Check if user is admin
+    const membership = await prisma.groupMember.findFirst({
+      where: {
+        userId,
+        groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    if (!membership) {
+      return {
+        success: false,
+        message: "Only admins can update group settings"
+      };
+    }
+
+    // Validate range (6-10)
+    if (newMaxMembers < 6 || newMaxMembers > 10) {
+      return {
+        success: false,
+        message: "Maximum members must be between 6 and 10"
+      };
+    }
+
+    // Get current member count
+    const currentMemberCount = await prisma.groupMember.count({
+      where: { groupId }
+    });
+
+    // Can't set max lower than current members
+    if (newMaxMembers < currentMemberCount) {
+      return {
+        success: false,
+        message: `Cannot set max members to ${newMaxMembers} because the group already has ${currentMemberCount} members`
+      };
+    }
+
+    // Update the group
+    const updatedGroup = await prisma.group.update({
+      where: { id: groupId },
+      data: {
+        maxMembers: newMaxMembers
+      },
+      select: {
+        id: true,
+        name: true,
+        maxMembers: true
+      }
+    });
+
+    // Create audit log
+    await prisma.adminAuditLog.create({
+      data: {
+        adminId: userId,
+        action: "GROUP_MAX_MEMBERS_UPDATED",
+        details: {
+          groupId,
+          oldMax: await prisma.group.findUnique({ where: { id: groupId } }).then(g => g?.maxMembers),
+          newMax: newMaxMembers
+        }
+      }
+    });
+
+    return {
+      success: true,
+      message: `Group capacity updated to ${newMaxMembers} members`,
+      group: updatedGroup
+    };
+
+  } catch (error: any) {
+    console.error("Error updating max members:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to update group capacity"
+    };
+  }
+}
+
+// ===== NEW: Get group with member count and max =====
+static async getGroupWithLimits(groupId: string, userId: string) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+
+    if (!membership) {
+      return {
+        success: false,
+        message: "You are not a member of this group"
+      };
+    }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        avatarUrl: true,
+        inviteCode: membership.groupRole === "ADMIN",
+        currentRotationWeek: true,
+        maxMembers: true,
+        createdAt: true,
+        members: {
+          select: {
+            id: true,
+            userId: true,
+            groupRole: true,
+            isActive: true,
+            inRotation: true,
+            joinedAt: true,
+            user: {
+              select: {
+                fullName: true,
+                email: true,
+                avatarUrl: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!group) {
+      return {
+        success: false,
+        message: "Group not found"
+      };
+    }
+
+    const memberCount = group.members.length;
+
+    return {
+      success: true,
+      message: "Group details retrieved",
+      group: {
+        ...group,
+        memberCount,
+        slotsAvailable: Math.max(0, group.maxMembers - memberCount),
+        isFull: memberCount >= group.maxMembers,
+        needsMoreMembers: memberCount < 6
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error getting group with limits:", error);
+    return {
+      success: false,
+      message: error.message
     };
   }
 }

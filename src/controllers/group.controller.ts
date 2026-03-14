@@ -364,5 +364,55 @@ static async getGroupInfo(req: UserAuthRequest, res: Response) {
     }
   }
 
+    static async getGroupWithLimits(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as {groupId:string};
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Not authenticated' });
+      }
+
+      const result = await GroupServices.getGroupWithLimits(groupId, userId);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      return res.json(result);
+
+    } catch (error: any) {
+      console.error('Error in getGroupWithLimits:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+  }
+
+  static async updateMaxMembers(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as {groupId:string};
+      const { maxMembers } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Not authenticated' });
+      }
+
+      if (!maxMembers || isNaN(maxMembers)) {
+        return res.status(400).json({ success: false, message: 'Max members is required' });
+      }
+
+      const result = await GroupServices.updateGroupMaxMembers(groupId, userId, maxMembers);
+      
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      return res.json(result);
+
+    } catch (error: any) {
+      console.error('Error in updateMaxMembers:', error);
+      return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+  }
 
 }
