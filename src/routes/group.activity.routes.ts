@@ -19,4 +19,14 @@ router.get('/:groupId/members/:memberId/contributions', GroupActivityController.
 // Get task completion history
 router.get('/:groupId/tasks/completion-history', GroupActivityController.getTaskCompletionHistory);
 
+// ===== NEW: Dashboard endpoints =====
+// Get admin dashboard data
+router.get('/:groupId/admin-dashboard', GroupActivityController.getAdminDashboard);
+
+// Get member dashboard data
+router.get('/:groupId/member-dashboard', GroupActivityController.getMemberDashboard);
+
+// Get recent activity for dashboard
+router.get('/:groupId/recent-activity', GroupActivityController.getRecentActivity);
+
 export default router;

@@ -15,7 +15,7 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
         targetUserId, 
         expiresAt,
         scope,
-        selectedDay,
+        selectedDay, 
         selectedTimeSlotId
       } = req.body;
 
@@ -173,65 +173,66 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
     }
   }
 
-  // GET: Get all swap requests for a group (admin only)
-  static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { groupId } = req.params as {groupId:string};
-      const { 
-        status,
-        limit = 50, 
-        offset = 0 
-      } = req.query;
+ // In SwapRequestController.ts - Update getGroupSwapRequests method
+static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as {groupId:string};
+    const { 
+      status,
+      limit = 50, 
+      offset = 0 
+    } = req.query;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated"
-        });
-      }
-
-      if (!groupId) {
-        return res.status(400).json({
-          success: false,
-          message: "Group ID is required"
-        });
-      }
-
-      const result = await SwapRequestService.getGroupSwapRequests(
-        groupId,
-        userId,
-        {
-          status: status as string,
-          limit: Number(limit),
-          offset: Number(offset)
-        }
-      );
-
-      if (!result.success) {
-        return res.status(400).json({
-          success: false,
-          message: result.message
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: result.message,
-        data: {
-          requests: result.requests,
-          total: result.total
-        }
-      });
-
-    } catch (error: any) {
-      console.error("SwapRequestController.getGroupSwapRequests error:", error);
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "User not authenticated"
       });
     }
+
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: "Group ID is required"
+      });
+    }
+
+    const result = await SwapRequestService.getGroupSwapRequests(
+      groupId,
+      userId,
+      {
+        status: status as string,
+        limit: Number(limit),
+        offset: Number(offset)
+      }
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: {
+        requests: result.requests,
+        total: result.total,
+        stats: result.stats // Include rotation stats for admin view
+      }
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.getGroupSwapRequests error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
 
   // GET: Get single swap request details
   static async getSwapRequestDetails(req: UserAuthRequest, res: Response) {

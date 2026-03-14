@@ -201,4 +201,141 @@ export class GroupActivityController {
       });
     }
   }
-}
+
+  // ===== NEW: Get admin dashboard data =====
+  static async getAdminDashboard(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await GroupActivityService.getAdminDashboard(groupId, userId);
+
+      if (!result.success) {
+        return res.status(403).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.data
+      });
+
+    } catch (error: any) {
+      console.error("❌ Error in getAdminDashboard:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // ===== NEW: Get member dashboard data =====
+  static async getMemberDashboard(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await GroupActivityService.getMemberDashboard(groupId, userId);
+
+      if (!result.success) {
+        return res.status(403).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.data
+      });
+
+    } catch (error: any) {
+      console.error("❌ Error in getMemberDashboard:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // ===== NEW: Get recent activity for dashboard =====
+  static async getRecentActivity(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { groupId } = req.params as { groupId: string };
+      const { limit = 10 } = req.query;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Not authenticated"
+        });
+      }
+
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required"
+        });
+      }
+
+      const result = await GroupActivityService.getRecentActivity(
+        groupId,
+        userId,
+        Number(limit)
+      );
+
+      if (!result.success) {
+        return res.status(403).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.data
+      });
+
+    } catch (error: any) {
+      console.error("❌ Error in getRecentActivity:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+} 

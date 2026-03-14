@@ -583,4 +583,384 @@ static async getMemberContributionDetails(
       return { success: false, message: error.message || "Error retrieving task history" };
     }
   }
+
+  // Add these methods to your existing GroupActivityService class
+
+// ===== NEW: Get admin dashboard data =====
+static async getAdminDashboard(groupId: string, userId: string) {
+  try {
+    // Check if user is admin
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only admins can access admin dashboard" };
+    }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { 
+        name: true,
+        currentRotationWeek: true,
+        createdAt: true
+      }
+    });
+
+    // Get member stats
+    const members = await prisma.groupMember.findMany({
+      where: { groupId, isActive: true },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    const admins = members.filter(m => m.groupRole === "ADMIN");
+    const membersInRotation = members.filter(m => m.inRotation);
+
+    // Get task stats
+    const tasks = await prisma.task.findMany({
+      where: { groupId, isDeleted: false },
+      include: {
+        _count: {
+          select: { assignments: true }
+        }
+      }
+    });
+
+    // Get current week assignments
+    const currentWeekAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group?.currentRotationWeek || 1
+      },
+      include: {
+        user: true,
+        task: true
+      }
+    });
+
+    const completedThisWeek = currentWeekAssignments.filter(a => a.completed).length;
+    const totalThisWeek = currentWeekAssignments.length;
+
+    return {
+      success: true,
+      message: "Admin dashboard data retrieved",
+      data: {
+        group: {
+          name: group?.name,
+          currentWeek: group?.currentRotationWeek || 1,
+          createdAt: group?.createdAt
+        },
+        stats: {
+          totalMembers: members.length,
+          admins: admins.length,
+          membersInRotation: membersInRotation.length,
+          totalTasks: tasks.length,
+          recurringTasks: tasks.filter(t => t.isRecurring).length,
+          weeklyCompletion: {
+            total: totalThisWeek,
+            completed: completedThisWeek,
+            percentage: totalThisWeek > 0 ? (completedThisWeek / totalThisWeek) * 100 : 0
+          }
+        },
+        members: members.map(m => ({
+          id: m.userId,
+          fullName: m.user.fullName,
+          avatarUrl: m.user.avatarUrl,
+          role: m.groupRole,
+          inRotation: m.inRotation,
+          isActive: m.isActive,
+          points: m.cumulativePoints
+        }))
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error in getAdminDashboard:", error);
+    return { success: false, message: error.message };
+  }
+}
+
+
+// ===== NEW: Get member dashboard data (FIXED with proper type safety) =====
+static async getMemberDashboard(groupId: string, userId: string) {
+  try {
+    // Check if user is member
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+
+    if (!membership) {
+      return { success: false, message: "You are not a member of this group" };
+    }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { 
+        name: true,
+        currentRotationWeek: true
+      }
+    });
+
+    // Get user's assignments
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        task: { groupId }
+      },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            timeSlots: true
+          }
+        },
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    // Get historical assignments (deleted tasks)
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        taskId: null,
+        taskTitle: { not: null }
+      },
+      include: {
+        timeSlot: true
+      }
+    });
+
+    // Separate assignments with and without tasks
+    const assignmentsWithTasks = assignments.filter(a => a.task !== null);
+    const assignmentsWithoutTasks = assignments.filter(a => a.task === null);
+
+    // Combine all assignments for stats
+    const allAssignments = [...assignmentsWithTasks, ...assignmentsWithoutTasks, ...historicalAssignments];
+
+    // Calculate stats
+    const pending = allAssignments.filter(a => !a.completed);
+    const completed = allAssignments.filter(a => a.completed);
+    
+    // Due today - only from assignments with tasks
+    const dueToday = assignmentsWithTasks.filter(a => {
+      if (a.completed) return false;
+      const today = new Date().toDateString();
+      const dueDate = new Date(a.dueDate).toDateString();
+      return today === dueDate;
+    });
+
+  // Calculate points safely - FIXED
+const pointsThisWeek = completed
+  .filter(a => {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    return a.completedAt && a.completedAt > weekAgo;
+  })
+  .reduce((sum, a) => {
+    // Use type assertion to tell TypeScript this might have task
+    const assignment = a as any;
+    const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+    return sum + points;
+  }, 0);
+
+const totalPoints = completed.reduce((sum, a) => {
+  const assignment = a as any;
+  const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+  return sum + points;
+}, 0);
+    // Get pending swap requests
+    const pendingSwaps = await prisma.swapRequest.count({
+      where: {
+        OR: [
+          { 
+            assignment: { userId },
+            status: "PENDING"
+          },
+          {
+            targetUserId: userId,
+            status: "PENDING"
+          }
+        ]
+      }
+    });
+
+    // Format due today tasks
+    const formattedDueToday = dueToday.map(t => ({
+      id: t.id,
+      taskId: t.taskId,
+      title: t.task!.title, // Safe because we filtered assignmentsWithTasks
+      points: t.task!.points || t.points,
+      dueDate: t.dueDate,
+      timeSlot: t.timeSlot ? {
+        id: t.timeSlot.id,
+        startTime: t.timeSlot.startTime,
+        endTime: t.timeSlot.endTime,
+        label: t.timeSlot.label
+      } : null,
+      completed: t.completed
+    }));
+
+    // Format upcoming tasks (only from assignments with tasks)
+    const upcomingFromTasks = assignmentsWithTasks
+      .filter(t => !t.completed)
+      .filter(t => !dueToday.some(d => d.id === t.id))
+      .slice(0, 5)
+      .map(t => ({
+        id: t.id,
+        taskId: t.taskId,
+        title: t.task!.title,
+        points: t.task!.points || t.points,
+        dueDate: t.dueDate,
+        timeSlot: t.timeSlot ? {
+          id: t.timeSlot.id,
+          startTime: t.timeSlot.startTime,
+          endTime: t.timeSlot.endTime,
+          label: t.timeSlot.label
+        } : null
+      }));
+
+    // Format historical tasks
+    const formattedHistorical = historicalAssignments
+      .slice(0, 3)
+      .map(t => ({
+        id: t.id,
+        taskId: null,
+        title: t.taskTitle || "Deleted Task",
+        points: t.taskPoints || t.points,
+        dueDate: t.dueDate,
+        completed: t.completed,
+        completedAt: t.completedAt,
+        isHistorical: true,
+        timeSlot: t.timeSlot ? {
+          id: t.timeSlot.id,
+          startTime: t.timeSlot.startTime,
+          endTime: t.timeSlot.endTime,
+          label: t.timeSlot.label
+        } : null
+      }));
+
+    return {
+      success: true,
+      message: "Member dashboard data retrieved",
+      data: {
+        group: {
+          name: group?.name,
+          currentWeek: group?.currentRotationWeek || 1
+        },
+        stats: {
+          pendingTasks: pending.length,
+          completedTasks: completed.length,
+          dueToday: dueToday.length,
+          pendingSwaps,
+          pointsThisWeek,
+          totalPoints,
+          totalAssignments: allAssignments.length,
+          historicalCount: historicalAssignments.length
+        },
+        tasks: {
+          dueToday: formattedDueToday,
+          upcoming: upcomingFromTasks,
+          recentHistory: formattedHistorical
+        },
+        user: {
+          inRotation: membership.inRotation,
+          role: membership.groupRole
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error in getMemberDashboard:", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// ===== NEW: Get recent activity (FIXED with null checks) =====
+static async getRecentActivity(groupId: string, userId: string, limit: number = 10) {
+  try {
+    // Check if user is member
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+
+    if (!membership) {
+      return { success: false, message: "You are not a member of this group" };
+    }
+
+    // Get recent assignments
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        },
+        task: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: limit
+    });
+
+    // Format activity - FIXED with null checks
+    const activity = assignments
+      .filter(a => a.task !== null) // Filter out assignments with null tasks
+      .map(a => {
+        const task = a.task!; // Safe after filtering
+        let type = 'TASK_UPDATED';
+        let description = '';
+
+        if (a.completed && a.verified) {
+          type = 'TASK_VERIFIED';
+          description = `${a.user?.fullName || 'A member'} completed "${task.title}"`;
+        } else if (a.completed) {
+          type = 'TASK_COMPLETED';
+          description = `${a.user?.fullName || 'A member'} submitted "${task.title}"`;
+        } else {
+          description = `${a.user?.fullName || 'A member'} has "${task.title}" due`;
+        }
+
+        return {
+          id: a.id,
+          type,
+          description,
+          userId: a.userId,
+          userName: a.user?.fullName || 'Unknown',
+          userAvatar: a.user?.avatarUrl,
+          taskId: task.id,
+          taskTitle: task.title,
+          createdAt: a.updatedAt
+        };
+      });
+
+    return {
+      success: true,
+      message: "Recent activity retrieved",
+      data: activity
+    };
+
+  } catch (error: any) {
+    console.error("Error in getRecentActivity:", error);
+    return { success: false, message: error.message };
+  }
+}
 }
