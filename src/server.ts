@@ -28,7 +28,12 @@ import {
   strictThrottle, 
   mediumThrottle, 
   lightThrottle,
-  heavyThrottle
+  heavyThrottle,
+  loginThrottle,
+  uploadThrottle,
+  adminStrictThrottle,
+  adminMediumThrottle,
+  adminLightThrottle
 } from './middlewares/throttle.middleware';
 
 import UserAuthRoutes from './routes/user.auth.routes';
@@ -69,70 +74,87 @@ const svr = express();
 // ========== RATE LIMITING - APPLY BEFORE ROUTES ==========
 console.log('🛡️ Applying rate limiters...');
 
-// Auth routes (stricter)
-svr.use('/api/auth', authLimiter);
+// ===== USER ROUTES (Mobile App) =====
+console.log('👤 Configuring user rate limits...');
+svr.use('/api/auth/users', authLimiter); // User auth
+svr.use('/api/auth/users/reset-password', passwordResetLimiter); // Password reset
+svr.use('/api/uploads', uploadLimiter); // Uploads
+svr.use('/api/tasks', taskLimiter); // Tasks
+svr.use('/api/swap-requests', swapRequestLimiter); // Swaps
+svr.use('/api/group', groupLimiter); // Groups
+svr.use('/api/group-activity', groupActivityLimiter); // Group activity
+svr.use('/api/notifications', userNotificationLimiter); // Notifications
+svr.use('/api/feedback', userFeedbackLimiter); // Feedback
+svr.use('/api/reports', userReportsLimiter); // Reports
+svr.use('/api/assignments', assignmentLimiter); // Assignments
+svr.use('/api/home', homeLimiter); // Home
 
-// Upload routes
-svr.use('/api/uploads', uploadLimiter);
+// ===== ADMIN ROUTES (Web Dashboard) =====
+console.log('👑 Configuring admin rate limits...');
+svr.use('/api/admin', adminLimiter); // All admin routes (single limiter)
 
-// Task routes
-svr.use('/api/tasks', taskLimiter);
-
-// Swap routes
-svr.use('/api/swap-requests', swapRequestLimiter);
-
-// Password reset (strictest)
-svr.use('/api/auth/users/reset-password', passwordResetLimiter);
-
-// Group routes
-svr.use('/api/group', groupLimiter);
-svr.use('/api/group-activity', groupActivityLimiter);
-
-// User notification routes
-svr.use('/api/notifications', userNotificationLimiter);
-
-// User feedback routes
-svr.use('/api/feedback', userFeedbackLimiter);
-
-// User report routes
-svr.use('/api/reports', userReportsLimiter);
-
-// Assignment routes
-svr.use('/api/assignments', assignmentLimiter);
-
-// Home routes
-svr.use('/api/home', homeLimiter);
-
-// ALL ADMIN ROUTES - ONE LIMITER
-//svr.use('/api/admin', adminLimiter);
-
-// ========== CACHE MIDDLEWARE - FOR READ-ONLY ENDPOINTS ==========
+// ========== CACHE MIDDLEWARE - SEPARATE CONFIGS ==========
 console.log('💾 Applying cache middleware...');
-svr.use('/api/admin/audit/statistics', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
-svr.use('/api/admin/dashboard', cacheMiddleware(60 * 1000)); // Cache for 1 minute
-svr.use('/api/admin/groups', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
-svr.use('/api/admin/feedback', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
-svr.use('/api/admin/reports', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
-svr.use('/api/admin/users', cacheMiddleware(30 * 1000)); // Cache for 30 seconds
 
-// ========== THROTTLE MIDDLEWARE - PREVENT ABUSE ==========
+// ===== USER CACHE (Mobile App) - Shorter TTL =====
+svr.use('/api/home', cacheMiddleware(30 * 1000)); // 30 seconds for home data
+svr.use('/api/group', cacheMiddleware(30 * 1000)); // 30 seconds for group data
+svr.use('/api/tasks', cacheMiddleware(20 * 1000)); // 20 seconds for tasks
+svr.use('/api/group-activity', cacheMiddleware(30 * 1000)); // 30 seconds for activity
+
+// ===== ADMIN CACHE (Web Dashboard) - Longer TTL =====
+svr.use('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+svr.use('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000)); // 3 minutes
+svr.use('/api/admin/groups', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+svr.use('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+svr.use('/api/admin/reports', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+svr.use('/api/admin/users', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+
+// ========== THROTTLE MIDDLEWARE - SEPARATE CONFIGS ==========
 console.log('⏱️ Applying throttle middleware...');
-svr.use('/api/admin/audit', mediumThrottle); // 5 requests per 10 seconds
-svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 2)); // 2 exports per minute
-svr.use('/api/admin/users', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/admin/groups', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/admin/feedback', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/admin/reports', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/auth', strictThrottle); // 3 requests per 10 seconds for auth
-svr.use('/api/auth/users/reset-password', strictThrottle); // 3 requests per 10 seconds
-svr.use('/api/tasks', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/swap-requests', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/feedback', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/notifications', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/reports', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/group', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/home', lightThrottle); // 10 requests per 10 seconds
-svr.use('/api/assignments', lightThrottle); // 10 requests per 10 seconds
+
+// ===== USER THROTTLE (Mobile App) =====
+console.log('   👤 User throttles:');
+
+// Auth endpoints
+svr.use('/api/auth/users/login', loginThrottle); // 5 attempts per 15 minutes
+svr.use('/api/auth/users/signup', loginThrottle); // 5 attempts per 15 minutes
+svr.use('/api/auth/users/refresh-token', strictThrottle); // 3 requests/10s
+svr.use('/api/auth/users/logout', lightThrottle); // 15 requests/10s
+
+// Upload endpoints
+svr.use('/api/uploads', uploadThrottle); // 3 uploads per minute
+
+// General user API
+svr.use('/api/tasks', lightThrottle); // 15 requests/10s
+svr.use('/api/swap-requests', lightThrottle); // 15 requests/10s
+svr.use('/api/feedback', lightThrottle); // 15 requests/10s
+svr.use('/api/notifications', lightThrottle); // 15 requests/10s
+svr.use('/api/reports', lightThrottle); // 15 requests/10s
+svr.use('/api/group', lightThrottle); // 15 requests/10s
+svr.use('/api/home', lightThrottle); // 15 requests/10s
+svr.use('/api/assignments', lightThrottle); // 15 requests/10s
+svr.use('/api/group-activity', lightThrottle); // 15 requests/10s
+
+// ===== ADMIN THROTTLE (Web Dashboard) =====
+console.log('   👑 Admin throttles:');
+
+// Admin auth - stricter
+svr.use('/api/auth/admins/login', loginThrottle); // 5 attempts per 15 minutes
+svr.use('/api/auth/admins/refresh-token', strictThrottle); // 3 requests/10s
+
+// Admin operations
+svr.use('/api/admin/audit', adminMediumThrottle); // 8 requests/10s
+svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 5)); // 5 exports per minute
+svr.use('/api/admin/users', adminLightThrottle); // 20 requests/10s
+svr.use('/api/admin/groups', adminLightThrottle); // 20 requests/10s
+svr.use('/api/admin/feedback', adminLightThrottle); // 20 requests/10s
+svr.use('/api/admin/reports', adminLightThrottle); // 20 requests/10s
+svr.use('/api/admin/dashboard', adminLightThrottle); // 20 requests/10s
+
+// Admin heavy operations
+svr.use('/api/admin/users/bulk-delete', heavyThrottle); // 30 requests/30s
+svr.use('/api/admin/groups/bulk-delete', heavyThrottle); // 30 requests/30s
 
 // ========== CRITICAL UPDATES START ==========
 
@@ -253,19 +275,32 @@ server.listen(PORT, async () => {
    ├─ Home page:            300 requests/3 hours   (home data)
    ├─ Admin routes:         500 requests/3 hours   (ALL admin operations)
 
-💾 CACHE ENABLED:
-   ├─ Statistics:       30 seconds 
-   ├─ Dashboard:        60 seconds
-   ├─ Groups list:      30 seconds
-   ├─ Users list:       30 seconds
-   ├─ Feedback list:    30 seconds
-   └─ Reports list:     30 seconds
+💾 CACHE CONFIGURATION:
+   👤 USER (Mobile App):
+      ├─ Home data:       30 seconds
+      ├─ Group data:      30 seconds  
+      ├─ Tasks:           20 seconds
+      └─ Activity:        30 seconds
+   
+   👑 ADMIN (Web Dashboard):
+      ├─ Dashboard:       3 minutes
+      ├─ Statistics:      2 minutes
+      ├─ Users/Groups:    2 minutes
+      └─ Reports:         2 minutes
 
-⏱️ THROTTLE ENABLED:
-   ├─ Auth:             3 requests/10s
-   ├─ Admin pages:      5 requests/10s
-   ├─ General API:      10 requests/10s
-   └─ Exports:          2 requests/minute
+⏱️ THROTTLE CONFIGURATION:
+   👤 USER (Mobile App):
+      ├─ Login:           5 attempts/15m
+      ├─ Upload:          3 per minute
+      ├─ General API:     15 requests/10s
+      └─ Auth refresh:    3 requests/10s
+   
+   👑 ADMIN (Web Dashboard):
+      ├─ Login:           5 attempts/15m
+      ├─ Audit:           8 requests/10s
+      ├─ Admin API:       20 requests/10s
+      ├─ Export:          5 per minute
+      └─ Bulk ops:        30 requests/30s
     `);
 
     // ===== DEVELOPMENT AUTO-ROTATION CHECK =====
@@ -288,24 +323,26 @@ server.listen(PORT, async () => {
     
     console.log(`
 📡 Routes registered:
-   ├─ /api/auth/users
-   ├─ /api/auth/admins  
-   ├─ /api/group
-   ├─ /api/home
-   ├─ /api/tasks
-   ├─ /api/uploads
-   ├─ /api/assignments
-   ├─ /api/swap-requests
-   ├─ /api/notifications
-   └─ /api/feedback
+   ├─ /api/auth/users    (User Auth)
+   ├─ /api/auth/admins   (Admin Auth)  
+   ├─ /api/group         (Group Management)
+   ├─ /api/home          (Home Feed)
+   ├─ /api/tasks         (Task Management)
+   ├─ /api/uploads       (File Uploads)
+   ├─ /api/assignments   (Assignment Management)
+   ├─ /api/swap-requests (Swap Requests)
+   ├─ /api/notifications (User Notifications)
+   ├─ /api/feedback      (User Feedback)
+   ├─ /api/reports       (User Reports)
+   ├─ /api/admin/*       (Admin Dashboard)
 
 ⏰ Cron jobs running:
    ├─ Swap request expiration
    ├─ Task reminders
-   └─ Neglect detection
+   ├─ Neglect detection
    └─ Weekly task rotation (Sundays 00:01 AM)
 
-✅ Server is ready to handle requests!
+✅ Server is ready to handle requests from both mobile users and admin dashboard!
     `);
 });
 
