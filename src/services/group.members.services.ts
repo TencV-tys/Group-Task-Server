@@ -1151,4 +1151,127 @@ static async updateMemberRotation(
       };
     }
   }
+
+  // Add this method to GroupMembersService
+
+// ===== GET GROUP INFO (including maxMembers) =====
+static async getGroupInfo(groupId: string, userId: string) {
+  try {
+    // Check if user is a member of the group
+    const userMembership = await prisma.groupMember.findFirst({
+      where: {
+        userId: userId,
+        groupId: groupId
+      }
+    });
+
+    if (!userMembership) {
+      return {
+        success: false,
+        message: "You are not a member of this group"
+      };
+    }
+
+    // Get group info with avatar and maxMembers
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        avatarUrl: true,
+        inviteCode: userMembership.groupRole === "ADMIN", // Only admins see invite code
+        currentRotationWeek: true,
+        maxMembers: true,  // ← THIS IS CRITICAL
+        createdAt: true,
+        updatedAt: true,
+        lastRotationUpdate: true,
+        members: {
+          where: { groupRole: "ADMIN" },
+          select: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                avatarUrl: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!group) {
+      return {
+        success: false,
+        message: "Group not found"
+      };
+    }
+
+    // Get member counts
+    const memberCount = await prisma.groupMember.count({
+      where: { groupId: groupId }
+    });
+
+    const adminCount = await prisma.groupMember.count({
+      where: {
+        groupId: groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    const activeMembers = await prisma.groupMember.count({
+      where: {
+        groupId: groupId,
+        isActive: true
+      }
+    });
+
+    const recurringTaskCount = await prisma.task.count({
+      where: {
+        groupId: groupId,
+        isRecurring: true
+      }
+    });
+
+    // Format response with maxMembers
+    const formattedGroup = {
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      avatarUrl: group.avatarUrl,
+      inviteCode: group.inviteCode ? group.inviteCode : undefined,
+      currentRotationWeek: group.currentRotationWeek,
+      maxMembers: group.maxMembers || 6,  // ← THIS IS THE KEY FIELD
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+      lastRotationUpdate: group.lastRotationUpdate,
+      memberCount: memberCount,
+      activeMemberCount: activeMembers,
+      adminCount: adminCount,
+      recurringTaskCount: recurringTaskCount,
+      userRole: userMembership.groupRole,
+      admins: group.members.map((member: any) => ({
+        id: member.user.id,
+        fullName: member.user.fullName,
+        avatarUrl: member.user.avatarUrl
+      }))
+    };
+
+    console.log('📤 Sending group info with maxMembers:', formattedGroup.maxMembers);
+
+    return {
+      success: true,
+      message: "Group info retrieved",
+      group: formattedGroup
+    };
+
+  } catch (error: any) {
+    console.error("GroupMembersService.getGroupInfo error:", error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving group info"
+    };
+  }
+}
 }

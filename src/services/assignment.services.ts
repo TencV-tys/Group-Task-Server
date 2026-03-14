@@ -645,21 +645,29 @@ export class AssignmentService {
 
   // ========== CHECK NEGLECTED ASSIGNMENTS (FOR CRON) ==========
   static async checkNeglectedAssignments() {
-    try {
-      const groups = await prisma.group.findMany({ select: { id: true } });
-      let totalNeglected = 0;
+  try {
+    const groups = await prisma.group.findMany({ select: { id: true } });
+    let totalNeglected = 0;
+    let totalPointsDeducted = 0;
 
-      for (const group of groups) {
-        const result = await this.checkGroupNeglectedAssignments(group.id);
-        totalNeglected += result.count;
-      }
-
-      return { success: true, totalNeglected };
-    } catch (error: any) {
-      console.error("AssignmentService.checkNeglectedAssignments error:", error);
-      return { success: false, message: error.message };
+    for (const group of groups) {
+      const result = await this.checkGroupNeglectedAssignments(group.id);
+      totalNeglected += result.count;
+      totalPointsDeducted += result.pointsDeducted || 0;
     }
+
+    console.log(`💰 Total points deducted across all groups: ${totalPointsDeducted}`);
+    
+    return { 
+      success: true, 
+      totalNeglected,
+      totalPointsDeducted 
+    };
+  } catch (error: any) {
+    console.error("AssignmentService.checkNeglectedAssignments error:", error);
+    return { success: false, message: error.message };
   }
+}
 
   // ========== SEND UPCOMING TASK REMINDERS ==========
   static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
@@ -1175,95 +1183,327 @@ static async getGroupAssignments(
   }
 }
 
-  // ========== CHECK GROUP NEGLECTED ASSIGNMENTS ==========
-  private static async checkGroupNeglectedAssignments(groupId: string) {
-    try {
-      const group = await prisma.group.findUnique({ 
-        where: { id: groupId },
-        select: { currentRotationWeek: true }
-      });
+ // ========== CHECK GROUP NEGLECTED ASSIGNMENTS - UPDATED WITH POINT DEDUCTION ==========
+private static async checkGroupNeglectedAssignments(groupId: string) {
+  try {
+    const group = await prisma.group.findUnique({ 
+      where: { id: groupId },
+      select: { currentRotationWeek: true }
+    });
 
-      if (!group) return { count: 0 };
+    if (!group) return { count: 0 };
 
-      const now = new Date();
-      const pendingAssignments = await prisma.assignment.findMany({
-        where: {
-          task: { groupId },
-          rotationWeek: group.currentRotationWeek,
-          completed: false
-        },
-        include: { 
-          user: true, 
-          task: { include: { timeSlots: true } }, 
-          timeSlot: true 
-        }
-      });
+    const now = new Date();
+    const pendingAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek,
+        completed: false
+      },
+      include: { 
+        user: true, 
+        task: { include: { timeSlots: true } }, 
+        timeSlot: true 
+      }
+    });
 
-      // Filter out assignments with null tasks
-      const validAssignments = pendingAssignments.filter(a => a.task !== null);
-      
-      let neglectedCount = 0;
+    // Filter out assignments with null tasks
+    const validAssignments = pendingAssignments.filter(a => a.task !== null);
+    
+    let neglectedCount = 0;
+    let totalPointsDeducted = 0;
 
-      for (const assignment of validAssignments) {
-        if (TimeHelpers.isAssignmentNeglected(assignment, now)) {
-          neglectedCount++;
+    for (const assignment of validAssignments) {
+      if (TimeHelpers.isAssignmentNeglected(assignment, now)) {
+        neglectedCount++;
+        
+        // Get points from time slot or assignment
+        const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
+        totalPointsDeducted += pointsLost;
 
-          // Truncate notes to avoid length issues
-          const neglectNote = `[NEGLECTED: Missed submission on ${now.toLocaleDateString()}]`;
-          const updatedNotes = assignment.notes 
-            ? `${assignment.notes.substring(0, 200)}\n${neglectNote}`.substring(0, 500)
-            : neglectNote;
+        // Truncate notes to avoid length issues
+        const neglectNote = `[NEGLECTED: Missed submission on ${now.toLocaleDateString()} - Lost ${pointsLost} points]`;
+        const updatedNotes = assignment.notes 
+          ? `${assignment.notes.substring(0, 200)}\n${neglectNote}`.substring(0, 500)
+          : neglectNote;
 
-          await prisma.assignment.update({
-            where: { id: assignment.id },
-            data: {
-              notes: updatedNotes
+        // ===== UPDATE 1: Mark assignment as expired with 0 points =====
+        await prisma.assignment.update({
+          where: { id: assignment.id },
+          data: {
+            notes: updatedNotes,
+            expired: true,
+            expiredAt: now,
+            points: 0 // Set earned points to 0
+          }
+        });
+
+        // ===== UPDATE 2: DEDUCT POINTS FROM USER'S CUMULATIVE TOTAL =====
+        await prisma.groupMember.update({
+          where: { 
+            userId_groupId: {
+              userId: assignment.userId,
+              groupId: groupId
             }
-          });
+          },
+          data: {
+            cumulativePoints: {
+              decrement: pointsLost // Subtract the points
+            },
+            pointsUpdatedAt: now
+          }
+        });
 
+        // Send notification to user
+        await UserNotificationService.createNotification({
+          userId: assignment.userId,
+          type: "POINT_DEDUCTION",
+          title: "⚠️ Points Deducted",
+          message: `You missed "${assignment.task!.title}" and lost ${pointsLost} points`,
+          data: {
+            assignmentId: assignment.id,
+            taskId: assignment.taskId,
+            taskTitle: assignment.task!.title,
+            groupId,
+            points: pointsLost,
+            dueDate: assignment.dueDate,
+            deductedAt: now
+          }
+        });
+
+        // Notify admins
+        const admins = await prisma.groupMember.findMany({
+          where: { groupId, groupRole: "ADMIN" }
+        });
+
+        for (const admin of admins) {
           await UserNotificationService.createNotification({
-            userId: assignment.userId,
-            type: "POINT_DEDUCTION",
-            title: "⚠️ Point Deduction",
-            message: `You missed "${assignment.task!.title}" and lost ${assignment.points} points`,
+            userId: admin.userId,
+            type: "NEGLECT_DETECTED",
+            title: "⚠️ Missed Assignment",
+            message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" - ${pointsLost} points deducted`,
             data: {
               assignmentId: assignment.id,
               taskId: assignment.taskId,
               taskTitle: assignment.task!.title,
               groupId,
-              points: assignment.points,
+              userId: assignment.userId,
+              userName: assignment.user?.fullName || 'Unknown',
+              pointsLost,
               dueDate: assignment.dueDate
             }
           });
-
-          const admins = await prisma.groupMember.findMany({
-            where: { groupId, groupRole: "ADMIN" }
-          });
-
-          for (const admin of admins) {
-            await UserNotificationService.createNotification({
-              userId: admin.userId,
-              type: "NEGLECT_DETECTED",
-              title: "⚠️ Missed Assignment",
-              message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}"`,
-              data: {
-                assignmentId: assignment.id,
-                taskId: assignment.taskId,
-                taskTitle: assignment.task!.title,
-                groupId,
-                userId: assignment.userId,
-                userName: assignment.user?.fullName || 'Unknown',
-                dueDate: assignment.dueDate
-              }
-            });
-          }
         }
       }
-
-      return { count: neglectedCount };
-    } catch (error) {
-      console.error("AssignmentService.checkGroupNeglectedAssignments error:", error);
-      return { count: 0 };
     }
+
+    if (neglectedCount > 0) {
+      console.log(`📊 Group ${groupId}: ${neglectedCount} neglected assignments, ${totalPointsDeducted} total points deducted`);
+    }
+
+    return { count: neglectedCount, pointsDeducted: totalPointsDeducted };
+  } catch (error) {
+    console.error("AssignmentService.checkGroupNeglectedAssignments error:", error);
+    return { count: 0, pointsDeducted: 0 };
   }
+}
+
+// services/assignment.services.ts - ADD these methods
+
+// ========== GET NEGLECTED TASKS FOR USER ==========
+static async getUserNeglectedTasks(userId: string, filters?: {
+  groupId?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  try {
+    const where: any = {
+      userId,
+      expired: true,
+      completed: false
+    };
+
+    if (filters?.groupId) {
+      where.task = {
+        groupId: filters.groupId
+      };
+    }
+
+    const [neglectedTasks, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
+        include: {
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              group: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              },
+              timeSlots: {
+                select: {
+                  id: true,
+                  startTime: true,
+                  endTime: true,
+                  label: true,
+                  points: true
+                }
+              }
+            }
+          },
+          timeSlot: true,
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true
+            }
+          }
+        },
+        orderBy: { expiredAt: 'desc' },
+        take: filters?.limit || 20,
+        skip: filters?.offset || 0
+      }),
+      prisma.assignment.count({ where })
+    ]);
+
+    // Format the response
+    const formattedTasks = neglectedTasks.map(assignment => ({
+      id: assignment.id,
+      taskId: assignment.taskId,
+      taskTitle: assignment.task?.title || 'Deleted Task',
+      groupName: assignment.task?.group?.name || 'Unknown Group',
+      dueDate: assignment.dueDate,
+      expiredAt: assignment.expiredAt,
+      points: assignment.timeSlot?.points || assignment.points || 0,
+      timeSlot: assignment.timeSlot ? {
+        startTime: assignment.timeSlot.startTime,
+        endTime: assignment.timeSlot.endTime,
+        label: assignment.timeSlot.label
+      } : null,
+      notes: assignment.notes,
+      task: assignment.task
+    }));
+
+    return {
+      success: true,
+      message: "Neglected tasks retrieved",
+      data: {
+        tasks: formattedTasks,
+        total,
+        count: formattedTasks.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error getting user neglected tasks:", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// ========== GET GROUP NEGLECTED TASKS (FOR ADMINS) ==========
+static async getGroupNeglectedTasks(
+  groupId: string,
+  userId: string,
+  filters?: {
+    memberId?: string;
+    limit?: number;
+    offset?: number;
+  }
+) {
+  try {
+    // Check if user is admin
+    const membership = await prisma.groupMember.findFirst({
+      where: {
+        userId,
+        groupId,
+        groupRole: "ADMIN"
+      }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only admins can view all neglected tasks" };
+    }
+
+    const where: any = {
+      task: { groupId },
+      expired: true,
+      completed: false
+    };
+
+    if (filters?.memberId) {
+      where.userId = filters.memberId;
+    }
+
+    const [neglectedTasks, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true
+            }
+          },
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true
+            }
+          },
+          timeSlot: true
+        },
+        orderBy: { expiredAt: 'desc' },
+        take: filters?.limit || 20,
+        skip: filters?.offset || 0
+      }),
+      prisma.assignment.count({ where })
+    ]);
+
+    // Calculate total points lost per user
+    const pointsByUser: Record<string, number> = {};
+    neglectedTasks.forEach(task => {
+      const points = task.timeSlot?.points || task.points || 0;
+      pointsByUser[task.userId] = (pointsByUser[task.userId] || 0) + points;
+    });
+
+    const formattedTasks = neglectedTasks.map(assignment => ({
+      id: assignment.id,
+      taskId: assignment.taskId,
+      taskTitle: assignment.task?.title || 'Deleted Task',
+      user: assignment.user,
+      dueDate: assignment.dueDate,
+      expiredAt: assignment.expiredAt,
+      points: assignment.timeSlot?.points || assignment.points || 0,
+      timeSlot: assignment.timeSlot ? {
+        startTime: assignment.timeSlot.startTime,
+        endTime: assignment.timeSlot.endTime,
+        label: assignment.timeSlot.label
+      } : null,
+      notes: assignment.notes
+    }));
+
+    return {
+      success: true,
+      message: "Group neglected tasks retrieved",
+      data: {
+        tasks: formattedTasks,
+        total,
+        count: formattedTasks.length,
+        pointsByUser
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error getting group neglected tasks:", error);
+    return { success: false, message: error.message };
+  }
+}
+
 }

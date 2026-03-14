@@ -5,7 +5,7 @@ import { AssignmentService } from "../services/assignment.services";
 import { TimeHelpers } from "../helpers/time.helpers";
 
 import prisma from "../prisma";
-
+ 
 export class AssignmentController {
   
   // ========== COMPLETE ASSIGNMENT ==========
@@ -588,4 +588,99 @@ static async getUpcomingAssignments(req: UserAuthRequest, res: Response) {
       });
     }
   }
+
+// ========== GET USER NEGLECTED TASKS ==========
+static async getUserNeglectedTasks(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId, limit = 20, offset = 0 } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    const result = await AssignmentService.getUserNeglectedTasks(userId, {
+      groupId: groupId as string,
+      limit: Number(limit),
+      offset: Number(offset)
+    });
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: result.data
+    });
+
+  } catch (error: any) {
+    console.error("AssignmentController.getUserNeglectedTasks error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Error retrieving neglected tasks"
+    });
+  }
+}
+
+// ========== GET GROUP NEGLECTED TASKS (ADMIN ONLY) ==========
+static async getGroupNeglectedTasks(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as { groupId: string };
+    const { memberId, limit = 20, offset = 0 } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: "Group ID is required"
+      });
+    }
+
+    const result = await AssignmentService.getGroupNeglectedTasks(
+      groupId,
+      userId,
+      {
+        memberId: memberId as string,
+        limit: Number(limit),
+        offset: Number(offset)
+      }
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: result.data
+    });
+
+  } catch (error: any) {
+    console.error("AssignmentController.getGroupNeglectedTasks error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Error retrieving group neglected tasks"
+    });
+  }
+}
+
 }

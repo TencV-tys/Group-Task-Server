@@ -46,4 +46,9 @@ router.get('/today', AssignmentController.getTodayAssignments);
 // Get group statistics
 router.get('/group/:groupId/stats', AssignmentController.getAssignmentStats);
 
+// Get user's neglected tasks (for members)
+router.get('/neglected/my', AssignmentController.getUserNeglectedTasks);
+
+// Get group's neglected tasks (for admins)
+router.get('/neglected/group/:groupId', AssignmentController.getGroupNeglectedTasks);
 export default router;

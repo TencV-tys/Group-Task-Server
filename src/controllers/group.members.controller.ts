@@ -402,12 +402,11 @@ return res.json({
       });
     }
   }
-
-  // Get group info
+ 
   static async getGroupInfo(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { groupId } = req.params as { groupId: string };
+      const { groupId } = req.params as {groupId:string};
 
       if (!userId) {
         return res.status(401).json({
@@ -423,85 +422,25 @@ return res.json({
         });
       }
 
-      // Check if user is a member of the group
-      const membership = await prisma.groupMember.findFirst({
-        where: {
-          userId: userId,
-          groupId: groupId
-        },
-        include: {
-          group: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              inviteCode: true,
-              avatarUrl: true,
-              createdAt: true,
-              currentRotationWeek: true,
-              lastRotationUpdate: true
-            }
-          }
-        }
-      });
+      console.log(`📞 getGroupInfo called for group ${groupId} by user ${userId}`); // ← ADD THIS LOG
 
-      if (!membership) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not a member of this group"
-        });
+      const result = await GroupMembersService.getGroupInfo(groupId, userId);
+
+      if (!result.success) {
+        return res.status(400).json(result);
       }
-
-      // Get member count and rotation stats
-      const memberCount = await prisma.groupMember.count({
-        where: { groupId: groupId }
-      });
-
-      const activeMemberCount = await prisma.groupMember.count({
-        where: { 
-          groupId: groupId,
-          isActive: true 
-        }
-      });
-
-      const recurringTaskCount = await prisma.task.count({
-        where: { 
-          groupId: groupId,
-          isRecurring: true 
-        }
-      });
-
-      // Only show invite code to admins
-      const responseData: any = {
-        id: membership.group.id,
-        name: membership.group.name,
-        description: membership.group.description,
-        avatarUrl: membership.group.avatarUrl,
-        createdAt: membership.group.createdAt,
-        currentRotationWeek: membership.group.currentRotationWeek,
-        lastRotationUpdate: membership.group.lastRotationUpdate,
-        memberCount: memberCount,
-        activeMemberCount: activeMemberCount,
-        recurringTaskCount: recurringTaskCount,
-        userRole: membership.groupRole
-      };
-
-      // Only include invite code if user is admin
-      if (membership.groupRole === "ADMIN") {
-        responseData.inviteCode = membership.group.inviteCode;
-      }
-
+ 
       return res.json({
         success: true,
         message: "Group info retrieved",
-        group: responseData
+        group: result.group
       });
 
     } catch (error: any) {
-      console.error("GroupMembersController.getGroupInfo error:", error);
+      console.error("Error in getGroupInfo:", error);
       return res.status(500).json({
         success: false,
-        message: "Internal server error"
+        message: error.message || "Internal server error"
       });
     }
   }

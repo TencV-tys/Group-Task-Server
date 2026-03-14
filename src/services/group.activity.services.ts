@@ -583,10 +583,7 @@ static async getMemberContributionDetails(
       return { success: false, message: error.message || "Error retrieving task history" };
     }
   }
-
-  // Add these methods to your existing GroupActivityService class
-
-// ===== NEW: Get admin dashboard data =====
+ // ===== NEW: Get admin dashboard data (WITH NEGLECTED COUNTS) =====
 static async getAdminDashboard(groupId: string, userId: string) {
   try {
     // Check if user is admin
@@ -603,7 +600,8 @@ static async getAdminDashboard(groupId: string, userId: string) {
       select: { 
         name: true,
         currentRotationWeek: true,
-        createdAt: true
+        createdAt: true,
+        maxMembers: true
       }
     });
 
@@ -648,6 +646,28 @@ static async getAdminDashboard(groupId: string, userId: string) {
 
     const completedThisWeek = currentWeekAssignments.filter(a => a.completed).length;
     const totalThisWeek = currentWeekAssignments.length;
+    
+    // ===== ADD THIS: Calculate neglected tasks =====
+    const now = new Date();
+    const neglectedAssignments = currentWeekAssignments.filter(a => 
+      !a.completed && new Date(a.dueDate) < now
+    );
+    
+    const neglectedCount = neglectedAssignments.length;
+    const neglectedPoints = neglectedAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+
+    // Calculate neglected tasks by member
+    const neglectedByMember: Record<string, { count: number; points: number; name: string }> = {};
+    neglectedAssignments.forEach(assignment => {
+      const userId = assignment.userId;
+      const userName = assignment.user?.fullName || 'Unknown';
+      
+      if (!neglectedByMember[userId]) {
+        neglectedByMember[userId] = { count: 0, points: 0, name: userName };
+      }
+      neglectedByMember[userId].count++;
+      neglectedByMember[userId].points += assignment.points || 0;
+    });
 
     return {
       success: true,
@@ -656,7 +676,10 @@ static async getAdminDashboard(groupId: string, userId: string) {
         group: {
           name: group?.name,
           currentWeek: group?.currentRotationWeek || 1,
-          createdAt: group?.createdAt
+          createdAt: group?.createdAt,
+          maxMembers: group?.maxMembers || 6,
+          memberCount: members.length,
+          slotsAvailable: Math.max(0, (group?.maxMembers || 6) - members.length)
         },
         stats: {
           totalMembers: members.length,
@@ -668,6 +691,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
             total: totalThisWeek,
             completed: completedThisWeek,
             percentage: totalThisWeek > 0 ? (completedThisWeek / totalThisWeek) * 100 : 0
+          },
+          // ===== ADD THIS =====
+          neglected: {
+            count: neglectedCount,
+            points: neglectedPoints,
+            byMember: neglectedByMember
           }
         },
         members: members.map(m => ({
@@ -677,7 +706,9 @@ static async getAdminDashboard(groupId: string, userId: string) {
           role: m.groupRole,
           inRotation: m.inRotation,
           isActive: m.isActive,
-          points: m.cumulativePoints
+          points: m.cumulativePoints,
+          neglectedCount: neglectedByMember[m.userId]?.count || 0,
+          neglectedPoints: neglectedByMember[m.userId]?.points || 0
         }))
       }
     };
@@ -688,8 +719,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
-
-// ===== NEW: Get member dashboard data (FIXED with proper type safety) =====
+// ===== FIXED: Get member dashboard data (WITH NEGLECTED COUNTS) =====
 static async getMemberDashboard(groupId: string, userId: string) {
   try {
     // Check if user is member
@@ -705,8 +735,14 @@ static async getMemberDashboard(groupId: string, userId: string) {
       where: { id: groupId },
       select: { 
         name: true,
-        currentRotationWeek: true
+        currentRotationWeek: true,
+        maxMembers: true
       }
+    });
+
+    // Get total members count for the group
+    const totalMembers = await prisma.groupMember.count({
+      where: { groupId, isActive: true }
     });
 
     // Get user's assignments
@@ -749,9 +785,20 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const allAssignments = [...assignmentsWithTasks, ...assignmentsWithoutTasks, ...historicalAssignments];
 
     // Calculate stats
+    const now = new Date();
     const pending = allAssignments.filter(a => !a.completed);
     const completed = allAssignments.filter(a => a.completed);
     
+    // Calculate personal neglected tasks
+    const myNeglected = pending.filter(a => new Date(a.dueDate) < now);
+    const myNeglectedCount = myNeglected.length;
+    const myNeglectedPoints = myNeglected.reduce((sum, a) => {
+      // Safe points calculation for neglected tasks
+      const assignment = a as any;
+      const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+      return sum + points;
+    }, 0);
+
     // Due today - only from assignments with tasks
     const dueToday = assignmentsWithTasks.filter(a => {
       if (a.completed) return false;
@@ -760,24 +807,24 @@ static async getMemberDashboard(groupId: string, userId: string) {
       return today === dueDate;
     });
 
-  // Calculate points safely - FIXED
-const pointsThisWeek = completed
-  .filter(a => {
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    return a.completedAt && a.completedAt > weekAgo;
-  })
-  .reduce((sum, a) => {
-    // Use type assertion to tell TypeScript this might have task
-    const assignment = a as any;
-    const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
-    return sum + points;
-  }, 0);
+    // Calculate points safely
+    const pointsThisWeek = completed
+      .filter(a => {
+        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        return a.completedAt && a.completedAt > weekAgo;
+      })
+      .reduce((sum, a) => {
+        const assignment = a as any;
+        const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+        return sum + points;
+      }, 0);
 
-const totalPoints = completed.reduce((sum, a) => {
-  const assignment = a as any;
-  const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
-  return sum + points;
-}, 0);
+    const totalPoints = completed.reduce((sum, a) => {
+      const assignment = a as any;
+      const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+      return sum + points;
+    }, 0);
+
     // Get pending swap requests
     const pendingSwaps = await prisma.swapRequest.count({
       where: {
@@ -798,7 +845,7 @@ const totalPoints = completed.reduce((sum, a) => {
     const formattedDueToday = dueToday.map(t => ({
       id: t.id,
       taskId: t.taskId,
-      title: t.task!.title, // Safe because we filtered assignmentsWithTasks
+      title: t.task!.title,
       points: t.task!.points || t.points,
       dueDate: t.dueDate,
       timeSlot: t.timeSlot ? {
@@ -826,8 +873,35 @@ const totalPoints = completed.reduce((sum, a) => {
           startTime: t.timeSlot.startTime,
           endTime: t.timeSlot.endTime,
           label: t.timeSlot.label
-        } : null
+        } : null,
+        isOverdue: new Date(t.dueDate) < now
       }));
+
+    // Format neglected tasks - FIXED with proper null checks
+    const formattedNeglected = myNeglected
+      .map(t => {
+        const assignment = t as any;
+        const taskTitle = assignment.task?.title || assignment.taskTitle || 'Task';
+        const taskPoints = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+        const dueDate = new Date(assignment.dueDate);
+        const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        return {
+          id: assignment.id,
+          taskId: assignment.taskId,
+          title: taskTitle,
+          points: taskPoints,
+          dueDate: assignment.dueDate,
+          daysOverdue,
+          timeSlot: assignment.timeSlot ? {
+            id: assignment.timeSlot.id,
+            startTime: assignment.timeSlot.startTime,
+            endTime: assignment.timeSlot.endTime,
+            label: assignment.timeSlot.label
+          } : null
+        };
+      })
+      .slice(0, 3);
 
     // Format historical tasks
     const formattedHistorical = historicalAssignments
@@ -855,7 +929,9 @@ const totalPoints = completed.reduce((sum, a) => {
       data: {
         group: {
           name: group?.name,
-          currentWeek: group?.currentRotationWeek || 1
+          currentWeek: group?.currentRotationWeek || 1,
+          maxMembers: group?.maxMembers || 6,
+          memberCount: totalMembers
         },
         stats: {
           pendingTasks: pending.length,
@@ -865,11 +941,14 @@ const totalPoints = completed.reduce((sum, a) => {
           pointsThisWeek,
           totalPoints,
           totalAssignments: allAssignments.length,
-          historicalCount: historicalAssignments.length
+          historicalCount: historicalAssignments.length,
+          myNeglectedCount,
+          myNeglectedPoints
         },
         tasks: {
           dueToday: formattedDueToday,
           upcoming: upcomingFromTasks,
+          neglected: formattedNeglected,
           recentHistory: formattedHistorical
         },
         user: {
@@ -884,6 +963,7 @@ const totalPoints = completed.reduce((sum, a) => {
     return { success: false, message: error.message };
   }
 }
+
 
 // ===== NEW: Get recent activity (FIXED with null checks) =====
 static async getRecentActivity(groupId: string, userId: string, limit: number = 10) {

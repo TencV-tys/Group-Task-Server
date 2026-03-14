@@ -29,4 +29,4 @@ router.put('/:groupId/update-max-members', GroupController.updateMaxMembers);
 // This must come AFTER the main routes to avoid conflicts
 router.use('/:groupId', GroupMemberRoutes);
 
-export default router; 
+export default router;  
