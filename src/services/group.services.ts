@@ -725,24 +725,34 @@ static async getGroupInfo(groupId: string, userId: string) {
     }
 
     // Get group info with avatar and maxMembers
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
+ // In group.services.ts - Update getGroupInfo
+const group = await prisma.group.findUnique({
+  where: { id: groupId },
+  select: {  // ← Use select instead of include to be explicit
+    id: true,
+    name: true,
+    description: true,
+    avatarUrl: true,
+    inviteCode: true,
+    currentRotationWeek: true,
+    maxMembers: true,  // ← Make sure this is included
+    createdAt: true,
+    updatedAt: true,
+    lastRotationUpdate: true,
+    members: {
+      where: { groupRole: "ADMIN" },
       include: {
-        members: {
-          where: { groupRole: "ADMIN" },
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                avatarUrl: true
-              }
-            }
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
           }
         }
       }
-    });
-
+    }
+  }
+});
     if (!group) {
       return {
         success: false,
