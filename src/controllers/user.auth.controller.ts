@@ -1,4 +1,4 @@
-// controllers/user.auth.controller.ts - UPDATED with profile methods
+// controllers/user.auth.controller.ts - FULLY UPDATED with accessToken/refreshToken
 import {Request,Response} from 'express';
 import { UserServices } from '../services/user.auth.services';
 import { UserRefreshToken } from '../services/user.create.refreshToken.services';
@@ -11,6 +11,7 @@ import bcrypt from 'bcryptjs';
 
 export class UserAuthController{
  
+  // ===== SIGNUP - Returns both tokens =====
   static async signup(req: Request, res: Response) {
     try {
         console.log("=== CONTROLLER SIGNUP ===");
@@ -57,11 +58,12 @@ export class UserAuthController{
         
         console.log("=== CONTROLLER SIGNUP COMPLETE ===");
         
-        // ✅ RETURN TOKEN IN RESPONSE for React Native
+        // ✅ RETURN BOTH TOKENS for React Native
         return res.json({
             success: true,
             message: result.message,
-            token: result.token,
+            accessToken: result.token,      // ← Access token for API calls
+            refreshToken: userRefreshToken, // ← Refresh token for getting new access tokens
             user: {
                 id: user.id,
                 email: user.email,
@@ -79,8 +81,9 @@ export class UserAuthController{
             message: e.message
         });
     }
-}
+  }
 
+  // ===== LOGIN - Returns both tokens =====
   static async login(req:Request, res:Response){
     try{
         const {email,password} = req.body;
@@ -116,11 +119,12 @@ export class UserAuthController{
         
         await UserRefreshToken.createRefreshToken(user.id, userRefreshToken);
 
-        // ✅ RETURN TOKEN IN RESPONSE for React Native
+        // ✅ RETURN BOTH TOKENS for React Native
         return res.json({
             success:true,
             message:result.message,
-            token: result.token,
+            accessToken: result.token,      // ← Access token for API calls
+            refreshToken: userRefreshToken, // ← Refresh token for getting new access tokens
             user:{
                 id:user.id,
                 fullName:user.fullName,
@@ -139,9 +143,16 @@ export class UserAuthController{
     }
   }
 
+  // ===== REFRESH TOKEN - Returns new access token =====
   static async refreshToken(req:Request,res:Response){
     try{
-        const userRefreshToken = req.cookies.userRefreshToken;
+        // Check both cookies and Authorization header (for React Native)
+        const authHeader = req.headers.authorization;
+        const refreshTokenFromHeader = authHeader?.startsWith('Bearer ') 
+          ? authHeader.substring(7) 
+          : null;
+        
+        const userRefreshToken = req.cookies.userRefreshToken || refreshTokenFromHeader;
 
         if(!userRefreshToken){
             return res.status(400).json({ 
@@ -170,11 +181,11 @@ export class UserAuthController{
             path: '/'
         });
 
-        // ✅ RETURN NEW TOKEN IN RESPONSE for React Native
+        // ✅ RETURN NEW ACCESS TOKEN
         return res.json({
             success:true,
             message:"Token refreshed successfully",
-            token: result.accessToken,
+            accessToken: result.accessToken, // ← New access token
             user:result.user
         });
 
@@ -189,6 +200,7 @@ export class UserAuthController{
     }
   }
 
+  // ===== LOGOUT =====
   static async logout(req:Request, res:Response){
     try{
         const userRefreshToken = req.cookies.userRefreshToken;
@@ -230,6 +242,7 @@ export class UserAuthController{
     }
   }
 
+  // ===== GET CURRENT USER =====
   static async getCurrentUser(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -241,7 +254,6 @@ export class UserAuthController{
         });
       }
 
-      // Fetch fresh user data from database
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -287,7 +299,7 @@ export class UserAuthController{
     }
   }
 
-  // ===== NEW: Update user profile =====
+  // ===== UPDATE PROFILE =====
   static async updateProfile(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -314,7 +326,6 @@ export class UserAuthController{
         });
       }
 
-      // Update user in database
       const updatedUser = await prisma.user.update({
         where: { id: userId },
         data: { fullName: fullName.trim() },
@@ -346,7 +357,7 @@ export class UserAuthController{
     }
   }
 
-  // ===== NEW: Change password =====
+  // ===== CHANGE PASSWORD =====
   static async changePassword(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -359,7 +370,6 @@ export class UserAuthController{
         });
       }
 
-      // Validate inputs
       if (!currentPassword || !newPassword) {
         return res.status(400).json({
           success: false,
@@ -374,7 +384,6 @@ export class UserAuthController{
         });
       }
 
-      // Get user with password
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { passwordHash: true }
@@ -387,7 +396,6 @@ export class UserAuthController{
         });
       }
 
-      // Verify current password
       const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({
@@ -396,10 +404,8 @@ export class UserAuthController{
         });
       }
 
-      // Hash new password
       const newPasswordHash = await bcrypt.hash(newPassword, 10);
 
-      // Update password
       await prisma.user.update({
         where: { id: userId },
         data: { passwordHash: newPasswordHash }
@@ -419,7 +425,7 @@ export class UserAuthController{
     }
   }
 
-  // ===== NEW: Delete account =====
+  // ===== DELETE ACCOUNT =====
   static async deleteAccount(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -439,7 +445,6 @@ export class UserAuthController{
         });
       }
 
-      // Get user with password
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { passwordHash: true }
@@ -452,7 +457,6 @@ export class UserAuthController{
         });
       }
 
-      // Verify password
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({
@@ -461,12 +465,10 @@ export class UserAuthController{
         });
       }
 
-      // Delete user (cascade will handle related records)
       await prisma.user.delete({
         where: { id: userId }
       });
 
-      // Clear cookies
       res.clearCookie('userToken');
       res.clearCookie('userRefreshToken');
 
