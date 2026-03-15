@@ -1,4 +1,4 @@
-// routes/admin.groups.routes.ts
+// routes/admin.groups.routes.ts - COMPLETE WITH REPORT ANALYSIS ROUTES
 import { Router } from "express";
 import { AdminGroupsController } from "../controllers/admin.groups.controller";
 import { AdminAuthMiddleware } from "../middlewares/admin.auth.middleware";
@@ -8,7 +8,7 @@ import { validateGroupId } from "../middlewares/validation.middleware";
 const router = Router();
 
 // All routes require admin authentication
-router.use(AdminAuthMiddleware);
+router.use(AdminAuthMiddleware); 
 
 // ========== VIEW ROUTES (NO AUDIT - READ ONLY) ==========
 /**
@@ -17,6 +17,13 @@ router.use(AdminAuthMiddleware);
  * @access  Private (Admin)
  */
 router.get('/', AdminGroupsController.getGroups);
+
+/**
+ * @route   GET /api/admin/groups/with-analysis
+ * @desc    Get all groups with report analysis
+ * @access  Private (Admin)
+ */
+router.get('/with-analysis', AdminGroupsController.getGroupsWithAnalysis);
 
 /**
  * @route   GET /api/admin/groups/statistics
@@ -46,6 +53,30 @@ router.get('/:groupId', validateGroupId, AdminGroupsController.getGroupById);
  */
 router.get('/:groupId/members', validateGroupId, AdminGroupsController.getGroupMembers);
 
+// ===== NEW: REPORT ANALYSIS ROUTES =====
+/**
+ * @route   GET /api/admin/groups/:groupId/reports/analyze
+ * @desc    Analyze group reports for suggested actions
+ * @access  Private (Admin)
+ */
+router.get(
+  '/:groupId/reports/analyze',
+  validateGroupId,
+  AdminGroupsController.analyzeGroupReports
+);
+
+/**
+ * @route   POST /api/admin/groups/:groupId/reports/apply-action
+ * @desc    Apply suggested action based on reports
+ * @access  Private (Admin)
+ */
+router.post(
+  '/:groupId/reports/apply-action',
+  validateGroupId,
+  AuditLog('ADMIN_APPLIED_REPORT_ACTION', (req) => req.params.groupId as string),
+  AdminGroupsController.applySuggestedAction
+);
+
 // ========== MODIFY ROUTES (WITH AUDIT) ==========
 
 /**
@@ -56,7 +87,7 @@ router.get('/:groupId/members', validateGroupId, AdminGroupsController.getGroupM
 router.delete(
   '/:groupId', 
   validateGroupId,
-  AuditLog('ADMIN_DELETE_GROUP', (req) => req.params.groupId as string), // 👈 ADD AUDIT
+  AuditLog('ADMIN_DELETE_GROUP', (req) => req.params.groupId as string),
   AdminGroupsController.deleteGroup
 );
 
@@ -68,7 +99,7 @@ router.delete(
 router.delete(
   '/:groupId/members/:memberId', 
   validateGroupId,
-  AuditLog('ADMIN_REMOVE_GROUP_MEMBER', (req) => req.params.memberId as string), // 👈 ADD AUDIT
+  AuditLog('ADMIN_REMOVE_GROUP_MEMBER', (req) => req.params.memberId as string),
   AdminGroupsController.removeMember
 );
 
@@ -79,7 +110,7 @@ router.delete(
  */
 router.post(
   '/bulk-delete', 
-  AuditLog('ADMIN_BULK_DELETE_GROUPS', (req) => { // 👈 ADD AUDIT
+  AuditLog('ADMIN_BULK_DELETE_GROUPS', (req) => { 
     const groupIds = (req.body.groupIds || []) as string[];
     return groupIds.length > 0 ? groupIds[0] : 'bulk-operation';
   }),

@@ -7,7 +7,10 @@ const router = Router();
 // All routes require admin authentication
 router.use(AdminAuthMiddleware);
 
-// ========== USER MANAGEMENT ROUTES (VIEW ONLY) ==========
+// ========== USER MANAGEMENT ROUTES ==========
+// Get user statistics
+router.get('/stats', AdminUsersController.getUserStats);
+
 // Get all users with filters
 router.get('/', AdminUsersController.getUsers);
 

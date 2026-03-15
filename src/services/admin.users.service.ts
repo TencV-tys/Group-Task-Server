@@ -37,7 +37,38 @@ export class AdminUsersService {
         ];
       }
 
-      if (role) {
+      // ===== FIXED: Handle GROUP_ADMIN role filter =====
+      let groupAdminUserIds: string[] | undefined;
+      
+      if (role === 'GROUP_ADMIN') {
+        // Get all users who are admins of any group
+        const groupAdmins = await prisma.groupMember.findMany({
+          where: { groupRole: 'ADMIN' },
+          select: { userId: true },
+          distinct: ['userId']
+        });
+        groupAdminUserIds = groupAdmins.map(ga => ga.userId);
+        
+        // If no group admins, return empty result
+        if (groupAdminUserIds.length === 0) {
+          return {
+            success: true,
+            message: "No group admins found",
+            data: {
+              users: [],
+              pagination: {
+                page,
+                limit,
+                total: 0,
+                pages: 0
+              }
+            }
+          };
+        }
+        
+        where.id = { in: groupAdminUserIds };
+      } else if (role) {
+        // Regular role filter
         where.role = role;
       }
 
@@ -79,7 +110,7 @@ export class AdminUsersService {
         prisma.user.count({ where })
       ]);
 
-      // Format response
+      // Format response - add isGroupAdmin flag for UI
       const formattedUsers = users.map(user => ({
         id: user.id,
         fullName: user.fullName,
@@ -92,7 +123,9 @@ export class AdminUsersService {
         updatedAt: user.updatedAt,
         lastLoginAt: user.lastLoginAt,
         groupsCount: user._count.groups,
-        tasksCompleted: user._count.assignments
+        tasksCompleted: user._count.assignments,
+        // Add flag to indicate if user is a group admin (useful for UI)
+        isGroupAdmin: groupAdminUserIds ? groupAdminUserIds.includes(user.id) : false
       }));
 
       return {
@@ -180,6 +213,14 @@ export class AdminUsersService {
         };
       }
 
+      // Check if user is a group admin
+      const isGroupAdmin = await prisma.groupMember.count({
+        where: { 
+          userId, 
+          groupRole: 'ADMIN' 
+        }
+      }) > 0;
+
       // Get counts
       const groupsCount = await prisma.groupMember.count({
         where: { userId, isActive: true }
@@ -203,6 +244,7 @@ export class AdminUsersService {
         message: "User details retrieved successfully",
         data: {
           ...user,
+          isGroupAdmin, // Add this flag
           stats: {
             groupsCount,
             totalTasks,

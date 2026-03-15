@@ -1,5 +1,6 @@
-// services/admin.groups.services.ts
+// services/admin.groups.services.ts - COMPLETE WITH REPORT ANALYSIS
 import prisma from "../prisma";
+import { ReportType, ReportStatus } from "@prisma/client";
 
 export interface GroupFilters {
   search?: string;
@@ -50,6 +51,81 @@ export interface GroupWithDetails {
   };
   members?: GroupMember[];
   recentTasks?: any[];
+}
+
+// ===== REPORT ACTION RULES =====
+const REPORT_ACTION_RULES = {
+  [ReportType.INAPPROPRIATE_CONTENT]: {
+    threshold: 2,
+    suggestedAction: 'SOFT_DELETE',
+    severity: 'MEDIUM',
+    message: 'Multiple reports of inappropriate content',
+    color: '#e67700'
+  },
+  [ReportType.HARASSMENT]: {
+    threshold: 1,
+    suggestedAction: 'SUSPEND',
+    severity: 'HIGH',
+    message: 'Harassment reported - immediate action required',
+    color: '#fa5252'
+  },
+  [ReportType.SPAM]: {
+    threshold: 3,
+    suggestedAction: 'SOFT_DELETE',
+    severity: 'LOW',
+    message: 'Multiple spam reports',
+    color: '#868e96'
+  },
+  [ReportType.OFFENSIVE_BEHAVIOR]: {
+    threshold: 2,
+    suggestedAction: 'WARNING',
+    severity: 'MEDIUM',
+    message: 'Offensive behavior reported',
+    color: '#e67700'
+  },
+  [ReportType.TASK_ABUSE]: {
+    threshold: 2,
+    suggestedAction: 'SOFT_DELETE',
+    severity: 'MEDIUM',
+    message: 'Task abuse detected',
+    color: '#e67700'
+  },
+  [ReportType.GROUP_MISUSE]: {
+    threshold: 2,
+    suggestedAction: 'HARD_DELETE',
+    severity: 'HIGH',
+    message: 'Group misuse - permanent action recommended',
+    color: '#fa5252'
+  },
+  [ReportType.OTHER]: {
+    threshold: 3,
+    suggestedAction: 'REVIEW',
+    severity: 'LOW',
+    message: 'Multiple miscellaneous reports',
+    color: '#868e96'
+  }
+};
+
+export interface ReportAnalysis {
+  groupId: string;
+  groupName: string;
+  reportCount: number;
+  reportTypes: {
+    type: ReportType;
+    count: number;
+    threshold: number;
+    suggestedAction: string;
+    severity: string;
+    message: string;
+    meetsThreshold: boolean;
+  }[];
+  suggestedActions: {
+    action: string;
+    reason: string;
+    severity: string;
+    reportTypes: ReportType[];
+  }[];
+  requiresImmediateAction: boolean;
 }
 
 export class AdminGroupsService {
@@ -121,7 +197,7 @@ export class AdminGroupsService {
               }
             },
             members: {
-              take: 5, // Only get first 5 members for preview
+              take: 5,
               include: {
                 user: {
                   select: {
@@ -147,8 +223,19 @@ export class AdminGroupsService {
         prisma.group.count({ where })
       ]);
 
+      // Filter by member count if needed (done in memory)
+      let filteredGroups = groups;
+      if (minMembers !== undefined || maxMembers !== undefined) {
+        filteredGroups = groups.filter(group => {
+          const memberCount = group._count.members;
+          if (minMembers !== undefined && memberCount < minMembers) return false;
+          if (maxMembers !== undefined && memberCount > maxMembers) return false;
+          return true;
+        });
+      }
+
       // Format response
-      const formattedGroups = groups.map(group => ({
+      const formattedGroups = filteredGroups.map(group => ({
         id: group.id,
         name: group.name,
         description: group.description,
@@ -289,6 +376,9 @@ export class AdminGroupsService {
         }
       });
 
+      // Get report analysis
+      const analysis = await this.analyzeGroupReports(groupId);
+
       return {
         success: true,
         message: 'Group retrieved successfully',
@@ -299,7 +389,8 @@ export class AdminGroupsService {
             totalTasks,
             completedTasks,
             completionRate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0
-          }
+          },
+          reportAnalysis: analysis.success ? analysis.analysis : null
         }
       };
 
@@ -308,6 +399,407 @@ export class AdminGroupsService {
       return {
         success: false,
         message: error.message || 'Failed to fetch group'
+      };
+    }
+  }
+
+  // ========== ANALYZE GROUP REPORTS ==========
+  static async analyzeGroupReports(groupId: string): Promise<{
+    success: boolean;
+    analysis?: ReportAnalysis;
+    message?: string;
+  }> {
+    try {
+      // Get group with its reports
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        include: {
+          reports: {
+            where: {
+              status: {
+                in: ['PENDING', 'REVIEWING']
+              }
+            },
+            select: {
+              id: true,
+              type: true,
+              status: true,
+              description: true,
+              createdAt: true
+            }
+          }
+        }
+      });
+
+      if (!group) {
+        return {
+          success: false,
+          message: 'Group not found'
+        };
+      }
+
+      // Count reports by type
+      const reportCountByType = new Map<ReportType, number>();
+      group.reports.forEach(report => {
+        const count = reportCountByType.get(report.type as ReportType) || 0;
+        reportCountByType.set(report.type as ReportType, count + 1);
+      });
+
+      // Analyze each report type
+      const reportTypes = Array.from(reportCountByType.entries()).map(([type, count]) => {
+        const rule = REPORT_ACTION_RULES[type] || {
+          threshold: 3,
+          suggestedAction: 'REVIEW',
+          severity: 'LOW',
+          message: 'Multiple reports'
+        };
+
+        return {
+          type,
+          count,
+          threshold: rule.threshold,
+          suggestedAction: rule.suggestedAction,
+          severity: rule.severity,
+          message: rule.message,
+          meetsThreshold: count >= rule.threshold
+        };
+      });
+
+      // Group suggested actions
+      const actionGroups = new Map<string, {
+        action: string;
+        reason: string;
+        severity: string;
+        reportTypes: ReportType[];
+      }>();
+
+      reportTypes.forEach(item => {
+        if (item.meetsThreshold) {
+          const key = `${item.suggestedAction}-${item.severity}`;
+          if (!actionGroups.has(key)) {
+            actionGroups.set(key, {
+              action: item.suggestedAction,
+              reason: item.message,
+              severity: item.severity,
+              reportTypes: []
+            });
+          }
+          actionGroups.get(key)!.reportTypes.push(item.type);
+        }
+      });
+
+      const suggestedActions = Array.from(actionGroups.values());
+      const requiresImmediateAction = suggestedActions.some(a => a.severity === 'HIGH');
+
+      return {
+        success: true,
+        analysis: {
+          groupId: group.id,
+          groupName: group.name,
+          reportCount: group.reports.length,
+          reportTypes: reportTypes.map(r => ({
+            type: r.type,
+            count: r.count,
+            threshold: r.threshold,
+            suggestedAction: r.suggestedAction,
+            severity: r.severity,
+            message: r.message,
+            meetsThreshold: r.meetsThreshold
+          })),
+          suggestedActions,
+          requiresImmediateAction
+        }
+      };
+
+    } catch (error: any) {
+      console.error('Error analyzing group reports:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to analyze group reports'
+      };
+    }
+  }
+
+  // ========== GET GROUPS WITH REPORT ANALYSIS ==========
+  static async getGroupsWithAnalysis(filters: GroupFilters = {}) {
+    try {
+      const groupsResult = await this.getGroups(filters);
+      
+      if (!groupsResult.success) {
+        return groupsResult;
+      }
+
+      // Add report analysis to each group
+      const groupsWithAnalysis = await Promise.all(
+        (groupsResult.groups || []).map(async (group) => {
+          const analysis = await this.analyzeGroupReports(group.id);
+          return {
+            ...group,
+            reportAnalysis: analysis.success ? analysis.analysis : null
+          };
+        })
+      );
+
+      return {
+        ...groupsResult,
+        groups: groupsWithAnalysis
+      };
+
+    } catch (error: any) {
+      console.error('Error getting groups with analysis:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to fetch groups with analysis'
+      };
+    }
+  }
+
+  // ========== APPLY SUGGESTED ACTION ==========
+  static async applySuggestedAction(
+    groupId: string,
+    action: string,
+    adminId: string,
+    reason?: string
+  ) {
+    try {
+      const analysis = await this.analyzeGroupReports(groupId);
+      
+      if (!analysis.success || !analysis.analysis) {
+        return {
+          success: false,
+          message: 'Could not analyze group reports'
+        };
+      }
+
+      // Find matching suggested action
+      const suggestedAction = analysis.analysis.suggestedActions.find(
+        a => a.action === action
+      );
+
+      if (!suggestedAction) {
+        return {
+          success: false,
+          message: `No suggested action "${action}" for this group`
+        };
+      }
+
+      // Apply the action
+      switch (action) {
+        case 'SOFT_DELETE':
+          return await this.deleteGroup(groupId, adminId, { 
+            hardDelete: false,
+            reason: reason || suggestedAction.reason
+          });
+
+        case 'HARD_DELETE':
+          return await this.deleteGroup(groupId, adminId, { 
+            hardDelete: true,
+            reason: reason || suggestedAction.reason
+          });
+
+        case 'SUSPEND':
+          return await this.suspendGroup(groupId, adminId, reason || suggestedAction.reason);
+
+        case 'WARNING':
+          return await this.sendGroupWarning(groupId, adminId, reason || suggestedAction.reason);
+
+        case 'REVIEW':
+          return await this.markGroupForReview(groupId, adminId, reason || suggestedAction.reason);
+
+        default:
+          return {
+            success: false,
+            message: `Unknown action: ${action}`
+          };
+      }
+
+    } catch (error: any) {
+      console.error('Error applying suggested action:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to apply suggested action'
+      };
+    }
+  }
+
+  // ========== SUSPEND GROUP ==========
+  static async suspendGroup(groupId: string, adminId: string, reason?: string) {
+    try {
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { name: true, createdById: true }
+      });
+
+      if (!group) {
+        return {
+          success: false,
+          message: 'Group not found'
+        };
+      }
+
+      // Create notification for group creator
+      await prisma.userNotification.create({
+        data: {
+          userId: group.createdById,
+          type: 'GROUP_SUSPENDED',
+          title: '⚠️ Group Suspended',
+          message: `Your group "${group.name}" has been suspended. Reason: ${reason || 'Violation of community guidelines'}`,
+          data: {
+            groupId,
+            groupName: group.name,
+            reason
+          }
+        }
+      });
+
+      // Create audit log
+      await prisma.adminAuditLog.create({
+        data: {
+          adminId,
+          action: 'GROUP_SUSPENDED',
+          targetUserId: group.createdById,
+          details: {
+            groupId,
+            groupName: group.name,
+            reason
+          }
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Group suspended successfully'
+      };
+
+    } catch (error: any) {
+      console.error('Error suspending group:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to suspend group'
+      };
+    }
+  }
+
+  // ========== SEND GROUP WARNING ==========
+  static async sendGroupWarning(groupId: string, adminId: string, reason?: string) {
+    try {
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { name: true, createdById: true }
+      });
+
+      if (!group) {
+        return {
+          success: false,
+          message: 'Group not found'
+        };
+      }
+
+      // Create warning notification
+      await prisma.userNotification.create({
+        data: {
+          userId: group.createdById,
+          type: 'GROUP_WARNING',
+          title: '⚠️ Group Warning',
+          message: `Your group "${group.name}" has received a warning. Reason: ${reason || 'Multiple reports received'}`,
+          data: {
+            groupId,
+            groupName: group.name,
+            reason
+          }
+        }
+      });
+
+      // Create audit log
+      await prisma.adminAuditLog.create({
+        data: {
+          adminId,
+          action: 'GROUP_WARNING_SENT',
+          targetUserId: group.createdById,
+          details: {
+            groupId,
+            groupName: group.name,
+            reason
+          }
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Warning sent successfully'
+      };
+
+    } catch (error: any) {
+      console.error('Error sending warning:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to send warning'
+      };
+    }
+  }
+
+  // ========== MARK GROUP FOR REVIEW ==========
+  static async markGroupForReview(groupId: string, adminId: string, reason?: string) {
+    try {
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { name: true, createdById: true }
+      });
+
+      if (!group) {
+        return {
+          success: false,
+          message: 'Group not found'
+        };
+      }
+
+      // Create notification for admins
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+
+      for (const admin of admins) {
+        await prisma.adminNotification.create({
+          data: {
+            adminId: admin.id,
+            type: 'GROUP_REVIEW_NEEDED',
+            title: '🔍 Group Review Needed',
+            message: `Group "${group.name}" needs review. Reason: ${reason || 'Multiple reports'}`,
+            priority: 'MEDIUM',
+            data: {
+              groupId,
+              groupName: group.name,
+              reason
+            }
+          }
+        });
+      }
+
+      // Create audit log
+      await prisma.adminAuditLog.create({
+        data: {
+          adminId,
+          action: 'GROUP_MARKED_FOR_REVIEW',
+          targetUserId: group.createdById,
+          details: {
+            groupId,
+            groupName: group.name,
+            reason
+          }
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Group marked for review'
+      };
+
+    } catch (error: any) {
+      console.error('Error marking group for review:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to mark group for review'
       };
     }
   }
@@ -403,8 +895,7 @@ export class AdminGroupsService {
           message: 'Group permanently deleted successfully'
         };
       } else {
-        // SOFT DELETE - Just archive/mark as deleted
-        // Since Group model doesn't have soft delete fields, we'll rename it
+        // SOFT DELETE - Archive the group
         const deletedName = `[DELETED] ${group.name} ${Date.now()}`;
         
         await prisma.group.update({
@@ -413,16 +904,15 @@ export class AdminGroupsService {
             name: deletedName,
             inviteCode: `deleted_${groupId.slice(0, 8)}`,
             description: '[This group has been deleted by admin]',
-            // You might want to add isDeleted field to Group model in the future
           }
         });
 
-        // Remove all members except maybe keep for audit
+        // Remove all members
         await prisma.groupMember.deleteMany({
           where: { groupId }
         });
 
-        // Archive tasks (mark as deleted if Task has isDeleted field)
+        // Archive tasks
         await prisma.task.updateMany({
           where: { groupId },
           data: {
@@ -478,7 +968,7 @@ export class AdminGroupsService {
         if (filters.endDate) where.createdAt.lte = filters.endDate;
       }
 
-      // Get groups by size using Prisma instead of raw SQL
+      // Get groups by size
       const allGroups = await prisma.group.findMany({
         select: {
           id: true,
@@ -490,7 +980,7 @@ export class AdminGroupsService {
         }
       });
 
-      // Calculate size distribution manually
+      // Calculate size distribution
       const sizeDistribution = {
         '1-5': 0,
         '6-10': 0,

@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
 import { AdminUsersService } from "../services/admin.users.service";
+import prisma from "../prisma";
 
 export class AdminUsersController {
   
@@ -58,6 +59,87 @@ export class AdminUsersController {
     }
   }
 
+  // ========== GET USER STATISTICS ==========
+  static async getUserStats(req: AdminAuthRequest, res: Response) {
+    try {
+      // Check if admin is authenticated
+      const adminId = req.admin?.id;
+      
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
+
+      // Get counts from database
+      const [
+        total,
+        active,
+        suspended,
+        groupAdmins,  // 👈 Changed from 'admins' to 'groupAdmins'
+        newToday,
+        newThisWeek,
+        newThisMonth
+      ] = await Promise.all([
+        prisma.user.count(),
+        prisma.user.count({ where: { roleStatus: 'ACTIVE' } }),
+        prisma.user.count({ where: { roleStatus: 'SUSPENDED' } }),
+        // Count DISTINCT users who are admins of any group
+        prisma.groupMember.findMany({
+          where: { groupRole: 'ADMIN' },
+          select: { userId: true },
+          distinct: ['userId']
+        }).then(admins => admins.length),
+        // New users today
+        prisma.user.count({
+          where: {
+            createdAt: {
+              gte: new Date(new Date().setHours(0, 0, 0, 0))
+            }
+          }
+        }),
+        // New users this week
+        prisma.user.count({
+          where: {
+            createdAt: {
+              gte: new Date(new Date().setDate(new Date().getDate() - 7))
+            }
+          }
+        }),
+        // New users this month
+        prisma.user.count({
+          where: {
+            createdAt: {
+              gte: new Date(new Date().setMonth(new Date().getMonth() - 1))
+            }
+          }
+        })
+      ]);
+
+      return res.json({
+        success: true,
+        message: "User statistics retrieved successfully",
+        data: {
+          total,
+          active,
+          suspended,
+          groupAdmins,  // 👈 Now returns the correct count
+          newToday,
+          newThisWeek,
+          newThisMonth
+        }
+      });
+
+    } catch (error: any) {
+      console.error("AdminUsersController.getUserStats error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
   // ========== GET SINGLE USER FOR MODAL ==========
   static async getUserById(req: AdminAuthRequest, res: Response) {
     try {
@@ -99,5 +181,5 @@ export class AdminUsersController {
         message: "Internal server error"
       });
     }
-  }
+  }  
 }

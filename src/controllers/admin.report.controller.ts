@@ -18,8 +18,8 @@ export class AdminReportController {
           success: false,
           message: "Admin not authenticated"
         });
-      }
-
+      } 
+ 
       const { status, limit = 50, offset = 0 } = req.query;
 
       const where: any = {};
@@ -171,78 +171,73 @@ export class AdminReportController {
     }
   }
 
-  // ========== UPDATE REPORT STATUS (ADMIN ONLY) ==========
-  static async updateReportStatus(req: AdminAuthRequest, res: Response) {
-    try {
-      const adminId = req.admin?.id;
-      const { reportId } = req.params as {reportId:string};
-      const { status, resolutionNotes } = req.body;
+// ========== UPDATE REPORT STATUS (ADMIN ONLY) ==========
+static async updateReportStatus(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    const { reportId } = req.params as {reportId:string};
+    const { status, resolutionNotes } = req.body;
 
-      if (!adminId) {
-        return res.status(401).json({
-          success: false,
-          message: "Admin not authenticated"
-        });
-      }
-
-      if (!status) {
-        return res.status(400).json({
-          success: false,
-          message: "Status is required"
-        });
-      }
-
-      // 👇 Validate status against ReportStatus enum
-      const validStatuses = Object.values(ReportStatus);
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-        });
-      }
-
-      const result = await AdminReportService.updateReportStatus(
-        reportId,
-        adminId,
-        status, // Now it's validated as ReportStatus
-        resolutionNotes
-      );
-
-      if (!result.success) {
-        return res.status(400).json({
-          success: false,
-          message: result.message
-        });
-      }
-
-      // 👇 Add null check for result.report
-      if (!result.report) {
-        return res.status(500).json({
-          success: false,
-          message: "Report updated but no data returned"
-        });
-      }
-
-      return res.json({
-        success: true,
-        message: "Report status updated successfully",
-        report: {
-          id: result.report.id,
-          status: result.report.status,
-          resolvedAt: result.report.resolvedAt,
-          resolutionNotes: result.report.resolutionNotes
-        }
-      });
-
-    } catch (error: any) {
-      console.error("Error in updateReportStatus:", error);
-      return res.status(500).json({
+    if (!adminId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "Admin not authenticated"
       });
     }
-  }
 
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Status is required"
+      });
+    }
+
+    // 👇 Validate status against ReportStatus enum
+    const validStatuses = Object.values(ReportStatus);
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    const result = await AdminReportService.updateReportStatus(
+      reportId,
+      adminId,
+      status,
+      resolutionNotes
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    // 👇 Add null check for result.report
+    if (!result.report) {
+      return res.status(500).json({
+        success: false,
+        message: "Report updated but no data returned"
+      });
+    }
+
+    // ✅ FIXED: Return the FULL report object from the service
+    return res.json({
+      success: true,
+      message: "Report status updated successfully",
+      report: result.report  // 👈 Return the complete report, not just a subset
+    });
+
+  } catch (error: any) {
+    console.error("Error in updateReportStatus:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
   // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
   static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
     try {
