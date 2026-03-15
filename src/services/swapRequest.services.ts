@@ -7,7 +7,7 @@ import { SocketService } from "./socket.services";
 export class SwapRequestService {
   
  
-  // CREATE: Create a new swap request with scope support
+ // CREATE: Create a new swap request with scope support
 static async createSwapRequest(
   userId: string,
   assignmentId: string,
@@ -27,7 +27,22 @@ static async createSwapRequest(
       include: {
         task: {
           include: {
-            group: true,
+            group: {
+              include: {
+                tasks: {
+                  where: { 
+                    isRecurring: true,
+                    isDeleted: false 
+                  },
+                  orderBy: { createdAt: 'asc' },
+                  take: 1,
+                  select: { 
+                    id: true,
+                    createdAt: true 
+                  }
+                }
+              }
+            },
             timeSlots: true
           }
         },
@@ -111,23 +126,60 @@ static async createSwapRequest(
     // Check time constraints based on scope
     const now = new Date();
 
+    // ===== FIXED: For WEEK swaps, check based on group's FIRST TASK creation date =====
     if (data.scope === 'week') {
-      // For WEEK swaps, check if within first 24 hours of the week
+      // Get the first task creation date for this group
+      const firstTask = assignment.task.group?.tasks?.[0];
+      if (!firstTask) {
+        return { 
+          success: false, 
+          message: "Cannot determine week start date - no tasks found" 
+        };
+      }
+
+      // Calculate week start based on first task date
+      const firstTaskDate = new Date(firstTask.createdAt);
+      const firstTaskDay = firstTaskDate.getDay(); // 0-6 (Sun-Sat)
+      
+      // Calculate days since start of current week
+      const today = now.getDay();
+      let daysSinceWeekStart = today - firstTaskDay;
+      if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
+      
+      // Set week start to the correct day (the day first task was created)
       const weekStart = new Date(now);
-      const dayOfWeek = weekStart.getDay();
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      weekStart.setDate(weekStart.getDate() - daysToMonday);
+      weekStart.setDate(now.getDate() - daysSinceWeekStart);
       weekStart.setHours(0, 0, 0, 0);
       
+      // Calculate hours since week started
       const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
       
+      // Get current week number
+      const daysSinceFirstTask = Math.floor(
+        (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      const currentWeekNumber = Math.floor(daysSinceFirstTask / 7) + 1;
+      
+      const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      console.log(`📅 Week swap check:`, {
+        firstTaskDate: firstTaskDate.toISOString(),
+        firstTaskDay: weekDayNames[firstTaskDay],
+        weekStart: weekStart.toISOString(),
+        weekStartDay: weekDayNames[weekStart.getDay()],
+        hoursSinceWeekStart,
+        currentWeekNumber
+      });
+      
+      // Week swap available within first 24 hours of the week
       if (hoursSinceWeekStart > 24) {
         return { 
           success: false, 
-          message: "Week swap window has closed (only available within first 24 hours of the week)" 
+          message: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})` 
         };
       }
     } else {
+      // For DAY swaps, check if past due date
       const dueDate = new Date(assignment.dueDate);
       if (now > dueDate) {
         return { 
@@ -358,15 +410,32 @@ static async createSwapRequest(
       });
     }
 
+    // Get week info for response
+    let weekInfo = null;
+    if (data.scope === 'week' && assignment.task.group?.tasks?.[0]) {
+      const firstTask = assignment.task.group.tasks[0];
+      const firstTaskDate = new Date(firstTask.createdAt);
+      const firstTaskDay = firstTaskDate.getDay();
+      const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      weekInfo = {
+        weekStartDay: weekDayNames[firstTaskDay],
+        weekNumber: Math.floor(
+          (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24) / 7
+        ) + 1
+      };
+    }
+
     return {
       success: true,
       message: data.scope === 'day' 
         ? `Swap request created for ${data.selectedDay}!` 
-        : "Swap request created for the entire week!",
+        : `Swap request created for the entire week! (Week starts on ${weekInfo?.weekStartDay || 'the day of first task'})`,
       swapRequest: {
         ...swapRequestWithDetails,
         requester
       },
+      weekInfo,
       notifications: {
         notifiedUsers: notifiedUsersCount,
         notifiedAdmins: admins.length
@@ -378,7 +447,6 @@ static async createSwapRequest(
     return { success: false, message: error.message || "Error creating swap request" };
   }
 }
-
   // GET: Get swap requests created by a user
   static async getUserSwapRequests(
     userId: string,
@@ -1026,7 +1094,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       });
       return { success: false, message: "This swap request has expired" };
     }
-
+ 
     // Check if user can accept
     if (swapRequest.targetUserId && swapRequest.targetUserId !== userId) {
       return { success: false, message: "This swap request was sent to a specific user" };

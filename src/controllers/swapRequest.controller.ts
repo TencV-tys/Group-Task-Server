@@ -450,10 +450,11 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
     }
   }
   // In swapRequest.controller.ts - FIX THIS
+
 static async checkCanSwap(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
-    const { assignmentId } = req.params as { assignmentId:string };
+    const { assignmentId } = req.params as {assignmentId:string};
     const { scope } = req.query;
 
     if (!userId) {
@@ -468,9 +469,26 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       include: {
         task: {
           include: {
-            group: true
+            group: {
+              include: {
+                tasks: {
+                  where: { 
+                    isRecurring: true,
+                    isDeleted: false 
+                  },
+                  orderBy: { createdAt: 'asc' },
+                  take: 1,
+                  select: { 
+                    id: true,
+                    createdAt: true 
+                  }
+                }
+              }
+            },
+            timeSlots: true // Add this to include timeSlots
           }
-        }
+        },
+        timeSlot: true // Include timeSlot for the assignment
       }
     });
 
@@ -478,6 +496,15 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       return res.status(404).json({
         success: false,
         message: "Assignment not found"
+      });
+    }
+
+    // Check if task exists
+    if (!assignment.task) {
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "The task associated with this assignment has been deleted"
       });
     }
 
@@ -518,33 +545,129 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
 
     const now = new Date();
 
-    // For WEEK swaps, check based on week start (Monday 00:00)
+    // ===== FIXED: For WEEK swaps, check based on group's FIRST TASK creation date =====
     if (scope === 'week') {
-      // Get the week start date (Monday of the current week)
+      // Get the first task creation date for this group
+      const firstTask = assignment.task.group?.tasks?.[0];
+      if (!firstTask) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot determine week start date - no tasks found"
+        });
+      }
+
+      // Calculate week start based on first task date
+      const firstTaskDate = new Date(firstTask.createdAt);
+      const firstTaskDay = firstTaskDate.getDay(); // 0-6 (Sun-Sat)
+      
+      // Calculate days since start of current week
+      const today = now.getDay();
+      let daysSinceWeekStart = today - firstTaskDay;
+      if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
+      
+      // Set week start to the correct day (the day first task was created)
       const weekStart = new Date(now);
-      const dayOfWeek = weekStart.getDay(); // 0 = Sunday, 1 = Monday
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      weekStart.setDate(weekStart.getDate() - daysToMonday);
+      weekStart.setDate(now.getDate() - daysSinceWeekStart);
       weekStart.setHours(0, 0, 0, 0);
       
       // Calculate hours since week started
       const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
       
-      // Week swap available within first 24 hours
+      // Get current week number
+      const daysSinceFirstTask = Math.floor(
+        (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      const currentWeekNumber = Math.floor(daysSinceFirstTask / 7) + 1;
+      
+      const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      console.log(`📅 Week check for group:`, {
+        firstTaskDate: firstTaskDate.toISOString(),
+        firstTaskDay: weekDayNames[firstTaskDay],
+        weekStart: weekStart.toISOString(),
+        weekStartDay: weekDayNames[weekStart.getDay()],
+        hoursSinceWeekStart,
+        currentWeekNumber,
+        daysSinceWeekStart
+      });
+      
+      // Week swap available within first 24 hours of the week
       if (hoursSinceWeekStart > 24) {
         return res.json({
           success: true,
           canSwap: false,
-          reason: "Week swap window has closed (only available within first 24 hours of the week)"
+          reason: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})`
         });
       }
       
       return res.json({
         success: true,
-        canSwap: true
+        canSwap: true,
+        weekInfo: {
+          weekNumber: currentWeekNumber,
+          weekStart: weekStart.toISOString(),
+          weekStartDay: weekDayNames[firstTaskDay],
+          hoursLeft: Math.max(0, 24 - hoursSinceWeekStart)
+        }
       });
     }
-   return res.json({
+
+   
+      // For DAY swaps, check if it's the same day
+if (scope === 'day') {
+  const dueDate = new Date(assignment.dueDate);
+  const today = new Date();
+  
+  if (dueDate.toDateString() !== today.toDateString()) {
+    return res.json({
+      success: true,
+      canSwap: false,
+      reason: "Day swaps can only be requested on the day the task is due"
+    });
+  }
+  
+  // Check if still within swap window (before end time)
+  if (assignment.timeSlot && assignment.timeSlot.endTime) {
+    const timeParts = assignment.timeSlot.endTime.split(':');
+    
+    // Validate that we have both hour and minute and they exist
+    if (timeParts.length >= 2) {
+      const hourStr = timeParts[0];
+      const minuteStr = timeParts[1];
+      
+      // Check if they're not undefined
+      if (hourStr !== undefined && minuteStr !== undefined) {
+        const endHour = parseInt(hourStr, 10);
+        const endMinute = parseInt(minuteStr, 10);
+        
+        // Check if parsing was successful
+        if (!isNaN(endHour) && !isNaN(endMinute)) {
+          const endTime = new Date(dueDate);
+          endTime.setHours(endHour, endMinute, 0, 0);
+          
+          // Can swap up until the end time
+          if (now > endTime) {
+            return res.json({
+              success: true,
+              canSwap: false,
+              reason: "Cannot swap after the task's end time"
+            });
+          }
+        }
+      }
+    }
+  }
+  
+  return res.json({
+    success: true,
+    canSwap: true
+  });
+}
+    
+
+    // Default to true for no scope specified
+    return res.json({
       success: true,
       canSwap: true
     });
