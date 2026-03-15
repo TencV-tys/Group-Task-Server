@@ -117,7 +117,7 @@ export async function checkAndFixRotation() {
             where: { inRotation: true },
             select: { userId: true }
           }
-        }
+        } 
       });
       
       console.log(`✅ Group ${group.id} now at week ${updatedGroup?.currentRotationWeek}`);

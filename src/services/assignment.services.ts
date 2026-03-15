@@ -1183,7 +1183,7 @@ static async getGroupAssignments(
   }
 }
 
- // ========== CHECK GROUP NEGLECTED ASSIGNMENTS - UPDATED WITH POINT DEDUCTION ==========
+// ========== CHECK GROUP NEGLECTED ASSIGNMENTS - OPTIMIZED VERSION ==========
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({ 
@@ -1201,18 +1201,68 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         completed: false
       },
       include: { 
-        user: true, 
-        task: { include: { timeSlots: true } }, 
-        timeSlot: true 
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        }, 
+        task: { 
+          include: { 
+            timeSlots: {
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                label: true,
+                points: true
+              }
+            } 
+          } 
+        }, 
+        timeSlot: {
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        }
       }
     });
 
     // Filter out assignments with null tasks
     const validAssignments = pendingAssignments.filter(a => a.task !== null);
     
+    if (validAssignments.length === 0) {
+      return { count: 0, pointsDeducted: 0 };
+    }
+    
     let neglectedCount = 0;
     let totalPointsDeducted = 0;
 
+    // ===== OPTIMIZATION: Fetch admins ONCE before the loop =====
+    const admins = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        groupRole: "ADMIN",
+        isActive: true
+      },
+      select: { 
+        userId: true,
+        user: {
+          select: {
+            fullName: true
+          }
+        }
+      }
+    });
+
+    console.log(`📢 Found ${admins.length} admins to notify for group ${groupId}`);
+
+    // Process each neglected assignment
     for (const assignment of validAssignments) {
       if (TimeHelpers.isAssignmentNeglected(assignment, now)) {
         neglectedCount++;
@@ -1227,7 +1277,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           ? `${assignment.notes.substring(0, 200)}\n${neglectNote}`.substring(0, 500)
           : neglectNote;
 
-        // ===== UPDATE 1: Mark assignment as expired with 0 points =====
+        // Mark assignment as expired with 0 points
         await prisma.assignment.update({
           where: { id: assignment.id },
           data: {
@@ -1238,7 +1288,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           }
         });
 
-        // ===== UPDATE 2: DEDUCT POINTS FROM USER'S CUMULATIVE TOTAL =====
+        // DEDUCT POINTS FROM USER'S CUMULATIVE TOTAL
         await prisma.groupMember.update({
           where: { 
             userId_groupId: {
@@ -1271,13 +1321,10 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           }
         });
 
-        // Notify admins
-        const admins = await prisma.groupMember.findMany({
-          where: { groupId, groupRole: "ADMIN" }
-        });
-
-        for (const admin of admins) {
-          await UserNotificationService.createNotification({
+        // ===== IMPROVED: Use pre-fetched admins =====
+        // Create notification promises array for parallel execution
+        const adminNotificationPromises = admins.map(admin => 
+          UserNotificationService.createNotification({
             userId: admin.userId,
             type: "NEGLECT_DETECTED",
             title: "⚠️ Missed Assignment",
@@ -1290,10 +1337,14 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               userId: assignment.userId,
               userName: assignment.user?.fullName || 'Unknown',
               pointsLost,
-              dueDate: assignment.dueDate
+              dueDate: assignment.dueDate,
+              deductedAt: now
             }
-          });
-        }
+          })
+        );
+
+        // Execute all admin notifications in parallel
+        await Promise.all(adminNotificationPromises);
       }
     }
 
@@ -1301,14 +1352,17 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       console.log(`📊 Group ${groupId}: ${neglectedCount} neglected assignments, ${totalPointsDeducted} total points deducted`);
     }
 
-    return { count: neglectedCount, pointsDeducted: totalPointsDeducted };
+    return { 
+      count: neglectedCount, 
+      pointsDeducted: totalPointsDeducted,
+      adminsNotified: admins.length * neglectedCount // Total notification count
+    };
+    
   } catch (error) {
     console.error("AssignmentService.checkGroupNeglectedAssignments error:", error);
-    return { count: 0, pointsDeducted: 0 };
+    return { count: 0, pointsDeducted: 0, adminsNotified: 0 };
   }
 }
-
-// services/assignment.services.ts - ADD these methods
 
 // ========== GET NEGLECTED TASKS FOR USER ==========
 static async getUserNeglectedTasks(userId: string, filters?: {
@@ -1317,6 +1371,25 @@ static async getUserNeglectedTasks(userId: string, filters?: {
   offset?: number;
 }) {
   try {
+    // ===== ADDED: Permission check for group access =====
+    if (filters?.groupId) {
+      const membership = await prisma.groupMember.findFirst({
+        where: { 
+          userId, 
+          groupId: filters.groupId,
+          isActive: true
+        },
+        select: { groupRole: true }
+      });
+
+      if (!membership) {
+        return { 
+          success: false, 
+          message: "You are not a member of this group" 
+        };
+      }
+    }
+
     const where: any = {
       userId,
       expired: true,
@@ -1355,7 +1428,15 @@ static async getUserNeglectedTasks(userId: string, filters?: {
               }
             }
           },
-          timeSlot: true,
+          timeSlot: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              label: true,
+              points: true
+            }
+          },
           user: {
             select: {
               id: true,
@@ -1371,37 +1452,97 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       prisma.assignment.count({ where })
     ]);
 
-    // Format the response
-    const formattedTasks = neglectedTasks.map(assignment => ({
-      id: assignment.id,
-      taskId: assignment.taskId,
-      taskTitle: assignment.task?.title || 'Deleted Task',
-      groupName: assignment.task?.group?.name || 'Unknown Group',
-      dueDate: assignment.dueDate,
-      expiredAt: assignment.expiredAt,
-      points: assignment.timeSlot?.points || assignment.points || 0,
-      timeSlot: assignment.timeSlot ? {
-        startTime: assignment.timeSlot.startTime,
-        endTime: assignment.timeSlot.endTime,
-        label: assignment.timeSlot.label
-      } : null,
-      notes: assignment.notes,
-      task: assignment.task
-    }));
+    // ===== IMPROVED: Calculate total points lost =====
+    const totalPointsLost = neglectedTasks.reduce((sum, assignment) => {
+      return sum + (assignment.timeSlot?.points || assignment.points || 0);
+    }, 0);
+
+    // Format the response with additional metadata
+    const formattedTasks = neglectedTasks.map(assignment => {
+      const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task?.title || 'Deleted Task',
+        groupId: assignment.task?.group?.id || filters?.groupId,
+        groupName: assignment.task?.group?.name || 'Unknown Group',
+        dueDate: assignment.dueDate,
+        expiredAt: assignment.expiredAt,
+        pointsLost, // Renamed for clarity
+        timeSlot: assignment.timeSlot ? {
+          id: assignment.timeSlot.id,
+          startTime: assignment.timeSlot.startTime,
+          endTime: assignment.timeSlot.endTime,
+          label: assignment.timeSlot.label
+        } : null,
+        notes: assignment.notes,
+        // ===== ADDED: Time since expired =====
+        daysAgo: assignment.expiredAt 
+          ? Math.floor((new Date().getTime() - assignment.expiredAt.getTime()) / (1000 * 60 * 60 * 24))
+          : 0
+      };
+    });
+
+    // ===== ADDED: Group by month for better organization =====
+    const groupedByMonth = formattedTasks.reduce((acc: any, task) => {
+      if (!task.expiredAt) return acc;
+      
+      const monthYear = task.expiredAt.toLocaleString('default', { 
+        month: 'long', 
+        year: 'numeric' 
+      });
+      
+      if (!acc[monthYear]) {
+        acc[monthYear] = [];
+      }
+      acc[monthYear].push(task);
+      return acc;
+    }, {});
 
     return {
       success: true,
-      message: "Neglected tasks retrieved",
+      message: "Neglected tasks retrieved successfully",
       data: {
         tasks: formattedTasks,
-        total,
-        count: formattedTasks.length
+        groupedByMonth,
+        summary: {
+          total,
+          count: formattedTasks.length,
+          totalPointsLost,
+          averagePointsLost: formattedTasks.length > 0 
+            ? Math.round(totalPointsLost / formattedTasks.length) 
+            : 0
+        },
+        pagination: {
+          limit: filters?.limit || 20,
+          offset: filters?.offset || 0,
+          hasMore: (filters?.offset || 0) + formattedTasks.length < total
+        }
       }
     };
 
   } catch (error: any) {
-    console.error("Error getting user neglected tasks:", error);
-    return { success: false, message: error.message };
+    console.error("❌ Error getting user neglected tasks:", error);
+    return { 
+      success: false, 
+      message: error.message || "Error retrieving neglected tasks",
+      data: {
+        tasks: [],
+        groupedByMonth: {},
+        summary: {
+          total: 0,
+          count: 0,
+          totalPointsLost: 0,
+          averagePointsLost: 0
+        },
+        pagination: {
+          limit: filters?.limit || 20,
+          offset: filters?.offset || 0,
+          hasMore: false
+        }
+      }
+    };
   }
 }
 

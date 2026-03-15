@@ -1,7 +1,7 @@
-// cron/rotateGroupTask.cron.ts - UPDATED with real-time events
+// cron/rotateGroupTask.cron.ts - COMPLETELY UPDATED with earliest task date logic
 import cron from 'node-cron';
 import { TaskService } from '../services/task.services';
-import { SocketService } from '../services/socket.services'; // ADD THIS
+import { SocketService } from '../services/socket.services';
 import prisma from '../prisma';
 
 export class CronService {
@@ -14,7 +14,7 @@ export class CronService {
       console.log(`[${new Date().toISOString()}] 🔄 Running rotation check`);
       
       try {
-        // Get all groups with tasks
+        // Get all groups with tasks - ORDER tasks by creation date
         const groups = await prisma.group.findMany({
           include: {
             tasks: {
@@ -31,10 +31,14 @@ export class CronService {
                 timeSlots: {
                   select: { points: true }
                 }
-              }
+              },
+              orderBy: { createdAt: 'asc' } // 👈 IMPORTANT: Get earliest task first
             },
             members: {
-              where: { isActive: true },
+              where: { 
+                isActive: true,
+                inRotation: true // 👈 Only members in rotation
+              },
               select: {
                 userId: true,
                 cumulativePoints: true,
@@ -69,13 +73,14 @@ export class CronService {
 
           // Log rotation stats
           const admins = group.members.filter(m => m.groupRole === "ADMIN").length;
+          console.log(`\n📋 Group: ${group.name || group.id}`);
           console.log(`   👥 Members in rotation: ${membersInRotation.length}, Admins: ${admins}`);
 
-          // Check if rotation is needed based on group creation
+          // ===== FIXED: Check rotation based on EARLIEST TASK creation date =====
           const shouldRotate = await this.shouldRotateGroup(group);
           
           if (shouldRotate) {
-            console.log(`🔄 Processing group ${group.name || group.id}...`);
+            console.log(`   🔄 Processing group rotation...`);
             
             // Calculate total points for each task
             const tasksWithPoints = group.tasks.map(task => {
@@ -135,18 +140,18 @@ export class CronService {
                  
                 if (result.success) {
                   console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
-              if (result.newWeek && result.weekStart && result.weekEnd) {
-    await SocketService.emitRotationCompleted(
-      group.id,
-      result.newWeek, // Now TypeScript knows this is defined
-      result.rotatedTasks || [],
-      result.weekStart,
-      result.weekEnd
-    );
-    console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
-  } else {
-    console.log(`   ⚠️ Missing rotation data, skipping socket emit`);
-  }
+                  
+                  if (result.newWeek && result.weekStart && result.weekEnd) {
+                    await SocketService.emitRotationCompleted(
+                      group.id,
+                      result.newWeek,
+                      result.rotatedTasks || [],
+                      result.weekStart,
+                      result.weekEnd
+                    );
+                    console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
+                  }
+                  
                   if (result.fairnessMetrics) {
                     console.log(`   📊 Fairness Metrics:`);
                     console.log(`      Lowest points member: ${result.fairnessMetrics.lowestPointsMember} (${result.fairnessMetrics.lowestPointsValue}pts)`);
@@ -164,6 +169,8 @@ export class CronService {
             } else {
               console.log(`   ℹ️ No assigned tasks to rotate or no members in rotation`);
             }
+          } else {
+            console.log(`   ✅ Group is at correct week ${group.currentRotationWeek}`);
           }
         }
       } catch (error) {
@@ -173,31 +180,45 @@ export class CronService {
       timezone: "Asia/Manila"
     });
 
-    console.log('✅ Rotation cron initialized');
+    console.log('✅ Rotation cron initialized (using earliest task creation date)');
   }
 
+  // ===== FIXED: Now uses EARLIEST TASK creation date, NOT group creation date =====
   private static async shouldRotateGroup(group: any): Promise<boolean> {
-    const groupInfo = await prisma.group.findUnique({
-      where: { id: group.id },
-      select: { 
-        createdAt: true,
-        currentRotationWeek: true,
-        lastRotationUpdate: true 
-      }
+    // Get the earliest task in the group
+    const earliestTask = await prisma.task.findFirst({
+      where: { 
+        groupId: group.id,
+        isRecurring: true,
+        isDeleted: false
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true }
     });
 
-    if (!groupInfo) return false;
+    // If no tasks exist, don't rotate
+    if (!earliestTask) {
+      console.log(`   ℹ️ Group ${group.name || group.id} has no tasks to rotate`);
+      return false;
+    }
 
     const now = new Date();
-    const daysSinceCreation = Math.floor(
-      (now.getTime() - groupInfo.createdAt.getTime()) / (1000 * 60 * 60 * 24)
+    
+    // Calculate days since FIRST task was created
+    const daysSinceFirstTask = Math.floor(
+      (now.getTime() - earliestTask.createdAt.getTime()) / (1000 * 60 * 60 * 24)
     );
     
-    const expectedWeek = Math.floor(daysSinceCreation / 7) + 1;
-    const shouldRotate = expectedWeek > groupInfo.currentRotationWeek;
+    // Expected week = (days since first task / 7) + 1
+    const expectedWeek = Math.floor(daysSinceFirstTask / 7) + 1;
+    const currentWeek = group.currentRotationWeek;
+
+    // Should rotate if expected week > current week
+    const shouldRotate = expectedWeek > currentWeek;
 
     if (shouldRotate) {
-      console.log(`📅 Group ${group.name || group.id}: Week ${groupInfo.currentRotationWeek} → ${expectedWeek}`);
+      console.log(`   📅 First task created: ${earliestTask.createdAt.toLocaleDateString()}`);
+      console.log(`   📊 Current week: ${currentWeek}, Expected week: ${expectedWeek} (${daysSinceFirstTask} days since first task)`);
     }
 
     return shouldRotate;
