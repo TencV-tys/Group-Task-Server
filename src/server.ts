@@ -336,11 +336,11 @@ server.listen(PORT, async () => {
    ├─ /api/reports       (User Reports)
    ├─ /api/admin/*       (Admin Dashboard)
 
-⏰ Cron jobs running:
-   ├─ Swap request expiration
-   ├─ Task reminders
-   ├─ Neglect detection
-   └─ Weekly task rotation (Sundays 00:01 AM)
+⏰ CRON JOBS SCHEDULE:
+   ├─ Swap request expiration: Every 5 minutes
+   ├─ Task reminders:         Every hour at :00
+   ├─ Neglect detection:      Every 30 minutes
+   └─ Task rotation:          Daily at 00:01 AM (each group's rotation day is based on its first task creation date)
 
 ✅ Server is ready to handle requests from both mobile users and admin dashboard!
     `);
