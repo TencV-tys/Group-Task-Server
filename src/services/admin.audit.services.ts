@@ -1,4 +1,4 @@
-// services/admin.audit.services.ts
+// services/admin.audit.services.ts - COMPLETE UPDATED
 import prisma from "../prisma";
 
 export interface AuditLogFilters {
@@ -13,42 +13,74 @@ export interface AuditLogFilters {
 
 // Define which actions are important enough to log
 const IMPORTANT_ACTIONS = [
+  // ===== REPORT ACTIONS =====
   'UPDATE_REPORT_STATUS',
   'BULK_UPDATE_REPORTS',
+  
+  // ===== NOTIFICATION ACTIONS =====
   'MARK_NOTIFICATION_READ',
   'MARK_ALL_NOTIFICATIONS_READ',
   'DELETE_NOTIFICATION',
   'DELETE_ALL_READ_NOTIFICATIONS',
-  'ADMIN_DELETE_GROUP',
+  
+  // ===== GROUP ACTIONS =====
+  'DELETE_GROUP',
+  'APPLY_GROUP_ACTION',
+  'GROUP_SOFT_DELETED',
+  'GROUP_RESTORED',
+  'GROUP_HARD_DELETED',
   'ADMIN_REMOVE_GROUP_MEMBER',
   'ADMIN_BULK_DELETE_GROUPS',
+  
+  // ===== FEEDBACK ACTIONS =====
   'UPDATE_FEEDBACK_STATUS',
   'DELETE_FEEDBACK',
+  
+  // ===== USER ACTIONS =====
+  'ADMIN_UPDATE_USER',
+  'ADMIN_DELETE_USER',
+  'ADMIN_BULK_DELETE_USERS',
+  'ADMIN_CHANGE_USER_ROLE',
+  'ADMIN_TOGGLE_USER_STATUS',
+  
+  // ===== AUTH ACTIONS =====
   'ADMIN_LOGIN',
   'ADMIN_LOGOUT',
-  'ADMIN_PASSWORD_CHANGE'
+  'ADMIN_PASSWORD_CHANGE',
+  
+  // ===== AUDIT VIEW ACTIONS (Security sensitive) =====
+  'ADMIN_VIEW_AUDIT_LOGS',
+  'ADMIN_VIEW_AUDIT_STATISTICS',
+  'ADMIN_VIEW_AUDIT_LOG_DETAIL'
 ];
 
 // Skip logging these frequent view actions
 const SKIP_ACTIONS = [
-  'ADMIN_VIEW_AUDIT_LOGS',
-  'ADMIN_VIEW_AUDIT_STATISTICS',
-  'ADMIN_VIEW_AUDIT_LOG_DETAIL',
+  // Group view actions
   'ADMIN_VIEWED_GROUPS',
   'ADMIN_VIEWED_GROUP_STATISTICS',
   'ADMIN_VIEWED_GROUP_DETAILS',
+  
+  // User view actions
   'ADMIN_VIEWED_USERS',
   'ADMIN_VIEWED_USER_DETAILS',
+  
+  // Feedback view actions
   'ADMIN_VIEWED_FEEDBACK',
   'ADMIN_VIEWED_FEEDBACK_STATS',
+  
+  // Report view actions
   'ADMIN_VIEWED_REPORTS',
   'ADMIN_VIEWED_REPORT_STATS',
+  
+  // Dashboard
   'ADMIN_VIEWED_DASHBOARD',
+  
+  // Notifications view
   'ADMIN_VIEWED_NOTIFICATIONS'
 ];
 
 // ========== AUDIT QUEUE SYSTEM ==========
-// Use a queue to prevent database overload
 interface QueuedAuditLog {
   adminId: string;
   targetUserId?: string;
@@ -61,18 +93,18 @@ interface QueuedAuditLog {
 
 const auditQueue: QueuedAuditLog[] = [];
 let isProcessing = false;
-const MAX_QUEUE_SIZE = 2000; // Reduced from 5000 to prevent memory issues
+const MAX_QUEUE_SIZE = 2000;
 let queueDroppedCount = 0;
 let lastQueueWarningTime = 0;
 
 // Failed request tracker to prevent abuse
 const failedRequestTracker = new Map<string, { count: number; firstFailure: number }>();
-const FAILED_REQUEST_LIMIT = 50; // Max failed requests per IP
-const FAILED_REQUEST_WINDOW = 3600000; // 1 hour in milliseconds
+const FAILED_REQUEST_LIMIT = 50;
+const FAILED_REQUEST_WINDOW = 3600000;
 
 // Process queue every 5 seconds
 const QUEUE_PROCESS_INTERVAL = 5000;
-const BATCH_SIZE = 50; // Reduced from 100 to be safer
+const BATCH_SIZE = 50;
 
 setInterval(() => {
   if (auditQueue.length > 0 && !isProcessing) {
@@ -80,7 +112,7 @@ setInterval(() => {
   }
 }, QUEUE_PROCESS_INTERVAL);
 
-// Also monitor queue size
+// Monitor queue size
 setInterval(() => {
   const now = Date.now();
   if (auditQueue.length > 1000 && now - lastQueueWarningTime > 60000) {
@@ -122,7 +154,6 @@ async function processAuditQueue() {
     
   } catch (error) {
     console.error('Failed to process audit batch:', error);
-    // Don't put back in queue - drop to prevent backpressure
     queueDroppedCount += batch.length;
   }
   
@@ -144,16 +175,13 @@ export class AdminAuditService {
       
       const data = failedRequestTracker.get(key)!;
       
-      // Reset if outside window
       if (now - data.firstFailure > FAILED_REQUEST_WINDOW) {
         failedRequestTracker.set(key, { count: 1, firstFailure: now });
         return true;
       }
       
-      // Increment count
       data.count += 1;
       
-      // Check if exceeded limit
       if (data.count > FAILED_REQUEST_LIMIT) {
         console.warn(`🚫 IP ${ipAddress} has exceeded failed request limit (${data.count} failures)`);
         return false;
@@ -163,7 +191,7 @@ export class AdminAuditService {
       
     } catch (error) {
       console.error('Error tracking failed request:', error);
-      return true; // Allow on error
+      return true;
     }
   }
 
@@ -177,7 +205,6 @@ export class AdminAuditService {
       
       const now = Date.now();
       
-      // Reset if outside window
       if (now - data.firstFailure > FAILED_REQUEST_WINDOW) {
         failedRequestTracker.delete(key);
         return false;
@@ -206,7 +233,7 @@ export class AdminAuditService {
     };
   }
 
-  // ========== CREATE AUDIT LOG - WITH QUEUE AND RATE LIMITING ==========
+  // ========== CREATE AUDIT LOG ==========
   static async createLog(
     adminId: string,
     action: string,
@@ -223,7 +250,7 @@ export class AdminAuditService {
         return null;
       }
 
-      // Check if this IP is blocked due to too many failures
+      // Check if IP is blocked
       if (data.ipAddress && this.isIpBlocked(data.ipAddress, adminId)) {
         if (process.env.NODE_ENV !== 'production') {
           console.log(`🚫 Blocked audit log from blocked IP: ${data.ipAddress}`);
@@ -231,26 +258,19 @@ export class AdminAuditService {
         return null;
       }
 
-      // Rate limiting by action type
+      // Rate limiting
       const now = Date.now();
       const recentLogs = auditQueue.filter(log => 
         log.action === action && 
         log.adminId === adminId &&
-        now - log.createdAt.getTime() < 60000 // Last minute
+        now - log.createdAt.getTime() < 60000
       );
       
-      // Prevent too many of the same action
-      if (recentLogs.length > 20 && IMPORTANT_ACTIONS.includes(action)) { // Increased from 10
+      if (recentLogs.length > 20 && IMPORTANT_ACTIONS.includes(action)) {
         if (process.env.NODE_ENV !== 'production') {
           console.warn(`⚠️ Rate limiting: Too many ${action} actions from admin ${adminId}`);
         }
         return null;
-      }
-
-      // Don't log if it's a view action that slipped through
-      if (!IMPORTANT_ACTIONS.includes(action) && !SKIP_ACTIONS.includes(action)) {
-        // This is a medium-importance action - log but with lower priority
-        // Still add to queue but mark as lower priority
       }
 
       // Add to queue
@@ -260,7 +280,6 @@ export class AdminAuditService {
         action,
         details: {
           ...data.details,
-          // Truncate large bodies
           body: data.details?.body && typeof data.details.body === 'object' 
             ? JSON.stringify(data.details.body).substring(0, 500) 
             : data.details?.body
@@ -270,18 +289,17 @@ export class AdminAuditService {
         createdAt: new Date()
       });
 
-      // Warn if queue is getting too big
+      // Queue size warnings
       if (auditQueue.length > 1000) {
-        // Only warn every minute to avoid spam
         if (now - lastQueueWarningTime > 60000) {
           console.warn(`⚠️ Audit queue size: ${auditQueue.length}`);
           lastQueueWarningTime = now;
         }
       }
       
-      // Prevent memory issues - aggressive dropping
+      // Prevent memory issues
       if (auditQueue.length > MAX_QUEUE_SIZE) {
-        const removed = auditQueue.splice(0, 300); // Remove oldest 300
+        const removed = auditQueue.splice(0, 300);
         queueDroppedCount += removed.length;
         console.error(`🔥 Audit queue too large - dropped ${removed.length} oldest logs (total dropped: ${queueDroppedCount})`);
       }
@@ -341,8 +359,10 @@ export class AdminAuditService {
         if (filters.endDate) where.createdAt.lte = filters.endDate;
       }
 
-      // Only show IMPORTANT actions in the audit log view
+      // Only show IMPORTANT actions
       where.action = { in: IMPORTANT_ACTIONS };
+
+      console.log('📊 [AuditService] GetLogs where:', JSON.stringify(where, null, 2));
 
       const [logs, total] = await Promise.all([
         prisma.adminAuditLog.findMany({
@@ -357,6 +377,8 @@ export class AdminAuditService {
         }),
         prisma.adminAuditLog.count({ where })
       ]);
+
+      console.log(`📊 [AuditService] Found ${logs.length} logs, total: ${total}`);
 
       return {
         success: true,
@@ -388,11 +410,6 @@ export class AdminAuditService {
 
       if (!log) return { success: false, message: 'Audit log not found' };
       
-      // Only show if it's an important action
-      if (!IMPORTANT_ACTIONS.includes(log.action)) {
-        return { success: false, message: 'Audit log not available' };
-      }
-      
       return { success: true, log };
 
     } catch (error: any) {
@@ -404,38 +421,59 @@ export class AdminAuditService {
   // ========== GET AUDIT LOG STATISTICS ==========
   static async getStatistics(filters?: { startDate?: Date; endDate?: Date }) {
     try {
+      console.log('📊 [AuditService] getStatistics called with filters:', filters);
+      
       const where: any = {};
+      
+      // Apply date filters
       if (filters?.startDate || filters?.endDate) {
         where.createdAt = {};
-        if (filters.startDate) where.createdAt.gte = filters.startDate;
-        if (filters.endDate) where.createdAt.lte = filters.endDate;
+        if (filters.startDate) {
+          where.createdAt.gte = filters.startDate;
+          console.log('📊 [AuditService] Start date:', filters.startDate);
+        }
+        if (filters.endDate) {
+          where.createdAt.lte = filters.endDate;
+          console.log('📊 [AuditService] End date:', filters.endDate);
+        }
       }
       
-      // Only count important actions
-      where.action = { in: IMPORTANT_ACTIONS };
+      // DO NOT filter by IMPORTANT_ACTIONS for statistics
+      // We want ALL actions in stats to show correct counts
+      console.log('📊 [AuditService] Query where clause:', JSON.stringify(where, null, 2));
 
-      const [totalLogs, logsByAction, logsByAdmin, recentActivity] = await Promise.all([
-        prisma.adminAuditLog.count({ where }),
-        prisma.adminAuditLog.groupBy({ 
-          by: ['action'], 
-          _count: true, 
-          where,
-          orderBy: { _count: { action: 'desc' } }
-        }),
-        prisma.adminAuditLog.groupBy({ 
-          by: ['adminId'], 
-          _count: true, 
-          where,
-          orderBy: { _count: { adminId: 'desc' } },
-          take: 5
-        }),
-        prisma.adminAuditLog.findMany({
-          where,
-          include: { admin: { select: { fullName: true } } },
-          orderBy: { createdAt: 'desc' },
-          take: 10
-        })
-      ]);
+      // Get total count
+      const totalLogs = await prisma.adminAuditLog.count({ where });
+      console.log('📊 [AuditService] Total logs found:', totalLogs);
+
+      // Get counts by action
+      const logsByAction = await prisma.adminAuditLog.groupBy({ 
+        by: ['action'], 
+        _count: true, 
+        where,
+        orderBy: { _count: { action: 'desc' } }
+      });
+      console.log('📊 [AuditService] Actions found:', logsByAction.length);
+
+      // Get counts by admin
+      const logsByAdmin = await prisma.adminAuditLog.groupBy({ 
+        by: ['adminId'], 
+        _count: true, 
+        where,
+        orderBy: { _count: { adminId: 'desc' } },
+        take: 5
+      });
+
+      // Get recent activity
+      const recentActivity = await prisma.adminAuditLog.findMany({
+        where,
+        include: { 
+          admin: { select: { fullName: true, email: true } },
+          targetUser: { select: { fullName: true, email: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      });
 
       const formattedByAction = logsByAction.map((item: any) => ({
         action: item.action,
@@ -447,37 +485,51 @@ export class AdminAuditService {
           try {
             const admin = await prisma.systemAdmin.findUnique({
               where: { id: item.adminId },
-              select: { fullName: true }
+              select: { fullName: true, email: true }
             });
             return {
               adminId: item.adminId,
               adminName: admin?.fullName || 'Unknown Admin',
+              adminEmail: admin?.email || '',
               count: Number(item._count)
             };
           } catch (error) {
             return {
               adminId: item.adminId,
               adminName: 'Unknown Admin',
+              adminEmail: '',
               count: Number(item._count)
             };
           }
         })
       );
 
-      return {
+      const formattedRecentActivity = recentActivity.map(log => ({
+        id: log.id,
+        action: log.action,
+        adminId: log.adminId,
+        adminName: log.admin?.fullName || 'Unknown Admin',
+        adminEmail: log.admin?.email || '',
+        targetUserId: log.targetUserId || undefined,
+        targetUserName: log.targetUser?.fullName,
+        targetUserEmail: log.targetUser?.email,
+        createdAt: log.createdAt,
+        ipAddress: log.ipAddress,
+        details: log.details as any
+      }));
+
+      const result = {
         success: true,
         statistics: {
           total: Number(totalLogs),
           byAction: formattedByAction,
           topAdmins,
-          recentActivity: recentActivity.map(log => ({
-            id: log.id,
-            action: log.action,
-            adminName: log.admin?.fullName || 'Unknown',
-            createdAt: log.createdAt
-          }))
+          recentActivity: formattedRecentActivity
         }
       };
+
+      console.log('📊 [AuditService] Statistics result:', result.statistics);
+      return result;
 
     } catch (error: any) {
       console.error('Error fetching audit statistics:', error);
