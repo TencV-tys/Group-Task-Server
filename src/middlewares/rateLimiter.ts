@@ -150,6 +150,7 @@ export const assignmentLimiter = rateLimit({
 });
 
 // Admin routes limiter
+// Admin routes limiter with CORS headers
 export const adminLimiter = rateLimit({
   windowMs: THREE_HOURS,
   max: 500,
@@ -159,6 +160,20 @@ export const adminLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    // Always set CORS headers even on rate limit error
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control');
+    }
+    
+    // Send the rate limit error response
+    res.status(options.statusCode).json(options.message);
+  },
+  skipSuccessfulRequests: true, // Don't count successful requests
 });
 
 // Keep these for backward compatibility if needed

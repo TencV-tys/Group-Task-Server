@@ -1,4 +1,4 @@
-// middlewares/throttle.middleware.ts - OPTIMIZED FOR MOBILE
+// middlewares/throttle.middleware.ts - UPDATED WITH CORS HEADERS
 import { Request, Response, NextFunction } from 'express';
 
 interface ThrottleEntry {
@@ -29,11 +29,30 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Helper function to set CORS headers
+const setCORSHeaders = (req: Request, res: Response) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With');
+  }
+};
+
 export const throttleMiddleware = (
   windowMs: number = DEFAULT_WINDOW,
   maxRequests: number = DEFAULT_MAX_REQUESTS
 ) => {
   return (req: Request, res: Response, next: NextFunction) => {
+    // ALWAYS set CORS headers first
+    setCORSHeaders(req, res);
+
+    // Handle preflight OPTIONS requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+
     // Skip throttling in development
     if (process.env.NODE_ENV === 'development') {
       return next();
@@ -78,7 +97,7 @@ export const throttleMiddleware = (
       
       next();
     } else {
-      // Rate limited
+      // Rate limited - CORS headers ALREADY SET by setCORSHeaders at the beginning
       const retryAfter = Math.ceil((entry.resetTime - now) / 1000);
       
       res.setHeader('X-RateLimit-Limit', maxRequests.toString());
@@ -107,6 +126,11 @@ export const heavyThrottle = throttleMiddleware(30 * 1000, 30);  // Heavy: 30/30
 export const loginThrottle = throttleMiddleware(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
 export const uploadThrottle = throttleMiddleware(60 * 1000, 3);     // 3 uploads per minute
 
+// Admin-specific throttles (higher limits) with CORS already handled
+export const adminStrictThrottle = throttleMiddleware(10 * 1000, 8);  // 8 requests per 10s
+export const adminMediumThrottle = throttleMiddleware(10 * 1000, 15); // 15 requests per 10s
+export const adminLightThrottle = throttleMiddleware(10 * 1000, 25);  // 25 requests per 10s
+
 // Get throttle stats for monitoring (admin only)
 export const getThrottleStats = () => ({
   size: throttle.size,
@@ -122,9 +146,3 @@ export const getThrottleStats = () => ({
       hasUserId: !!entry.userId
     }))
 });
-
-
-// Admin-specific throttles (higher limits)
-export const adminStrictThrottle = throttleMiddleware(10 * 1000, 8);  // 8 requests per 10s
-export const adminMediumThrottle = throttleMiddleware(10 * 1000, 15); // 15 requests per 10s
-export const adminLightThrottle = throttleMiddleware(10 * 1000, 25);  // 25 requests per 10s

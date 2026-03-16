@@ -1,3 +1,4 @@
+// server.ts - COMPLETE FIXED VERSION (CORS FIRST)
 import express from "express";
 import dotenv from "dotenv";
 import cookieParser from 'cookie-parser';
@@ -71,98 +72,98 @@ dotenv.config();
 
 const svr = express();
 
-// ========== RATE LIMITING - APPLY BEFORE ROUTES ==========
+// ========== 1. CORS FIRST - BEFORE ANYTHING ELSE ==========
+console.log('🔓 Configuring CORS...');
+svr.use(cors({
+    origin: true,
+    credentials: true
+}));
+
+// ========== 2. THEN BASIC MIDDLEWARE ==========
+svr.use(express.json({ limit: '10mb' })); 
+svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
+svr.use(cookieParser());
+
+// ========== 3. THEN STATIC FILES ==========
+svr.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+svr.use(express.static(path.join(__dirname, '../public')));
+
+// ========== 4. THEN RATE LIMITERS ==========
 console.log('🛡️ Applying rate limiters...');
 
 // ===== USER ROUTES (Mobile App) =====
 console.log('👤 Configuring user rate limits...');
-svr.use('/api/auth/users', authLimiter); // User auth
-svr.use('/api/auth/users/reset-password', passwordResetLimiter); // Password reset
-svr.use('/api/uploads', uploadLimiter); // Uploads
-svr.use('/api/tasks', taskLimiter); // Tasks
-svr.use('/api/swap-requests', swapRequestLimiter); // Swaps
-svr.use('/api/group', groupLimiter); // Groups
-svr.use('/api/group-activity', groupActivityLimiter); // Group activity
-svr.use('/api/notifications', userNotificationLimiter); // Notifications
-svr.use('/api/feedback', userFeedbackLimiter); // Feedback
-svr.use('/api/reports', userReportsLimiter); // Reports
-svr.use('/api/assignments', assignmentLimiter); // Assignments
-svr.use('/api/home', homeLimiter); // Home
+svr.use('/api/auth/users', authLimiter);
+svr.use('/api/auth/users/reset-password', passwordResetLimiter);
+svr.use('/api/uploads', uploadLimiter);
+svr.use('/api/tasks', taskLimiter);
+svr.use('/api/swap-requests', swapRequestLimiter);
+svr.use('/api/group', groupLimiter);
+svr.use('/api/group-activity', groupActivityLimiter);
+svr.use('/api/notifications', userNotificationLimiter);
+svr.use('/api/feedback', userFeedbackLimiter);
+svr.use('/api/reports', userReportsLimiter);
+svr.use('/api/assignments', assignmentLimiter);
+svr.use('/api/home', homeLimiter);
 
 // ===== ADMIN ROUTES (Web Dashboard) =====
 console.log('👑 Configuring admin rate limits...');
-svr.use('/api/admin', adminLimiter); // All admin routes (single limiter)
+svr.use('/api/admin', adminLimiter);
 
-// ========== CACHE MIDDLEWARE - SEPARATE CONFIGS ==========
+// ========== 5. THEN CACHE MIDDLEWARE ==========
 console.log('💾 Applying cache middleware...');
 
-// ===== USER CACHE (Mobile App) - Shorter TTL =====
-svr.use('/api/home', cacheMiddleware(30 * 1000)); // 30 seconds for home data
-svr.use('/api/group', cacheMiddleware(30 * 1000)); // 30 seconds for group data
-svr.use('/api/tasks', cacheMiddleware(20 * 1000)); // 20 seconds for tasks
-svr.use('/api/group-activity', cacheMiddleware(30 * 1000)); // 30 seconds for activity
+// ===== USER CACHE (Mobile App) =====
+svr.use('/api/home', cacheMiddleware(30 * 1000));
+svr.use('/api/group', cacheMiddleware(30 * 1000));
+svr.use('/api/tasks', cacheMiddleware(20 * 1000));
+svr.use('/api/group-activity', cacheMiddleware(30 * 1000));
 
-// ===== ADMIN CACHE (Web Dashboard) - Longer TTL =====
-svr.use('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
-svr.use('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000)); // 3 minutes
-svr.use('/api/admin/groups', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
-svr.use('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
-svr.use('/api/admin/reports', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
-svr.use('/api/admin/users', cacheMiddleware(2 * 60 * 1000)); // 2 minutes
+// ===== ADMIN CACHE (Web Dashboard) =====
+svr.use('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
+svr.use('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000));
+svr.use('/api/admin/groups', cacheMiddleware(2 * 60 * 1000));
+svr.use('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000));
+svr.use('/api/admin/reports', cacheMiddleware(2 * 60 * 1000));
+svr.use('/api/admin/users', cacheMiddleware(2 * 60 * 1000));
 
-// ========== THROTTLE MIDDLEWARE - SEPARATE CONFIGS ==========
+// ========== 6. THEN THROTTLE MIDDLEWARE ==========
 console.log('⏱️ Applying throttle middleware...');
 
 // ===== USER THROTTLE (Mobile App) =====
 console.log('   👤 User throttles:');
 
-// Auth endpoints
-svr.use('/api/auth/users/login', loginThrottle); // 5 attempts per 15 minutes
-svr.use('/api/auth/users/signup', loginThrottle); // 5 attempts per 15 minutes
-svr.use('/api/auth/users/refresh-token', strictThrottle); // 3 requests/10s
-svr.use('/api/auth/users/logout', lightThrottle); // 15 requests/10s
-
-// Upload endpoints
-svr.use('/api/uploads', uploadThrottle); // 3 uploads per minute
-
-// General user API
-svr.use('/api/tasks', lightThrottle); // 15 requests/10s
-svr.use('/api/swap-requests', lightThrottle); // 15 requests/10s
-svr.use('/api/feedback', lightThrottle); // 15 requests/10s
-svr.use('/api/notifications', lightThrottle); // 15 requests/10s
-svr.use('/api/reports', lightThrottle); // 15 requests/10s
-svr.use('/api/group', lightThrottle); // 15 requests/10s
-svr.use('/api/home', lightThrottle); // 15 requests/10s
-svr.use('/api/assignments', lightThrottle); // 15 requests/10s
-svr.use('/api/group-activity', lightThrottle); // 15 requests/10s
+svr.use('/api/auth/users/login', loginThrottle);
+svr.use('/api/auth/users/signup', loginThrottle);
+svr.use('/api/auth/users/refresh-token', strictThrottle);
+svr.use('/api/auth/users/logout', lightThrottle);
+svr.use('/api/uploads', uploadThrottle);
+svr.use('/api/tasks', lightThrottle);
+svr.use('/api/swap-requests', lightThrottle);
+svr.use('/api/feedback', lightThrottle);
+svr.use('/api/notifications', lightThrottle);
+svr.use('/api/reports', lightThrottle);
+svr.use('/api/group', lightThrottle);
+svr.use('/api/home', lightThrottle);
+svr.use('/api/assignments', lightThrottle);
+svr.use('/api/group-activity', lightThrottle);
 
 // ===== ADMIN THROTTLE (Web Dashboard) =====
 console.log('   👑 Admin throttles:');
 
-// Admin auth - stricter
-svr.use('/api/auth/admins/login', loginThrottle); // 5 attempts per 15 minutes
-svr.use('/api/auth/admins/refresh-token', strictThrottle); // 3 requests/10s
+svr.use('/api/auth/admins/login', loginThrottle);
+svr.use('/api/auth/admins/refresh-token', strictThrottle);
+svr.use('/api/admin/audit', throttleMiddleware(10 * 1000, 50));
+svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 30));
+svr.use('/api/admin/users', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/groups', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/feedback', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/reports', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/dashboard', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/users/bulk-delete', heavyThrottle);
+svr.use('/api/admin/groups/bulk-delete', heavyThrottle);
 
-// Admin operations
-svr.use('/api/admin/audit', adminMediumThrottle); // 8 requests/10s
-svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 5)); // 5 exports per minute
-svr.use('/api/admin/users', adminLightThrottle); // 20 requests/10s
-svr.use('/api/admin/groups', adminLightThrottle); // 20 requests/10s
-svr.use('/api/admin/feedback', adminLightThrottle); // 20 requests/10s
-svr.use('/api/admin/reports', adminLightThrottle); // 20 requests/10s
-svr.use('/api/admin/dashboard', adminLightThrottle); // 20 requests/10s
-
-// Admin heavy operations
-svr.use('/api/admin/users/bulk-delete', heavyThrottle); // 30 requests/30s
-svr.use('/api/admin/groups/bulk-delete', heavyThrottle); // 30 requests/30s
-
-// ========== CRITICAL UPDATES START ==========
-
-// 1. Serve static files from uploads directory
-svr.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-svr.use(express.static(path.join(__dirname, '../public')));
-
-// 2. Create uploads directories if they don't exist
+// ========== 7. CREATE UPLOAD DIRECTORIES ==========
 const createUploadsDirectories = () => {
   const directories = [
     path.join(__dirname, '../uploads'),
@@ -181,20 +182,7 @@ const createUploadsDirectories = () => {
 
 createUploadsDirectories();
 
-// 3. Increase payload size limit for file uploads
-svr.use(express.json({ limit: '10mb' })); 
-svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// ========== CRITICAL UPDATES END ==========
-
-// CORS and Cookie Parser
-svr.use(cors({
-    origin: true,
-    credentials: true
-}));
-svr.use(cookieParser());
-
-// ========== ROUTES ==========
+// ========== 8. THEN ROUTES ==========
 console.log('📡 Registering routes...');
 svr.use('/api/auth/users', UserAuthRoutes);
 svr.use('/api/auth/admins', AdminAuthRoutes);
@@ -234,8 +222,7 @@ const io = setupSocketIO(server);
 setIO(io);
 console.log('✅ Socket.IO initialized');
 
-// ========== SERVER START WITH AUTO-ROTATION ==========
-
+// ========== SERVER START ==========
 const MY_IP = '10.123.17.2'; 
 const Wifi = '192.168.1.29';
 const PORT = process.env.PORT || 5000;
@@ -261,19 +248,19 @@ server.listen(PORT, async () => {
    └─ ${path.join(__dirname, '../uploads/group-avatars')}
    
 🛡️ RATE LIMITING ENABLED (3-HOUR WINDOW):
-   ├─ Auth routes:          50 requests/3 hours    (login/register)
-   ├─ Upload routes:        50 requests/3 hours    (file uploads)
-   ├─ Task routes:          200 requests/3 hours   (task operations)
-   ├─ Swap requests:        100 requests/3 hours   (swap operations)
-   ├─ Password reset:       5 requests/3 hours     (very strict!)
-   ├─ Group routes:         300 requests/3 hours   (group operations)
-   ├─ Group activity:       300 requests/3 hours   (activity feeds)
-   ├─ Notifications:        200 requests/3 hours   (user notifications)
-   ├─ User feedback:        100 requests/3 hours   (user feedback)
-   ├─ User reports:         50 requests/3 hours    (user reports)
-   ├─ Assignments:          200 requests/3 hours   (assignment operations)
-   ├─ Home page:            300 requests/3 hours   (home data)
-   ├─ Admin routes:         500 requests/3 hours   (ALL admin operations)
+   ├─ Auth routes:          50 requests/3 hours
+   ├─ Upload routes:        50 requests/3 hours
+   ├─ Task routes:          200 requests/3 hours
+   ├─ Swap requests:        100 requests/3 hours
+   ├─ Password reset:       5 requests/3 hours
+   ├─ Group routes:         300 requests/3 hours
+   ├─ Group activity:       300 requests/3 hours
+   ├─ Notifications:        200 requests/3 hours
+   ├─ User feedback:        100 requests/3 hours
+   ├─ User reports:         50 requests/3 hours
+   ├─ Assignments:          200 requests/3 hours
+   ├─ Home page:            300 requests/3 hours
+   ├─ Admin routes:         500 requests/3 hours
 
 💾 CACHE CONFIGURATION:
    👤 USER (Mobile App):
@@ -297,10 +284,12 @@ server.listen(PORT, async () => {
    
    👑 ADMIN (Web Dashboard):
       ├─ Login:           5 attempts/15m
-      ├─ Audit:           8 requests/10s
-      ├─ Admin API:       20 requests/10s
-      ├─ Export:          5 per minute
+      ├─ Audit:           50 requests/10s
+      ├─ Admin API:       100 requests/10s
+      ├─ Export:          30 per minute
       └─ Bulk ops:        30 requests/30s
+
+✅ Server is ready to handle requests from both mobile users and admin dashboard!
     `);
 
     // ===== DEVELOPMENT AUTO-ROTATION CHECK =====
@@ -340,17 +329,13 @@ server.listen(PORT, async () => {
    ├─ Swap request expiration: Every 5 minutes
    ├─ Task reminders:         Every hour at :00
    ├─ Neglect detection:      Every 30 minutes
-   └─ Task rotation:          Daily at 00:01 AM (each group's rotation day is based on its first task creation date)
-
-✅ Server is ready to handle requests from both mobile users and admin dashboard!
+   └─ Task rotation:          Daily at 00:01 AM
     `);
 });
 
-// Add this at the bottom of your server.ts
+// Process handlers
 process.on('SIGINT', async () => {
   console.log('\n📦 Shutting down server...');
-  
-  // Force process remaining audit logs
   const { getAuditQueueStats, AdminAuditService } = require('./services/admin.audit.services');
   const stats = getAuditQueueStats();
   
@@ -365,7 +350,6 @@ process.on('SIGINT', async () => {
 
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  // Don't exit immediately, let the process continue
 });
 
 process.on('unhandledRejection', (reason, promise) => {
