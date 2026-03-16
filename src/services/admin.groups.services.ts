@@ -491,39 +491,89 @@ export class AdminGroupsService {
       };
     }
   }
+static async getGroupsWithAnalysis(filters: GroupFilters = {}) {
+  try {
+    const groupsResult = await this.getGroups(filters);
+    if (!groupsResult.success || !groupsResult.groups) return groupsResult;
 
-  // ========== GET GROUPS WITH ANALYSIS ==========
-  static async getGroupsWithAnalysis(filters: GroupFilters = {}) {
-    try {
-      const groupsResult = await this.getGroups(filters);
-      
-      if (!groupsResult.success) {
-        return groupsResult;
+    // Single query: get all report counts grouped by type for ALL returned groups at once
+    const groupIds = groupsResult.groups.map(g => g.id);
+
+    const reportCounts = await prisma.report.groupBy({
+      by: ['groupId', 'type'],
+      where: {
+        groupId: { in: groupIds },
+        status: { in: ['PENDING', 'REVIEWING'] }
+      },
+      _count: { id: true }
+    });
+
+    // Build a map: groupId → { type → count }
+    const reportMap = new Map<string, Map<string, number>>();
+    for (const row of reportCounts) {
+      if (!reportMap.has(row.groupId)) reportMap.set(row.groupId, new Map());
+      reportMap.get(row.groupId)!.set(row.type, row._count.id);
+    }
+
+    // Now build analysis from the map — zero extra DB calls
+    const groupsWithAnalysis = groupsResult.groups.map(group => {
+      const typeCounts = reportMap.get(group.id) || new Map<string, number>();
+
+      const reportTypes = Array.from(typeCounts.entries()).map(([type, count]) => {
+        const threshold = REPORT_THRESHOLDS[type as ReportType] ?? 3;
+        return { type: type as ReportType, count, threshold, meetsThreshold: count >= threshold };
+      });
+
+      const availableActions: ReportAnalysis['availableActions'] = [];
+
+      for (const [actionKey, config] of Object.entries(REPORT_ACTIONS)) {
+        const matching = reportTypes.filter(r =>
+          (config.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
+        );
+        if (matching.length > 0) {
+          availableActions.push({
+            action: actionKey as any,
+            reason: config.message,
+            severity: config.severity,
+            canExecute: true,
+            reportTypes: matching.map(r => r.type),
+            thresholdMet: true
+          });
+        }
       }
 
-      const groupsWithAnalysis = await Promise.all(
-        (groupsResult.groups || []).map(async (group) => {
-          const analysis = await this.analyzeGroupReports(group.id);
-          return {
-            ...group,
-            reportAnalysis: analysis.success ? analysis.analysis : null
-          };
-        })
-      );
+      if (group.isDeleted || group.status === GroupStatus.DELETED) {
+        availableActions.push({
+          action: 'RESTORE',
+          reason: 'Group is currently deleted. Restore to bring it back.',
+          severity: 'LOW',
+          canExecute: true,
+          reportTypes: [],
+          thresholdMet: true
+        });
+      }
 
-      return {
-        ...groupsResult,
-        groups: groupsWithAnalysis
+      const analysis: ReportAnalysis = {
+        groupId: group.id,
+        groupName: group.name,
+        groupStatus: group.status,
+        isDeleted: group.isDeleted,
+        reportCount: Array.from(typeCounts.values()).reduce((a, b) => a + b, 0),
+        reportTypes,
+        availableActions,
+        requiresImmediateAction: availableActions.some(a => a.severity === 'HIGH')
       };
 
-    } catch (error: any) {
-      console.error('Error getting groups with analysis:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to fetch groups with analysis'
-      };
-    }
+      return { ...group, reportAnalysis: analysis };
+    });
+
+    return { ...groupsResult, groups: groupsWithAnalysis };
+
+  } catch (error: any) {
+    console.error('Error getting groups with analysis:', error);
+    return { success: false, message: error.message || 'Failed to fetch groups with analysis' };
   }
+}
 
   // ========== APPLY ACTION ==========
   static async applyAction(
@@ -1026,95 +1076,94 @@ export class AdminGroupsService {
       };
     }
   }
-
-  // ========== GET GROUP STATISTICS ==========
-  static async getGroupStatistics() {
-    try {
-      const [totalGroups, groupsWithReports, activeGroups, suspendedGroups, deletedGroups] = await Promise.all([
-        prisma.group.count(),
-        prisma.group.count({
-          where: {
-            reports: { 
-              some: { 
-                status: { in: ['PENDING', 'REVIEWING'] } 
-              } 
-            }
-          }
-        }),
-        prisma.group.count({
-          where: { status: GroupStatus.ACTIVE, isDeleted: false }
-        }),
-        prisma.group.count({
-          where: { status: GroupStatus.SUSPENDED }
-        }),
-        prisma.group.count({
-          where: { 
-            OR: [
-              { status: GroupStatus.DELETED },
-              { isDeleted: true }
-            ]
-          }
-        })
-      ]);
-
-      // Get groups by member count ranges - FIXED TYPE ISSUE
-      const groupsByMemberCountResult = await prisma.$queryRaw<Array<{
-        exactly_6: bigint;
-        exactly_7: bigint;
-        exactly_8: bigint;
-        exactly_9: bigint;
-        exactly_10: bigint;
-      }>>`
-        SELECT 
-          COUNT(CASE WHEN member_count = 6 THEN 1 END) as exactly_6,
-          COUNT(CASE WHEN member_count = 7 THEN 1 END) as exactly_7,
-          COUNT(CASE WHEN member_count = 8 THEN 1 END) as exactly_8, 
-          COUNT(CASE WHEN member_count = 9 THEN 1 END) as exactly_9,
-          COUNT(CASE WHEN member_count = 10 THEN 1 END) as exactly_10
-        FROM (
-          SELECT g.id, COUNT(gm.id) as member_count
-          FROM groups g
-          LEFT JOIN group_members gm ON g.id = gm.group_id
-          WHERE g.isDeleted = false
-          GROUP BY g.id
-        ) as member_counts
-      `;
-
-      // Parse the result
-      const groupsByMemberCount = groupsByMemberCountResult[0] || {
-        exactly_6: BigInt(0),
-        exactly_7: BigInt(0),
-        exactly_8: BigInt(0),
-        exactly_9: BigInt(0),
-        exactly_10: BigInt(0)
-      };
-
-      return {
-        success: true,
-        statistics: {
-          overview: {
-            total: totalGroups,
-            withReports: groupsWithReports,
-            active: activeGroups,
-            suspended: suspendedGroups,
-            deleted: deletedGroups
-          },
-          byMemberCount: {
-            exactly_6: Number(groupsByMemberCount.exactly_6),
-            exactly_7: Number(groupsByMemberCount.exactly_7),
-            exactly_8: Number(groupsByMemberCount.exactly_8),
-            exactly_9: Number(groupsByMemberCount.exactly_9),
-            exactly_10: Number(groupsByMemberCount.exactly_10)
+// ========== GET GROUP STATISTICS ==========
+static async getGroupStatistics() {
+  try {
+    const [totalGroups, groupsWithReports, activeGroups, suspendedGroups, deletedGroups] = await Promise.all([
+      prisma.group.count(),
+      prisma.group.count({
+        where: {
+          reports: { 
+            some: { 
+              status: { in: ['PENDING', 'REVIEWING'] } 
+            } 
           }
         }
-      };
+      }),
+      prisma.group.count({
+        where: { status: GroupStatus.ACTIVE, isDeleted: false }
+      }),
+      prisma.group.count({
+        where: { status: GroupStatus.SUSPENDED }
+      }),
+      prisma.group.count({
+        where: { 
+          OR: [
+            { status: GroupStatus.DELETED },
+            { isDeleted: true }
+          ]
+        }
+      })
+    ]);
 
-    } catch (error: any) {
-      console.error('Error fetching group statistics:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to fetch group statistics'
-      };
-    }
+    // FIXED: Use correct column name - in Prisma relation it's 'group' not 'group_id'
+    const groupsByMemberCountResult = await prisma.$queryRaw<Array<{
+      exactly_6: bigint;
+      exactly_7: bigint;
+      exactly_8: bigint;
+      exactly_9: bigint;
+      exactly_10: bigint;
+    }>>`
+      SELECT 
+        COUNT(CASE WHEN member_count = 6 THEN 1 END) as exactly_6,
+        COUNT(CASE WHEN member_count = 7 THEN 1 END) as exactly_7,
+        COUNT(CASE WHEN member_count = 8 THEN 1 END) as exactly_8, 
+        COUNT(CASE WHEN member_count = 9 THEN 1 END) as exactly_9,
+        COUNT(CASE WHEN member_count = 10 THEN 1 END) as exactly_10
+      FROM (
+        SELECT g.id, COUNT(gm.id) as member_count
+        FROM groups g
+        LEFT JOIN group_members gm ON g.id = gm.groupId  /* FIXED: gm.groupId not gm.group_id */
+        WHERE g.isDeleted = false
+        GROUP BY g.id
+      ) as member_counts
+    `;
+
+    // Parse the result
+    const groupsByMemberCount = groupsByMemberCountResult[0] || {
+      exactly_6: BigInt(0),
+      exactly_7: BigInt(0),
+      exactly_8: BigInt(0),
+      exactly_9: BigInt(0),
+      exactly_10: BigInt(0)
+    };
+
+    return {
+      success: true,
+      statistics: {
+        overview: {
+          total: totalGroups,
+          withReports: groupsWithReports,
+          active: activeGroups,
+          suspended: suspendedGroups,
+          deleted: deletedGroups
+        },
+        byMemberCount: {
+          exactly_6: Number(groupsByMemberCount.exactly_6),
+          exactly_7: Number(groupsByMemberCount.exactly_7),
+          exactly_8: Number(groupsByMemberCount.exactly_8),
+          exactly_9: Number(groupsByMemberCount.exactly_9),
+          exactly_10: Number(groupsByMemberCount.exactly_10)
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error('Error fetching group statistics:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to fetch group statistics'
+    };
   }
+}
 }
