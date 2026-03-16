@@ -17,7 +17,7 @@ export class AdminFeedbackService {
     try {
       const {
         status,
-        type,
+        type, 
         search,
         page = 1,
         limit = 10,
@@ -246,4 +246,99 @@ export class AdminFeedbackService {
       };
     }
   }
+
+  // services/admin.feedback.service.ts - COMPLETE FIXED
+
+static async getFilteredFeedbackStats(filters?: { status?: string, type?: string, search?: string }) {
+  try {
+    const where: any = {};
+    
+    // Apply filters
+    if (filters?.status) {
+      where.status = filters.status;
+    }
+    
+    if (filters?.type) {
+      where.type = filters.type;
+    }
+    
+    if (filters?.search) {
+      where.OR = [
+        { message: { contains: filters.search, mode: 'insensitive' } },
+        { user: { fullName: { contains: filters.search, mode: 'insensitive' } } },
+        { user: { email: { contains: filters.search, mode: 'insensitive' } } }
+      ];
+    }
+
+    console.log('📊 Filtered stats where clause:', JSON.stringify(where));
+
+    // Get total count for the filtered data
+    const total = await prisma.feedback.count({ where });
+
+    // Get counts by status - ONLY if no status filter is applied
+    // If a status filter is applied, only that status will have count > 0
+    let open = 0, inProgress = 0, resolved = 0, closed = 0;
+
+    if (filters?.status) {
+      // If filtering by a specific status, only that status gets the total count
+      switch (filters.status) {
+        case 'OPEN':
+          open = total;
+          break;
+        case 'IN_PROGRESS':
+          inProgress = total;
+          break;
+        case 'RESOLVED':
+          resolved = total;
+          break;
+        case 'CLOSED':
+          closed = total;
+          break;
+      }
+    } else {
+      // No status filter - count each status separately
+      [open, inProgress, resolved, closed] = await Promise.all([
+        prisma.feedback.count({ where: { ...where, status: "OPEN" } }),
+        prisma.feedback.count({ where: { ...where, status: "IN_PROGRESS" } }),
+        prisma.feedback.count({ where: { ...where, status: "RESOLVED" } }),
+        prisma.feedback.count({ where: { ...where, status: "CLOSED" } })
+      ]);
+    }
+
+    console.log('📊 Filtered stats results:', { total, open, inProgress, resolved, closed });
+
+    // Get counts by type for filtered data
+    const byType = await prisma.feedback.groupBy({
+      by: ['type'],
+      where,
+      _count: true
+    });
+
+    const typeStats: Record<string, number> = {};
+    byType.forEach(item => {
+      typeStats[item.type] = item._count;
+    });
+
+    return {
+      success: true,
+      message: "Filtered feedback stats retrieved",
+      data: {
+        total,
+        open,
+        inProgress,
+        resolved,
+        closed,
+        byType: typeStats
+      }
+    };
+
+  } catch (error: any) {
+    console.error("AdminFeedbackService.getFilteredFeedbackStats error:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to retrieve filtered stats"
+    };
+  }
+}
+
 }

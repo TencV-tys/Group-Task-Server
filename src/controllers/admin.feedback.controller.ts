@@ -53,6 +53,43 @@ export class AdminFeedbackController {
     }
   }
 
+  // ========== GET FILTERED FEEDBACK STATS ==========
+static async getFilteredFeedbackStats(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin not authenticated"
+      });
+    }
+
+    const { status, type, search } = req.query;
+
+    const filters = {
+      status: status as string,
+      type: type as string,
+      search: search as string
+    };
+
+    const result = await AdminFeedbackService.getFilteredFeedbackStats(filters);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.json(result);
+
+  } catch (error: any) {
+    console.error("AdminFeedbackController.getFilteredFeedbackStats error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
   // ========== GET SINGLE FEEDBACK ==========
   static async getFeedbackById(req: AdminAuthRequest, res: Response) {
     try {
