@@ -55,6 +55,11 @@ enum DayOfWeek {
   SATURDAY
   SUNDAY
 }
+enum GroupStatus {
+  ACTIVE        // Normal operating group
+  SUSPENDED     // Temporarily disabled
+  DELETED       // Soft deleted (you already track this with isDeleted)
+}
 
 // Task Execution Frequency (How often task needs to be done)
 enum TaskExecutionFrequency {
@@ -149,8 +154,20 @@ model Group {
   inviteCode  String  @unique
   avatarUrl   String?
   
-  // ===== NEW: Member limit settings =====
-  maxMembers  Int     @default(6) // Default 6, can be increased up to 10
+  // ===== STATUS FIELDS =====
+  status      GroupStatus @default(ACTIVE)  // Current status of the group
+  statusChangedAt DateTime?                  // When status was last changed
+  statusChangedBy String?                    // Admin who changed status
+  statusReason String?                        // Reason for status change
+  
+  // ===== SOFT DELETE FIELDS =====
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+  deletedBy   String?
+  deletedByName String?
+  deleteReason String?
+  
+  maxMembers  Int     @default(6)
   settings    Json?   @default("{}")
 
   createdById String
@@ -170,7 +187,6 @@ model Group {
 
   @@map("groups")
 }
-
 
 model GroupMember {
   id        String          @id @default(uuid())

@@ -1,6 +1,7 @@
-// services/admin.groups.services.ts - CLEANED UP WITH RESTORE
+// services/admin.groups.services.ts - COMPLETE WITH FIXED TYPES
+
 import prisma from "../prisma";
-import { ReportType, ReportStatus } from "@prisma/client";
+import { ReportType, ReportStatus, GroupStatus, Prisma } from "@prisma/client";
 
 export interface GroupFilters {
   search?: string;
@@ -8,83 +9,87 @@ export interface GroupFilters {
   limit?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
-  minMembers?: number;
-  maxMembers?: number;
+  minMembers?: 6;        // Only 6 allowed
+  maxMembers?: 6 | 7 | 8 | 9 | 10;  // Only 6-10 allowed
   createdAfter?: Date;
   createdBefore?: Date;
+  status?: GroupStatus;
+  hasReports?: boolean;
+  minReports?: number;
 }
 
-// ===== REPORT ACTION RULES =====
-const REPORT_ACTION_RULES = {
-  [ReportType.INAPPROPRIATE_CONTENT]: {
-    threshold: 2,
-    suggestedAction: 'SOFT_DELETE',
-    severity: 'MEDIUM',
-    message: 'Multiple reports of inappropriate content',
-  },
-  [ReportType.HARASSMENT]: {
-    threshold: 1,
-    suggestedAction: 'SUSPEND',
+// Define which report types trigger which actions
+export const REPORT_ACTIONS = {
+  SUSPEND: {
+    triggers: [
+      ReportType.HARASSMENT,
+      ReportType.OFFENSIVE_BEHAVIOR
+    ] as ReportType[],
     severity: 'HIGH',
-    message: 'Harassment reported - immediate action required',
+    message: 'Reports require immediate suspension'
   },
-  [ReportType.SPAM]: {
-    threshold: 3,
-    suggestedAction: 'SOFT_DELETE',
-    severity: 'LOW',
-    message: 'Multiple spam reports',
-  },
-  [ReportType.OFFENSIVE_BEHAVIOR]: {
-    threshold: 2,
-    suggestedAction: 'WARNING',
+  SOFT_DELETE: {
+    triggers: [
+      ReportType.INAPPROPRIATE_CONTENT,
+      ReportType.SPAM,
+      ReportType.TASK_ABUSE
+    ] as ReportType[],
     severity: 'MEDIUM',
-    message: 'Offensive behavior reported',
+    message: 'Reports suggest soft deletion'
   },
-  [ReportType.TASK_ABUSE]: {
-    threshold: 2,
-    suggestedAction: 'SOFT_DELETE',
-    severity: 'MEDIUM',
-    message: 'Task abuse detected',
-  },
-  [ReportType.GROUP_MISUSE]: {
-    threshold: 2,
-    suggestedAction: 'HARD_DELETE',
+  HARD_DELETE: {
+    triggers: [
+      ReportType.GROUP_MISUSE
+    ] as ReportType[],
     severity: 'HIGH',
-    message: 'Group misuse - permanent action recommended',
+    message: 'Reports require permanent deletion'
   },
-  [ReportType.OTHER]: {
-    threshold: 3,
-    suggestedAction: 'REVIEW',
+  REVIEW: {
+    triggers: [
+      ReportType.OTHER
+    ] as ReportType[],
     severity: 'LOW',
-    message: 'Multiple miscellaneous reports',
+    message: 'Reports require review'
   }
+};
+
+// Thresholds for each report type
+const REPORT_THRESHOLDS: Record<ReportType, number> = {
+  [ReportType.INAPPROPRIATE_CONTENT]: 2,
+  [ReportType.HARASSMENT]: 1,
+  [ReportType.SPAM]: 3,
+  [ReportType.OFFENSIVE_BEHAVIOR]: 2,
+  [ReportType.TASK_ABUSE]: 2,
+  [ReportType.GROUP_MISUSE]: 2,
+  [ReportType.OTHER]: 3
 };
 
 export interface ReportAnalysis {
   groupId: string;
   groupName: string;
+  groupStatus: GroupStatus;
+  isDeleted: boolean;
   reportCount: number;
   reportTypes: {
     type: ReportType;
     count: number;
     threshold: number;
-    suggestedAction: string;
-    severity: string;
-    message: string;
     meetsThreshold: boolean;
   }[];
-  suggestedActions: {
-    action: string;
+  availableActions: {
+    action: 'SUSPEND' | 'SOFT_DELETE' | 'HARD_DELETE' | 'RESTORE' | 'REVIEW';
     reason: string;
     severity: string;
+    canExecute: boolean;
     reportTypes: ReportType[];
+    thresholdMet: boolean;
   }[];
   requiresImmediateAction: boolean;
 }
 
 export class AdminGroupsService {
   
-  // ========== GET ALL GROUPS ==========
+  // ========== GET ALL GROUPS WITH FILTERS ==========
   static async getGroups(filters: GroupFilters = {}) {
     try {
       const {
@@ -96,11 +101,30 @@ export class AdminGroupsService {
         minMembers,
         maxMembers,
         createdAfter,
-        createdBefore
+        createdBefore,
+        status,
+        hasReports,
+        minReports
       } = filters;
+
+      // Validate member count - only 6 allowed for min, and 6-10 for max
+      if (minMembers !== undefined && minMembers !== 6) {
+        return {
+          success: false,
+          message: 'Minimum members can only be 6'
+        };
+      }
+
+      if (maxMembers !== undefined && (maxMembers < 6 || maxMembers > 10)) {
+        return {
+          success: false,
+          message: 'Maximum members must be between 6 and 10'
+        };
+      }
 
       const where: any = {};
 
+      // Search filter
       if (search) {
         where.OR = [
           { name: { contains: search, mode: 'insensitive' } },
@@ -108,14 +132,39 @@ export class AdminGroupsService {
         ];
       }
 
+      // Date filters
       if (createdAfter || createdBefore) {
         where.createdAt = {};
         if (createdAfter) where.createdAt.gte = createdAfter;
         if (createdBefore) where.createdAt.lte = createdBefore;
       }
 
+      // Status filter
+      if (status) {
+        where.status = status;
+      }
+
+      // Reports filter
+      if (hasReports !== undefined || minReports !== undefined) {
+        where.reports = {
+          some: {
+            status: { in: ['PENDING', 'REVIEWING'] }
+          }
+        };
+        
+        if (minReports !== undefined) {
+          where.reports = {
+            ...where.reports,
+            every: {
+              status: { in: ['PENDING', 'REVIEWING'] }
+            }
+          };
+        }
+      }
+
       const skip = (page - 1) * limit;
 
+      // Get groups with counts
       const [groups, total] = await Promise.all([
         prisma.group.findMany({
           where,
@@ -146,7 +195,7 @@ export class AdminGroupsService {
         prisma.group.count({ where })
       ]);
 
-      // Filter by member count if needed
+      // Filter by member count if needed (after query since member count isn't in where)
       let filteredGroups = groups;
       if (minMembers !== undefined || maxMembers !== undefined) {
         filteredGroups = groups.filter(group => {
@@ -157,12 +206,21 @@ export class AdminGroupsService {
         });
       }
 
+      // Filter by min reports if needed
+      if (minReports !== undefined) {
+        filteredGroups = filteredGroups.filter(group => 
+          group._count.reports >= minReports!
+        );
+      }
+
       const formattedGroups = filteredGroups.map(group => ({
         id: group.id,
         name: group.name,
         description: group.description,
         avatarUrl: group.avatarUrl,
         inviteCode: group.inviteCode,
+        status: group.status,
+        isDeleted: group.isDeleted,
         createdAt: group.createdAt,
         updatedAt: group.updatedAt,
         currentRotationWeek: group.currentRotationWeek,
@@ -207,6 +265,20 @@ export class AdminGroupsService {
               avatarUrl: true
             }
           },
+          members: {
+            take: 10,
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
+                  avatarUrl: true,
+                  roleStatus: true
+                }
+              }
+            }
+          },
           _count: {
             select: {
               members: true,
@@ -224,10 +296,36 @@ export class AdminGroupsService {
         };
       }
 
+      // Get task stats
+      const taskStats = await prisma.task.aggregate({
+        where: { 
+          groupId,
+          isDeleted: false 
+        },
+        _count: true
+      });
+
+      const completedTasks = await prisma.assignment.count({
+        where: {
+          task: { groupId },
+          completed: true,
+          verified: true
+        }
+      });
+
       return {
         success: true,
         message: 'Group retrieved successfully',
-        group
+        group: {
+          ...group,
+          stats: {
+            totalTasks: taskStats._count,
+            completedTasks,
+            completionRate: taskStats._count > 0 
+              ? (completedTasks / taskStats._count) * 100 
+              : 0
+          }
+        }
       };
 
     } catch (error: any) {
@@ -240,136 +338,160 @@ export class AdminGroupsService {
   }
 
   // ========== ANALYZE GROUP REPORTS ==========
-  // In services/admin.groups.services.ts - Add this to analyzeGroupReports
-
-static async analyzeGroupReports(groupId: string): Promise<{
-  success: boolean;
-  analysis?: ReportAnalysis;
-  message?: string;
-}> {
-  try {
-    // Get group with its reports
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      include: {
-        reports: {
-          where: {
-            status: {
-              in: ['PENDING', 'REVIEWING']
+  static async analyzeGroupReports(groupId: string): Promise<{
+    success: boolean;
+    analysis?: ReportAnalysis;
+    message?: string;
+  }> {
+    try {
+      // Get group with its reports
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        include: {
+          reports: {
+            where: {
+              status: {
+                in: ['PENDING', 'REVIEWING']
+              }
+            },
+            select: {
+              id: true,
+              type: true,
+              status: true,
+              description: true,
+              createdAt: true
             }
-          },
-          select: {
-            id: true,
-            type: true,
-            status: true,
-            description: true,
-            createdAt: true
           }
         }
-      }
-    });
+      });
 
-    if (!group) {
+      if (!group) {
+        return {
+          success: false,
+          message: 'Group not found'
+        };
+      }
+
+      // Count reports by type
+      const reportCountByType = new Map<ReportType, number>();
+      group.reports.forEach(report => {
+        const count = reportCountByType.get(report.type as ReportType) || 0;
+        reportCountByType.set(report.type as ReportType, count + 1);
+      });
+
+      // Analyze each report type
+      const reportTypes = Array.from(reportCountByType.entries()).map(([type, count]) => {
+        const threshold = REPORT_THRESHOLDS[type as ReportType] || 3;
+        return {
+          type: type as ReportType,
+          count,
+          threshold,
+          meetsThreshold: count >= threshold
+        };
+      });
+
+      // Determine available actions
+      const availableActions = [];
+      
+      // Check SUSPEND action
+      const suspendReports = reportTypes.filter(r => 
+        (REPORT_ACTIONS.SUSPEND.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
+      );
+      if (suspendReports.length > 0) {
+        availableActions.push({
+          action: 'SUSPEND' as const,
+          reason: REPORT_ACTIONS.SUSPEND.message,
+          severity: REPORT_ACTIONS.SUSPEND.severity,
+          canExecute: true,
+          reportTypes: suspendReports.map(r => r.type),
+          thresholdMet: true
+        });
+      }
+
+      // Check SOFT DELETE action
+      const softDeleteReports = reportTypes.filter(r => 
+        (REPORT_ACTIONS.SOFT_DELETE.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
+      );
+      if (softDeleteReports.length > 0) {
+        availableActions.push({
+          action: 'SOFT_DELETE' as const,
+          reason: REPORT_ACTIONS.SOFT_DELETE.message,
+          severity: REPORT_ACTIONS.SOFT_DELETE.severity,
+          canExecute: true,
+          reportTypes: softDeleteReports.map(r => r.type),
+          thresholdMet: true
+        });
+      }
+
+      // Check HARD DELETE action
+      const hardDeleteReports = reportTypes.filter(r => 
+        (REPORT_ACTIONS.HARD_DELETE.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
+      );
+      if (hardDeleteReports.length > 0) {
+        availableActions.push({
+          action: 'HARD_DELETE' as const,
+          reason: REPORT_ACTIONS.HARD_DELETE.message,
+          severity: REPORT_ACTIONS.HARD_DELETE.severity,
+          canExecute: true,
+          reportTypes: hardDeleteReports.map(r => r.type),
+          thresholdMet: true
+        });
+      }
+
+      // Check REVIEW action
+      const reviewReports = reportTypes.filter(r => 
+        (REPORT_ACTIONS.REVIEW.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
+      );
+      if (reviewReports.length > 0) {
+        availableActions.push({
+          action: 'REVIEW' as const,
+          reason: REPORT_ACTIONS.REVIEW.message,
+          severity: REPORT_ACTIONS.REVIEW.severity,
+          canExecute: true,
+          reportTypes: reviewReports.map(r => r.type),
+          thresholdMet: true
+        });
+      }
+
+      // Add RESTORE action if group is deleted
+      if (group.isDeleted || group.status === GroupStatus.DELETED) {
+        availableActions.push({
+          action: 'RESTORE' as const,
+          reason: 'Group is currently deleted. Restore to bring it back.',
+          severity: 'LOW',
+          canExecute: true,
+          reportTypes: [],
+          thresholdMet: true
+        });
+      }
+
+      const requiresImmediateAction = availableActions.some(
+        a => a.severity === 'HIGH' && a.canExecute
+      );
+
+      return {
+        success: true,
+        analysis: {
+          groupId: group.id,
+          groupName: group.name,
+          groupStatus: group.status,
+          isDeleted: group.isDeleted,
+          reportCount: group.reports.length,
+          reportTypes,
+          availableActions,
+          requiresImmediateAction
+        }
+      };
+
+    } catch (error: any) {
+      console.error('Error analyzing group reports:', error);
       return {
         success: false,
-        message: 'Group not found'
+        message: error.message || 'Failed to analyze group reports'
       };
     }
-
-    // Check if group is soft-deleted
-    const isSoftDeleted = group.name.startsWith('[DELETED]');
-
-    // Count reports by type
-    const reportCountByType = new Map<ReportType, number>();
-    group.reports.forEach(report => {
-      const count = reportCountByType.get(report.type as ReportType) || 0;
-      reportCountByType.set(report.type as ReportType, count + 1);
-    });
-
-    // Analyze each report type
-    const reportTypes = Array.from(reportCountByType.entries()).map(([type, count]) => {
-      const rule = REPORT_ACTION_RULES[type] || {
-        threshold: 3,
-        suggestedAction: 'REVIEW',
-        severity: 'LOW',
-        message: 'Multiple reports'
-      };
-
-      return {
-        type,
-        count,
-        threshold: rule.threshold,
-        suggestedAction: rule.suggestedAction,
-        severity: rule.severity,
-        message: rule.message,
-        meetsThreshold: count >= rule.threshold
-      };
-    });
-
-    // Group suggested actions
-    const actionGroups = new Map<string, {
-      action: string;
-      reason: string;
-      severity: string;
-      reportTypes: ReportType[];
-    }>();
-
-    reportTypes.forEach(item => {
-      if (item.meetsThreshold) {
-        const key = `${item.suggestedAction}-${item.severity}`;
-        if (!actionGroups.has(key)) {
-          actionGroups.set(key, {
-            action: item.suggestedAction,
-            reason: item.message,
-            severity: item.severity,
-            reportTypes: []
-          });
-        }
-        actionGroups.get(key)!.reportTypes.push(item.type);
-      }
-    });
-
-    // 👇 ADD RESTORE ACTION FOR SOFT-DELETED GROUPS
-    if (isSoftDeleted) {
-      actionGroups.set('RESTORE-LOW', {
-        action: 'RESTORE',
-        reason: 'Group is currently deleted. Restore to bring it back.',
-        severity: 'LOW',
-        reportTypes: []
-      });
-    }
-
-    const suggestedActions = Array.from(actionGroups.values());
-    const requiresImmediateAction = suggestedActions.some(a => a.severity === 'HIGH');
-
-    return {
-      success: true,
-      analysis: {
-        groupId: group.id,
-        groupName: group.name,
-        reportCount: group.reports.length,
-        reportTypes: reportTypes.map(r => ({
-          type: r.type,
-          count: r.count,
-          threshold: r.threshold,
-          suggestedAction: r.suggestedAction,
-          severity: r.severity,
-          message: r.message,
-          meetsThreshold: r.meetsThreshold
-        })),
-        suggestedActions,
-        requiresImmediateAction
-      }
-    };
-
-  } catch (error: any) {
-    console.error('Error analyzing group reports:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to analyze group reports'
-    };
   }
-}
+
   // ========== GET GROUPS WITH ANALYSIS ==========
   static async getGroupsWithAnalysis(filters: GroupFilters = {}) {
     try {
@@ -411,41 +533,33 @@ static async analyzeGroupReports(groupId: string): Promise<{
     reason?: string
   ) {
     try {
-      const analysis = await this.analyzeGroupReports(groupId);
-      
-      if (!analysis.success || !analysis.analysis) {
-        return {
-          success: false,
-          message: 'Could not analyze group reports'
-        };
-      }
-
-      const suggestedAction = analysis.analysis.suggestedActions.find(
-        a => a.action === action
-      );
-
-      if (!suggestedAction) {
-        return {
-          success: false,
-          message: `No suggested action "${action}" for this group`
-        };
-      }
+      // Get admin name for logs
+      const admin = await prisma.systemAdmin.findUnique({
+        where: { id: adminId },
+        select: { fullName: true }
+      });
 
       switch (action) {
+        case 'SUSPEND':
+          return await this.suspendGroup(groupId, adminId, admin?.fullName || 'Admin', reason);
+
         case 'SOFT_DELETE':
-          return await this.deleteGroup(groupId, adminId, { hardDelete: false, reason: reason || suggestedAction.reason });
+          return await this.deleteGroup(groupId, adminId, { 
+            hardDelete: false, 
+            reason: reason || 'Soft deleted due to reports' 
+          });
 
         case 'HARD_DELETE':
-          return await this.deleteGroup(groupId, adminId, { hardDelete: true, reason: reason || suggestedAction.reason });
-
-        case 'SUSPEND':
-          return await this.suspendGroup(groupId, adminId, reason || suggestedAction.reason);
+          return await this.deleteGroup(groupId, adminId, { 
+            hardDelete: true, 
+            reason: reason || 'Hard deleted due to reports' 
+          });
 
         case 'RESTORE':
-          return await this.restoreGroup(groupId, adminId, reason);
+          return await this.restoreGroup(groupId, adminId, admin?.fullName || 'Admin', reason);
 
-        case 'WARNING':
-          return await this.sendWarning(groupId, adminId, reason || suggestedAction.reason);
+        case 'REVIEW':
+          return await this.markForReview(groupId, adminId, admin?.fullName || 'Admin', reason);
 
         default:
           return {
@@ -464,42 +578,83 @@ static async analyzeGroupReports(groupId: string): Promise<{
   }
 
   // ========== SUSPEND GROUP ==========
-  static async suspendGroup(groupId: string, adminId: string, reason?: string) {
+  static async suspendGroup(groupId: string, adminId: string, adminName: string, reason?: string) {
     try {
       const group = await prisma.group.findUnique({
         where: { id: groupId },
-        select: { name: true, createdById: true }
+        select: { 
+          name: true, 
+          createdById: true,
+          status: true,
+          members: {
+            select: { userId: true }
+          }
+        }
       });
 
       if (!group) {
         return { success: false, message: 'Group not found' };
       }
 
-      // Mark as suspended (you'll need to add a status field to Group model)
+      // Check if already suspended
+      if (group.status === GroupStatus.SUSPENDED) {
+        return { success: false, message: 'Group is already suspended' };
+      }
+
+      // Update group with suspension
       await prisma.group.update({
         where: { id: groupId },
         data: {
-          // Add status field when you add it to schema
-          // status: 'SUSPENDED'
+          status: GroupStatus.SUSPENDED,
+          statusChangedAt: new Date(),
+          statusChangedBy: adminId,
+          statusReason: reason || 'Violation of guidelines'
         }
       });
 
+      // Notify group creator
       await prisma.userNotification.create({
         data: {
           userId: group.createdById,
           type: 'GROUP_SUSPENDED',
           title: '⚠️ Group Suspended',
           message: `Your group "${group.name}" has been suspended. Reason: ${reason || 'Violation of guidelines'}`,
-          data: { groupId, groupName: group.name, reason }
+          data: { 
+            groupId, 
+            groupName: group.name, 
+            reason,
+            suspendedBy: adminName
+          }
         }
       });
 
+      // Notify all group members
+      for (const member of group.members) {
+        if (member.userId !== group.createdById) {
+          await prisma.userNotification.create({
+            data: {
+              userId: member.userId,
+              type: 'GROUP_SUSPENDED',
+              title: '⚠️ Group Suspended',
+              message: `Group "${group.name}" has been suspended.`,
+              data: { groupId, groupName: group.name, reason }
+            }
+          });
+        }
+      }
+
+      // Create audit log
       await prisma.adminAuditLog.create({
         data: {
           adminId,
           action: 'GROUP_SUSPENDED',
           targetUserId: group.createdById,
-          details: { groupId, groupName: group.name, reason }
+          details: { 
+            groupId, 
+            groupName: group.name, 
+            reason,
+            suspendedBy: adminName
+          }
         }
       });
 
@@ -516,111 +671,160 @@ static async analyzeGroupReports(groupId: string): Promise<{
       };
     }
   }
-// ========== RESTORE GROUP ==========
-static async restoreGroup(groupId: string, adminId: string, reason?: string) {
-  try {
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      include: {
-        _count: {
-          select: {
-            tasks: true,
-            members: true
+
+  // ========== RESTORE GROUP ==========
+  static async restoreGroup(groupId: string, adminId: string, adminName: string, reason?: string) {
+    try {
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        include: {
+          _count: {
+            select: {
+              tasks: true
+            }
+          },
+          tasks: {
+            where: { isDeleted: true },
+            select: { id: true, title: true }
           }
         }
+      });
+
+      if (!group) {
+        return { 
+          success: false, 
+          message: 'Group not found' 
+        };
       }
-    });
 
-    if (!group) {
-      return { success: false, message: 'Group not found' };
-    }
-
-    // Extract original name (remove [DELETED] prefix and timestamp)
-    let originalName = group.name
-      .replace(/^\[DELETED\]\s*/, '')
-      .replace(/\s+\d+$/, '')
-      .trim();
-    
-    // If name becomes empty, use a default
-    if (!originalName) {
-      originalName = `Restored Group ${new Date().toLocaleDateString()}`;
-    }
-
-    // Generate new invite code (or restore original if you stored it)
-    const newInviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-
-    // Update the group
-    await prisma.group.update({
-      where: { id: groupId },
-      data: {
-        name: originalName,
-        description: group.description?.replace('[This group has been deleted by admin]', '').trim() || null,
-        inviteCode: newInviteCode,
-        // Reset any other deleted flags
+      // Check if group is actually deleted
+      if (!group.isDeleted && group.status !== GroupStatus.DELETED) {
+        return { 
+          success: false, 
+          message: 'Group is not deleted. Only deleted groups can be restored.' 
+        };
       }
-    });
 
-    // Restore tasks if they were soft-deleted
-    await prisma.task.updateMany({
-      where: { 
-        groupId,
-        isDeleted: true 
-      },
-      data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null
+      // Extract original name (remove [DELETED] prefix)
+      let originalName = group.name
+        .replace(/^\[DELETED\]\s*/, '')
+        .replace(/\s+\d+$/, '')
+        .trim();
+      
+      if (!originalName) {
+        originalName = `Restored Group ${new Date().toLocaleDateString()}`;
       }
-    });
 
-    // Create notification for group creator
-    await prisma.userNotification.create({
-      data: {
-        userId: group.createdById,
-        type: 'GROUP_RESTORED',
-        title: '✅ Group Restored',
-        message: `Your group "${originalName}" has been restored. New invite code: ${newInviteCode}`,
-        data: { groupId, groupName: originalName, newInviteCode, reason }
-      }
-    });
-
-    // Create audit log
-    await prisma.adminAuditLog.create({
-      data: {
-        adminId,
-        action: 'GROUP_RESTORED',
-        targetUserId: group.createdById,
-        details: { 
-          groupId, 
-          groupName: originalName, 
-          oldName: group.name,
-          newInviteCode,
-          reason 
+      // Check if name already exists
+      const existingGroup = await prisma.group.findFirst({
+        where: { 
+          name: originalName,
+          NOT: { id: groupId },
+          isDeleted: false
         }
-      }
-    });
+      });
 
-    return {
-      success: true,
-      message: 'Group restored successfully',
-      data: {
-        id: groupId,
-        name: originalName,
-        inviteCode: newInviteCode
+      if (existingGroup) {
+        originalName = `${originalName} (Restored)`;
       }
-    };
 
-  } catch (error: any) {
-    console.error('Error restoring group:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to restore group'
-    };
+      // Generate new invite code
+      const newInviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+      // Update the group in a transaction
+      await prisma.$transaction(async (tx) => {
+        // Restore the group
+        await tx.group.update({
+          where: { id: groupId },
+          data: {
+            name: originalName,
+            description: group.description?.replace('[This group has been deleted by admin]', '').trim() || null,
+            inviteCode: newInviteCode,
+            status: GroupStatus.ACTIVE,
+            isDeleted: false,
+            deletedAt: null,
+            deletedBy: null,
+            deletedByName: null,
+            deleteReason: null,
+            statusChangedAt: new Date(),
+            statusChangedBy: adminId,
+            statusReason: reason || 'Group restored by admin'
+          }
+        });
+
+        // Restore tasks
+        if (group.tasks.length > 0) {
+          await tx.task.updateMany({
+            where: { 
+              groupId,
+              isDeleted: true 
+            },
+            data: {
+              isDeleted: false,
+              deletedAt: null,
+              deletedBy: null
+            }
+          });
+        }
+      });
+
+      // Create notification for group creator
+      await prisma.userNotification.create({
+        data: {
+          userId: group.createdById,
+          title: '✅ Group Restored',
+          message: `Your group "${originalName}" has been restored by ${adminName}. New invite code: ${newInviteCode}`,
+          type: 'GROUP_RESTORED',
+          data: { 
+            groupId, 
+            groupName: originalName, 
+            newInviteCode, 
+            reason,
+            restoredBy: adminName
+          }
+        }
+      });
+
+      // Create audit log
+      await prisma.adminAuditLog.create({
+        data: {
+          adminId,
+          action: 'GROUP_RESTORED',
+          targetUserId: group.createdById,
+          details: { 
+            groupId, 
+            groupName: originalName, 
+            oldName: group.name,
+            newInviteCode,
+            reason,
+            restoredTasks: group.tasks.length,
+            restoredBy: adminName
+          }
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Group restored successfully',
+        data: {
+          id: groupId,
+          name: originalName,
+          inviteCode: newInviteCode,
+          restoredTasks: group.tasks.length
+        }
+      };
+
+    } catch (error: any) {
+      console.error('Error restoring group:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to restore group'
+      };
+    }
   }
-}
 
-  // ========== SEND WARNING ==========
-  static async sendWarning(groupId: string, adminId: string, reason?: string) {
+  // ========== MARK FOR REVIEW ==========
+  static async markForReview(groupId: string, adminId: string, adminName: string, reason?: string) {
     try {
       const group = await prisma.group.findUnique({
         where: { id: groupId },
@@ -631,20 +835,33 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
         return { success: false, message: 'Group not found' };
       }
 
+      // Create admin notification for review
+      await prisma.adminNotification.create({
+        data: {
+          type: 'GROUP_REVIEW_NEEDED',
+          title: '👀 Group Needs Review',
+          message: `Group "${group.name}" marked for review. Reason: ${reason || 'Multiple reports'}`,
+          data: { groupId, groupName: group.name, reason },
+          priority: 'HIGH'
+        }
+      });
+
+      // Notify group creator
       await prisma.userNotification.create({
         data: {
           userId: group.createdById,
-          type: 'GROUP_WARNING',
-          title: '⚠️ Group Warning',
-          message: `Your group "${group.name}" has received a warning. Reason: ${reason || 'Multiple reports'}`,
+          type: 'GROUP_REVIEW',
+          title: '📋 Group Under Review',
+          message: `Your group "${group.name}" has been flagged for review by our team.`,
           data: { groupId, groupName: group.name, reason }
         }
       });
 
+      // Create audit log
       await prisma.adminAuditLog.create({
         data: {
           adminId,
-          action: 'GROUP_WARNING_SENT',
+          action: 'GROUP_MARKED_FOR_REVIEW',
           targetUserId: group.createdById,
           details: { groupId, groupName: group.name, reason }
         }
@@ -652,14 +869,14 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
 
       return {
         success: true,
-        message: 'Warning sent successfully'
+        message: 'Group marked for review'
       };
 
     } catch (error: any) {
-      console.error('Error sending warning:', error);
+      console.error('Error marking group for review:', error);
       return {
         success: false,
-        message: error.message || 'Failed to send warning'
+        message: error.message || 'Failed to mark group for review'
       };
     }
   }
@@ -675,15 +892,30 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
 
       const group = await prisma.group.findUnique({
         where: { id: groupId },
-        include: { _count: { select: { members: true, tasks: true } } }
+        include: { 
+          _count: { 
+            select: { 
+              members: true, 
+              tasks: {
+                where: { isDeleted: false }
+              } 
+            } 
+          } 
+        }
       });
 
       if (!group) {
         return { success: false, message: 'Group not found' };
       }
 
+      // Get admin name
+      const admin = await prisma.systemAdmin.findUnique({
+        where: { id: adminId },
+        select: { fullName: true }
+      });
+
       if (hardDelete) {
-        // HARD DELETE
+        // HARD DELETE - complete removal
         await prisma.$transaction(async (tx) => {
           await tx.assignment.deleteMany({ where: { task: { groupId } } });
           await tx.timeSlot.deleteMany({ where: { task: { groupId } } });
@@ -698,29 +930,70 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
             adminId,
             action: 'GROUP_HARD_DELETED',
             targetUserId: group.createdById,
-            details: { groupId, groupName: group.name, memberCount: group._count.members, taskCount: group._count.tasks, reason }
+            details: { 
+              groupId, 
+              groupName: group.name, 
+              memberCount: group._count.members, 
+              taskCount: group._count.tasks, 
+              reason,
+              deletedBy: admin?.fullName || 'Admin'
+            }
           }
         });
 
-        return { success: true, message: 'Group permanently deleted successfully' };
+        return { 
+          success: true, 
+          message: 'Group permanently deleted successfully' 
+        };
       } else {
         // SOFT DELETE
         const deletedName = `[DELETED] ${group.name} ${Date.now()}`;
         
-        await prisma.group.update({
-          where: { id: groupId },
-          data: {
-            name: deletedName,
-            inviteCode: `deleted_${groupId.slice(0, 8)}`,
-            description: '[This group has been deleted by admin]',
-          }
+        await prisma.$transaction(async (tx) => {
+          // Update group with soft delete fields
+          await tx.group.update({
+            where: { id: groupId },
+            data: {
+              name: deletedName,
+              inviteCode: `deleted_${groupId.slice(0, 8)}`,
+              description: '[This group has been deleted by admin]',
+              status: GroupStatus.DELETED,
+              isDeleted: true,
+              deletedAt: new Date(),
+              deletedBy: adminId,
+              deletedByName: admin?.fullName || 'Admin',
+              deleteReason: reason || 'No reason provided',
+              statusChangedAt: new Date(),
+              statusChangedBy: adminId,
+              statusReason: reason || 'Group soft deleted'
+            }
+          });
+
+          // Remove all members
+          await tx.groupMember.deleteMany({ 
+            where: { groupId } 
+          });
+          
+          // Soft delete tasks
+          await tx.task.updateMany({
+            where: { groupId },
+            data: { 
+              isDeleted: true, 
+              deletedAt: new Date(), 
+              deletedBy: adminId 
+            }
+          });
         });
 
-        await prisma.groupMember.deleteMany({ where: { groupId } });
-        
-        await prisma.task.updateMany({
-          where: { groupId },
-          data: { isDeleted: true, deletedAt: new Date(), deletedBy: adminId }
+        // Notify creator
+        await prisma.userNotification.create({
+          data: {
+            userId: group.createdById,
+            type: 'GROUP_DELETED',
+            title: '🗑️ Group Deleted',
+            message: `Your group "${group.name}" has been deleted. Reason: ${reason || 'Violation of guidelines'}`,
+            data: { groupId, groupName: group.name, reason }
+          }
         });
 
         await prisma.adminAuditLog.create({
@@ -728,11 +1001,21 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
             adminId,
             action: 'GROUP_SOFT_DELETED',
             targetUserId: group.createdById,
-            details: { groupId, groupName: group.name, memberCount: group._count.members, taskCount: group._count.tasks, reason }
+            details: { 
+              groupId, 
+              groupName: group.name, 
+              memberCount: group._count.members, 
+              taskCount: group._count.tasks, 
+              reason,
+              deletedBy: admin?.fullName || 'Admin'
+            }
           }
         });
 
-        return { success: true, message: 'Group soft deleted successfully' };
+        return { 
+          success: true, 
+          message: 'Group soft deleted successfully' 
+        };
       }
 
     } catch (error: any) {
@@ -747,21 +1030,81 @@ static async restoreGroup(groupId: string, adminId: string, reason?: string) {
   // ========== GET GROUP STATISTICS ==========
   static async getGroupStatistics() {
     try {
-      const [totalGroups, groupsWithReports] = await Promise.all([
+      const [totalGroups, groupsWithReports, activeGroups, suspendedGroups, deletedGroups] = await Promise.all([
         prisma.group.count(),
         prisma.group.count({
           where: {
-            reports: { some: { status: { in: ['PENDING', 'REVIEWING'] } } }
+            reports: { 
+              some: { 
+                status: { in: ['PENDING', 'REVIEWING'] } 
+              } 
+            }
+          }
+        }),
+        prisma.group.count({
+          where: { status: GroupStatus.ACTIVE, isDeleted: false }
+        }),
+        prisma.group.count({
+          where: { status: GroupStatus.SUSPENDED }
+        }),
+        prisma.group.count({
+          where: { 
+            OR: [
+              { status: GroupStatus.DELETED },
+              { isDeleted: true }
+            ]
           }
         })
       ]);
+
+      // Get groups by member count ranges - FIXED TYPE ISSUE
+      const groupsByMemberCountResult = await prisma.$queryRaw<Array<{
+        exactly_6: bigint;
+        exactly_7: bigint;
+        exactly_8: bigint;
+        exactly_9: bigint;
+        exactly_10: bigint;
+      }>>`
+        SELECT 
+          COUNT(CASE WHEN member_count = 6 THEN 1 END) as exactly_6,
+          COUNT(CASE WHEN member_count = 7 THEN 1 END) as exactly_7,
+          COUNT(CASE WHEN member_count = 8 THEN 1 END) as exactly_8, 
+          COUNT(CASE WHEN member_count = 9 THEN 1 END) as exactly_9,
+          COUNT(CASE WHEN member_count = 10 THEN 1 END) as exactly_10
+        FROM (
+          SELECT g.id, COUNT(gm.id) as member_count
+          FROM groups g
+          LEFT JOIN group_members gm ON g.id = gm.group_id
+          WHERE g.isDeleted = false
+          GROUP BY g.id
+        ) as member_counts
+      `;
+
+      // Parse the result
+      const groupsByMemberCount = groupsByMemberCountResult[0] || {
+        exactly_6: BigInt(0),
+        exactly_7: BigInt(0),
+        exactly_8: BigInt(0),
+        exactly_9: BigInt(0),
+        exactly_10: BigInt(0)
+      };
 
       return {
         success: true,
         statistics: {
           overview: {
             total: totalGroups,
-            withReports: groupsWithReports
+            withReports: groupsWithReports,
+            active: activeGroups,
+            suspended: suspendedGroups,
+            deleted: deletedGroups
+          },
+          byMemberCount: {
+            exactly_6: Number(groupsByMemberCount.exactly_6),
+            exactly_7: Number(groupsByMemberCount.exactly_7),
+            exactly_8: Number(groupsByMemberCount.exactly_8),
+            exactly_9: Number(groupsByMemberCount.exactly_9),
+            exactly_10: Number(groupsByMemberCount.exactly_10)
           }
         }
       };
