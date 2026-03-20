@@ -1,11 +1,31 @@
-// utils/devRotation.ts - UPDATED to adapt to current time and trigger notifications
+// utils/devRotation.ts - COMPLETE VERSION WITH ALL UPDATES
 import prisma from '../prisma';
 import { TaskService } from '../services/task.services';
 import { UserNotificationService } from '../services/user.notification.services';
+import { SwapRequestService } from '../services/swapRequest.services';
 
 export async function checkAndFixRotation() {
-  console.log('🔄 Checking rotation for all groups...');
+  console.log('🔄 Checking all time-based data for updates...');
   console.log(`📅 Current time: ${new Date().toISOString()}`);
+  
+  // ========== 1. ROTATION ==========
+  await updateRotation();
+  
+  // ========== 2. SWAP REQUESTS ==========
+  await updateSwapRequests();
+  
+  // ========== 3. EXPIRED ASSIGNMENTS ==========
+  await updateExpiredAssignments();
+  
+  // ========== 4. OLD NOTIFICATIONS ==========
+  await cleanupOldNotifications();
+  
+  console.log('✅ All time-based data updated to current time');
+}
+
+// ========== UPDATE ROTATION ==========
+async function updateRotation() {
+  console.log('\n📋 Updating rotation...');
   
   const groups = await prisma.group.findMany({
     include: {
@@ -23,21 +43,12 @@ export async function checkAndFixRotation() {
     }
   });
 
-  let totalRotationsPerformed = 0;
-  let totalNotificationsSent = 0;
+  let totalRotations = 0;
 
   for (const group of groups) {
-    if (group.tasks.length === 0) {
-      console.log(`⏭️ Group ${group.id} has no tasks, skipping`);
-      continue;
-    }
+    if (group.tasks.length === 0) continue;
+    if (group.members.length === 0) continue;
 
-    if (group.members.length === 0) {
-      console.log(`⏭️ Group ${group.id} has no members in rotation, skipping`);
-      continue;
-    }
-
-    // Get the earliest task creation date
     const sortedTasks = [...group.tasks].sort((a, b) => 
       a.createdAt.getTime() - b.createdAt.getTime()
     );
@@ -53,14 +64,10 @@ export async function checkAndFixRotation() {
     const expectedWeek = Math.floor(daysSinceCreation / 7) + 1;
     const currentWeek = group.currentRotationWeek;
 
-    // If we're behind, rotate
     if (expectedWeek > currentWeek) {
       const weeksBehind = expectedWeek - currentWeek;
-      console.log(`⚠️ Group ${group.id} is ${weeksBehind} week(s) behind`);
-      console.log(`   Current week: ${currentWeek}, Expected week: ${expectedWeek}`);
-      console.log(`   Members in rotation: ${group.members.length}`);
+      console.log(`   ⚠️ Group ${group.id}: ${weeksBehind} week(s) behind (Week ${currentWeek} → ${expectedWeek})`);
       
-      // Find an admin to perform rotation
       const admin = await prisma.groupMember.findFirst({
         where: { 
           groupId: group.id, 
@@ -71,124 +78,174 @@ export async function checkAndFixRotation() {
       });
 
       if (!admin) {
-        console.log(`   ❌ No active admin found for group ${group.id}`);
+        console.log(`   ❌ No admin found for group ${group.id}`);
         continue;
       }
 
-      console.log(`🔄 Auto-rotating group ${group.id} from week ${currentWeek} to ${expectedWeek}`);
-      
-      // 🔥 FORCE ROTATION for each week behind
       for (let i = 0; i < weeksBehind; i++) {
-        console.log(`   Rotation ${i + 1}/${weeksBehind}...`);
-        
-        try {
-          const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
-          
-          if (result.success) {
-            console.log(`   ✅ Rotated to week ${currentWeek + i + 1}`);
-            totalRotationsPerformed++;
-            
-            // ===== NEW: Send notifications about the rotation =====
-            await sendRotationNotifications(group, result, currentWeek + i + 1);
-            totalNotificationsSent += group.members.length;
-            
-            // Log fairness metrics if available
-            if (result.fairnessMetrics) {
-              console.log(`      Fairness Score: ${result.fairnessMetrics.fairnessScore}%`);
-              console.log(`      ${result.fairnessMetrics.lowestPointsMember} → ${result.fairnessMetrics.gotHighestTask}`);
-              console.log(`      ${result.fairnessMetrics.highestPointsMember} → ${result.fairnessMetrics.gotLowestTask}`);
-            }
-          } else {
-            console.log(`   ❌ Rotation failed: ${result.message}`);
-            break;
-          }
-        } catch (error) {
-          console.error(`   ❌ Error during rotation:`, error);
+        const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
+        if (result.success) {
+          totalRotations++;
+          console.log(`   ✅ Rotated to week ${currentWeek + i + 1}`);
+        } else {
+          console.log(`   ❌ Rotation failed: ${result.message}`);
           break;
         }
       }
-      
-      // Verify final week
-      const updatedGroup = await prisma.group.findUnique({
-        where: { id: group.id },
-        select: { 
-          currentRotationWeek: true,
-          members: {
-            where: { inRotation: true },
-            select: { userId: true }
-          }
-        } 
-      });
-      
-      console.log(`✅ Group ${group.id} now at week ${updatedGroup?.currentRotationWeek}`);
-      console.log(`   Members in rotation: ${updatedGroup?.members.length || 0}`);
-      
-    } else {
-      console.log(`✅ Group ${group.id} is already at correct week ${currentWeek}`);
-      console.log(`   Members in rotation: ${group.members.length}`);
     }
   }
   
-  console.log('✅ Rotation check complete');
-  console.log(`📊 Summary: ${totalRotationsPerformed} rotations performed, ${totalNotificationsSent} notifications sent`);
+  console.log(`✅ Rotation complete: ${totalRotations} rotations performed`);
 }
 
-// ===== NEW: Helper function to send rotation notifications =====
-async function sendRotationNotifications(group: any, rotationResult: any, newWeek: number) {
-  try {
-    // Get all members in the group
-    const members = await prisma.groupMember.findMany({
-      where: { 
-        groupId: group.id,
-        isActive: true
-      },
-      select: { 
-        userId: true,
-        inRotation: true,
-        user: {
-          select: { fullName: true }
+// ========== UPDATE SWAP REQUESTS ==========
+async function updateSwapRequests() {
+  console.log('\n📋 Updating swap requests...');
+  
+  const now = new Date();
+  
+  // Find all pending swap requests that have expired
+  const expiredRequests = await prisma.swapRequest.findMany({
+    where: {
+      status: "PENDING",
+      expiresAt: {
+        lt: now
+      }
+    },
+    include: {
+      assignment: {
+        include: {
+          task: true
         }
+      }
+    }
+  });
+
+  if (expiredRequests.length === 0) {
+    console.log('   ✅ No expired swap requests found');
+    return;
+  }
+
+  console.log(`   ⚠️ Found ${expiredRequests.length} expired swap requests`);
+
+  for (const request of expiredRequests) {
+    // Mark as expired
+    await prisma.swapRequest.update({
+      where: { id: request.id },
+      data: { status: "EXPIRED" }
+    });
+
+    // Notify requester
+    await UserNotificationService.createNotification({
+      userId: request.requestedBy,
+      type: "SWAP_EXPIRED",
+      title: "⏰ Swap Request Expired",
+      message: `Your swap request for "${request.assignment?.task?.title || 'task'}" has expired`,
+      data: {
+        swapRequestId: request.id,
+        taskId: request.assignment?.taskId,
+        taskTitle: request.assignment?.task?.title
       }
     });
 
-    // Get group info
-    const groupInfo = await prisma.group.findUnique({
-      where: { id: group.id },
-      select: { name: true }
-    });
-
-    // Send notification to each member
-    for (const member of members) {
-      // Find which tasks this member got in the rotation
-      const memberTasks = rotationResult.rotatedTasks?.filter(
-        (t: any) => t.newAssignee === member.userId
-      ) || [];
-
-      const taskList = memberTasks.map((t: any) => `• ${t.taskTitle} (${t.taskPoints} pts)`).join('\n');
-
+    // Notify target user if exists
+    if (request.targetUserId) {
       await UserNotificationService.createNotification({
-        userId: member.userId,
-        type: "ROTATION_COMPLETED",
-        title: member.inRotation ? "🔄 New Weekly Tasks" : "📢 Rotation Completed",
-        message: member.inRotation 
-          ? `Week ${newWeek} has started! You have ${memberTasks.length} new task(s).`
-          : `Week ${newWeek} has started in ${groupInfo?.name || 'your group'}.`,
+        userId: request.targetUserId,
+        type: "SWAP_EXPIRED",
+        title: "⏰ Swap Request Expired",
+        message: `A swap request for "${request.assignment?.task?.title || 'task'}" has expired`,
         data: {
-          groupId: group.id,
-          groupName: groupInfo?.name,
-          newWeek,
-          inRotation: member.inRotation,
-          tasks: memberTasks,
-          taskCount: memberTasks.length,
-          taskList,
-          fairnessMetrics: rotationResult.fairnessMetrics,
-          timestamp: new Date()
+          swapRequestId: request.id,
+          taskId: request.assignment?.taskId,
+          taskTitle: request.assignment?.task?.title
         }
       });
     }
 
-    console.log(`   📢 Sent rotation notifications to ${members.length} members`);
-  } catch (error) {
-    console.error('   ❌ Failed to send rotation notifications:', error);
+    console.log(`   ✅ Expired swap request: ${request.id}`);
   }
-} 
+  
+  console.log(`✅ Swap requests updated: ${expiredRequests.length} expired`);
+}
+
+// ========== UPDATE EXPIRED ASSIGNMENTS ==========
+async function updateExpiredAssignments() {
+  console.log('\n📋 Updating expired assignments...');
+  
+  const now = new Date();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  // Find assignments that are past due and not yet marked as expired
+  const expiredAssignments = await prisma.assignment.findMany({
+    where: {
+      completed: false,
+      expired: false,
+      dueDate: {
+        lt: now  // Due date is in the past
+      }
+    },
+    include: {
+      task: true,
+      user: true
+    }
+  });
+
+  if (expiredAssignments.length === 0) {
+    console.log('   ✅ No expired assignments found');
+    return;
+  }
+
+  console.log(`   ⚠️ Found ${expiredAssignments.length} expired assignments`);
+
+  for (const assignment of expiredAssignments) {
+    // Mark as expired
+    await prisma.assignment.update({
+      where: { id: assignment.id },
+      data: {
+        expired: true,
+        expiredAt: now,
+        notes: `[EXPIRED: Past due on ${assignment.dueDate.toLocaleDateString()}] ${assignment.notes || ''}`
+      }
+    });
+
+    // Notify user
+    await UserNotificationService.createNotification({
+      userId: assignment.userId,
+      type: "TASK_EXPIRED",
+      title: "⚠️ Task Expired",
+      message: `"${assignment.task?.title || 'Task'}" was not completed on time and has expired. No points awarded.`,
+      data: {
+        assignmentId: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task?.title,
+        dueDate: assignment.dueDate,
+        expiredAt: now
+      }
+    });
+
+    console.log(`   ✅ Expired assignment: ${assignment.id}`);
+  }
+  
+  console.log(`✅ Assignments updated: ${expiredAssignments.length} expired`);
+}
+
+// ========== CLEANUP OLD NOTIFICATIONS ==========
+async function cleanupOldNotifications() {
+  console.log('\n📋 Cleaning up old notifications...');
+  
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
+  // Delete notifications older than 30 days
+  const deleted = await prisma.userNotification.deleteMany({
+    where: {
+      createdAt: {
+        lt: thirtyDaysAgo
+      }
+    }
+  });
+
+  console.log(`   ✅ Deleted ${deleted.count} old notifications (older than 30 days)`);
+}

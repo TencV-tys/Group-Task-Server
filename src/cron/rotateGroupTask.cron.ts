@@ -69,7 +69,7 @@ export class CronService {
           if (membersInRotation.length === 0) {
             console.log(`⏭️ Group ${group.name || group.id} has no members in rotation`);
             continue;
-          }
+          } 
 
           // Log rotation stats
           const admins = group.members.filter(m => m.groupRole === "ADMIN").length;
