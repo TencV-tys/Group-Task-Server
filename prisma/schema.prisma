@@ -304,7 +304,7 @@ model TimeSlot {
 
 model Assignment {
   id      String   @id @default(uuid())
-  taskId  String?  // ← Already nullable
+  taskId  String?  
   userId  String
   dueDate DateTime
 
@@ -331,7 +331,7 @@ model Assignment {
   weekEnd       DateTime?
   assignmentDay DayOfWeek?
  
-  // ✅ ADD THESE FIELDS FOR DELETED TASK PRESERVATION
+  // ✅ FIELDS FOR DELETED TASK PRESERVATION (already have these)
   taskTitle    String? // Store task title at time of deletion
   taskPoints   Int?    // Store task points at time of deletion
   taskCategory String? // Store category at time of deletion
@@ -339,7 +339,25 @@ model Assignment {
   expired    Boolean   @default(false)
   expiredAt  DateTime?
 
-  // Relationships - FIXED: Task is now optional with SetNull
+  // ===== ADD THESE 4 NEW FIELDS FOR PER-TIME-SLOT PENALTY =====
+  
+  // Track which time slots were missed (store array of time slot IDs)
+  // Example: ["slot_abc123", "slot_def456"]
+  missedTimeSlotIds Json? @default("[]")
+  
+  // Store original points per slot (slotId -> points)
+  // Example: {"slot_abc123": 3, "slot_def456": 3, "slot_ghi789": 4}
+  slotPoints Json? @default("{}")
+  
+  // Original total points before any slots were missed
+  // Example: 10 (sum of all slot points)
+  originalTotalPoints Int? @default(0)
+  
+  // Track if partially expired (some slots missed, some still available)
+  // Example: true if at least one slot missed but not all
+  partiallyExpired Boolean @default(false)
+
+  // Relationships
   task         Task?         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: SetNull)
   user         User          @relation("UserAssignments", fields: [userId], references: [id])
   swapRequests SwapRequest[] @relation("AssignmentSwapRequests")
@@ -357,6 +375,8 @@ model Assignment {
   @@index([timeSlotId])
   @@map("assignments")
 }
+
+
 model SwapRequest {
   id           String  @id @default(uuid())
   assignmentId String

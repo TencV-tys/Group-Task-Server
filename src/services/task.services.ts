@@ -7,8 +7,7 @@ import { SocketService } from "./socket.services";
 import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService { 
   
-  // Create task with distributed points across time slots
- // Create task with distributed points across time slots
+ 
 static async createTask(
   userId: string,
   groupId: string,
@@ -95,18 +94,17 @@ static async createTask(
       }
     }
 
-    // ===== UPDATED: Get rotation members - EXCLUDE ADMINS =====
+    // Get rotation members - EXCLUDE ADMINS
     let targetMemberIds = data.rotationMemberIds || [];
     let rotationMembers = [];
 
     if (targetMemberIds.length > 0) {
-      // If specific members are selected, verify they're in rotation
       const validMembers = await prisma.groupMember.findMany({
         where: { 
           groupId, 
           userId: { in: targetMemberIds }, 
           isActive: true,
-          inRotation: true // ← ADD THIS
+          inRotation: true
         },
         include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
         orderBy: { rotationOrder: 'asc' }
@@ -117,12 +115,11 @@ static async createTask(
       }
       rotationMembers = validMembers;
     } else {
-      // Get all active members that are in rotation (exclude admins)
       rotationMembers = await prisma.groupMember.findMany({
         where: { 
           groupId, 
           isActive: true,
-          inRotation: true // ← ADD THIS
+          inRotation: true
         },
         include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
         orderBy: { rotationOrder: 'asc' }
@@ -238,9 +235,18 @@ static async createTask(
       });
     }
 
-    // Create assignments if there's an initial assignee
+    // ========== CREATE ASSIGNMENTS WITH NEW FIELDS ==========
     if (initialAssignee) {
       const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
+      
+      // 👇 NEW: Create map of slot points
+      const slotPointsMap: Record<string, number> = {};
+      createdSlots.forEach(slot => {
+        slotPointsMap[slot.id] = slot.points || 0;
+      });
+      
+      // 👇 NEW: Calculate total points from all slots
+      const totalSlotPoints = Object.values(slotPointsMap).reduce((sum, p) => sum + p, 0);
       
       if (data.executionFrequency === 'DAILY') {
         for (let i = 0; i < 7; i++) {
@@ -268,7 +274,11 @@ static async createTask(
                 weekEnd,
                 assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
                 completed: false,
-                timeSlotId: timeSlot.id
+                timeSlotId: timeSlot.id,
+                // ===== NEW FIELDS (DO NOT AFFECT FRONTEND) =====
+                originalTotalPoints: totalSlotPoints,
+                slotPoints: slotPointsMap,
+                missedTimeSlotIds: []
               }
             });
           }
@@ -299,7 +309,11 @@ static async createTask(
                   weekEnd,
                   assignmentDay: day,
                   completed: false,
-                  timeSlotId: timeSlot.id
+                  timeSlotId: timeSlot.id,
+                  // ===== NEW FIELDS (DO NOT AFFECT FRONTEND) =====
+                  originalTotalPoints: totalSlotPoints,
+                  slotPoints: slotPointsMap,
+                  missedTimeSlotIds: []
                 }
               });
             }
@@ -346,6 +360,8 @@ static async createTask(
     return { success: false, message: error.message || "Error creating task" };
   }
 }
+
+
  // In task.services.ts - Update getGroupTasks method
 static async getGroupTasks(groupId: string, userId: string, week?: number) {
   try {
