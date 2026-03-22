@@ -2,12 +2,10 @@ import prisma from "../prisma";
 import { SocketService } from "./socket.services";
 export class GroupServices {
 
-// services/group.services.ts - UPDATED with maxMembers
-
 static async createGroup(userId: string, groupName: string, description?: string | null) {
     
     try { 
-        // Create the group with default maxMembers = 6
+        // Create the group
         const group = await prisma.group.create({
             data: {
                 name: groupName,
@@ -16,11 +14,11 @@ static async createGroup(userId: string, groupName: string, description?: string
                 createdById: userId,
                 currentRotationWeek: 1,
                 lastRotationUpdate: new Date(),
-                maxMembers: 6 // Default to 6
+                maxMembers: 6
             }
         });
 
-        // Create admin member with inRotation = false
+        // Create admin member
         const member = await prisma.groupMember.create({
             data: {
                 userId: userId,
@@ -31,6 +29,23 @@ static async createGroup(userId: string, groupName: string, description?: string
                 inRotation: false
             }
         });
+
+        // ✅ NEW: Get user details for socket event
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { fullName: true }
+        });
+
+        // ✅ NEW: Emit socket event for group created
+        if (user) {
+            await SocketService.emitGroupCreated(
+                group.id,
+                group.name,
+                userId,
+                user.fullName,
+                'ADMIN'
+            );
+        }
 
         return {
             success: true,

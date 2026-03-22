@@ -3,6 +3,7 @@
 export const CLIENT_EVENTS = {
   // Connection
   REGISTER: 'register',
+
   JOIN_GROUP: 'join-group',
   LEAVE_GROUP: 'leave-group',
   PING: 'ping',
@@ -52,6 +53,7 @@ export const SERVER_EVENTS = {
   GROUP_MEMBER_LEFT: 'group:member-left',
   GROUP_MEMBER_ROLE_CHANGED: 'group:member-role-changed',
   GROUP_UPDATED: 'group:updated',
+    GROUP_CREATED: 'group:created',
   
   // Rotation events
   ROTATION_COMPLETED: 'rotation:completed',
@@ -75,7 +77,14 @@ export interface TaskCreatedPayload {
   createdBy: string;
   groupId: string;
 }
-
+export interface GroupCreatedPayload {
+  groupId: string;
+  groupName: string;
+  userId: string;
+  userName: string;
+  userRole: string;
+  createdAt: Date;
+}
 export interface TaskUpdatedPayload {
   task: any;
   updatedBy: string;

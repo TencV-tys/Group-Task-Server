@@ -15,7 +15,8 @@ import {
   GroupMemberRoleChangedPayload,
   RotationCompletedPayload,
   NotificationNewPayload,
-  AssignmentCreatedPayload
+  AssignmentCreatedPayload,
+  GroupCreatedPayload
 } from '../socket/events';
 import prisma from '../prisma';
 
@@ -478,4 +479,29 @@ static async emitRotationCompleted(
       return 'Unknown User';
     }
   }
+
+  // Add this method to SocketService class
+static async emitGroupCreated(
+  groupId: string,
+  groupName: string,
+  userId: string,
+  userName: string,
+  userRole: string
+) {
+  try {
+    const payload: GroupCreatedPayload = {
+      groupId,
+      groupName,
+      userId,
+      userName,
+      userRole,
+      createdAt: new Date()
+    };
+    
+    emitToUser(userId, SERVER_EVENTS.GROUP_CREATED, payload);
+    console.log(`📢 Emitted group created event to user ${userName}`);
+  } catch (error) {
+    console.error('SocketService.emitGroupCreated error:', error);
+  }
+}
 }
