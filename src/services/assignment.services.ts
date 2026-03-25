@@ -6,16 +6,16 @@ import { UserNotificationService } from "./user.notification.services";
 import { SocketService } from './socket.services';
 
 export class AssignmentService {
-   
- 
- // ========== COMPLETE ASSIGNMENT - WITH MULTI-SLOT SUPPORT ==========
+ // In assignment.services.ts - UPDATED completeAssignment method
+
+// ========== COMPLETE ASSIGNMENT - WITH MULTI-SLOT SUPPORT ==========
 static async completeAssignment(
   assignmentId: string,
   userId: string,
   data: { 
     photoUrl?: string;  
     notes?: string;
-    timeSlotId?: string;
+    timeSlotId?: string; // 👈 CRITICAL: Must pass which time slot is being completed
   }
 ) {
   let timeValidation;
@@ -54,6 +54,7 @@ static async completeAssignment(
       return { success: false, message: "You can only complete your own assignments" };
     }
 
+    // Check if already fully completed
     if (assignment.completed) {
       return { success: false, message: "Assignment already completed" };
     }
@@ -68,67 +69,56 @@ static async completeAssignment(
       };
     }
 
-    // Cast to any to access new fields
     const assignmentAny = assignment as any;
     
-    // Determine which time slot is being completed
-    let targetTimeSlot = assignment.timeSlot;
-    let slotPoints = assignment.points;
-    let isMultiSlotTask = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
-    
-    // In the completeAssignment method, fix the section where you find the time slot:
-
-if (isMultiSlotTask) {
-  if (data.timeSlotId) {
-    const foundSlot = assignment.task.timeSlots.find((slot: any) => slot.id === data.timeSlotId);
-    if (!foundSlot) {
-      return { success: false, message: "Invalid time slot specified" };
-    }
-    targetTimeSlot = foundSlot; // Now it's guaranteed to be defined
-  } else {
-    const activeSlot = TimeHelpers.getCurrentActiveTimeSlot(assignment, now);
-    if (activeSlot) {
-      targetTimeSlot = activeSlot;
-    } else {
-      const nextSlot = TimeHelpers.getNextTimeSlot(assignment, now);
-      if (nextSlot) {
-        return { 
-          success: false, 
-          message: `Submission not open yet. Next slot opens at ${nextSlot.startTime}.` 
-        };
-      } else {
-        return { 
-          success: false, 
-          message: "No available time slots for this assignment today." 
-        };
-      }
-    }
-  }
-  
-  if (targetTimeSlot) {
-    slotPoints = targetTimeSlot.points || assignment.points;
-  }
-}
-
-    // Check if this time slot was already completed
+    // ✅ Get existing completed slots
     const completedSlotIds: string[] = assignmentAny.completedTimeSlotIds || [];
     const missedSlotIds: string[] = assignmentAny.missedTimeSlotIds || [];
     
-    if (targetTimeSlot && completedSlotIds.includes(targetTimeSlot.id)) {
-      return { 
-        success: false, 
-        message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was already completed` 
-      };
-    }
+    // ✅ Determine which time slot is being completed
+    let targetTimeSlot = null;
+    let slotPoints = 0;
+    let isMultiSlotTask = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
     
-    if (targetTimeSlot && missedSlotIds.includes(targetTimeSlot.id)) {
-      return { 
-        success: false, 
-        message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was missed and cannot be completed` 
-      };
+    if (isMultiSlotTask) {
+      // 🔴 CRITICAL: Must have timeSlotId for multi-slot tasks
+      if (!data.timeSlotId) {
+        return { 
+          success: false, 
+          message: "Please select which time slot you are completing" 
+        };
+      }
+      
+      const foundSlot = assignment.task.timeSlots.find((slot: any) => slot.id === data.timeSlotId);
+      if (!foundSlot) {
+        return { success: false, message: "Invalid time slot specified" };
+      }
+      targetTimeSlot = foundSlot;
+      
+      // Check if this slot was already completed
+      if (completedSlotIds.includes(targetTimeSlot.id)) {
+        return { 
+          success: false, 
+          message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was already completed` 
+        };
+      }
+      
+      // Check if this slot was missed
+      if (missedSlotIds.includes(targetTimeSlot.id)) {
+        return { 
+          success: false, 
+          message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was missed and cannot be completed` 
+        };
+      }
+      
+      slotPoints = targetTimeSlot.points || assignment.points;
+    } else {
+      // Single slot task - use existing time slot
+      targetTimeSlot = assignment.timeSlot;
+      slotPoints = assignment.points;
     }
 
-    // Validate submission time for this specific slot
+    // ✅ Validate submission time for this specific slot
     let finalPoints = slotPoints;
     let isLate = false;
     let penaltyAmount = 0;
@@ -160,6 +150,7 @@ if (isMultiSlotTask) {
         };
       }
       
+      // Check if late for this specific slot
       const endParts = targetTimeSlot.endTime.split(':');
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
@@ -178,30 +169,34 @@ if (isMultiSlotTask) {
       console.log(`Assignment ${assignmentId} - Slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}: isLate=${isLate}, finalPoints=${finalPoints}`);
     }
 
-    // Update completed time slots
+    // ✅ Update completed time slots
     let updatedCompletedSlots = [...completedSlotIds];
     let updatedPoints = assignment.points;
     let allSlotsCompleted = false;
     
-    if (targetTimeSlot && isMultiSlotTask) {
+    if (isMultiSlotTask && targetTimeSlot) {
       updatedCompletedSlots = [...completedSlotIds, targetTimeSlot.id];
       
+      // Calculate total points from all completed slots
       let totalCompletedPoints = 0;
       for (const slot of assignment.task.timeSlots) {
         if (updatedCompletedSlots.includes(slot.id)) {
           const slotPointsValue = slot.points || assignment.points;
+          // Check if this slot was completed late (would need to track per slot)
           totalCompletedPoints += slotPointsValue;
         }
       }
       updatedPoints = totalCompletedPoints;
       
+      // Check if all slots are completed
       allSlotsCompleted = updatedCompletedSlots.length === assignment.task.timeSlots.length;
     } else {
+      // Single slot task
       allSlotsCompleted = true;
       updatedPoints = finalPoints;
     }
 
-    // Update assignment
+    // ✅ Update assignment
     const updateData: any = {
       completed: allSlotsCompleted,
       completedAt: allSlotsCompleted ? new Date() : undefined,
@@ -241,7 +236,7 @@ if (isMultiSlotTask) {
       }
     });
 
-    // Send notifications
+    // ✅ Send notifications
     let admins: any[] = [];
     
     if (allSlotsCompleted) {
@@ -306,6 +301,7 @@ if (isMultiSlotTask) {
         data.photoUrl
       );
     } else {
+      // ✅ Partial completion notification
       await UserNotificationService.createNotification({
         userId: assignment.userId,
         type: "SLOT_COMPLETED",
@@ -348,7 +344,7 @@ if (isMultiSlotTask) {
       notifications: {
         notifiedAdmins: allSlotsCompleted ? admins.length : 0,
         showSuccessNotification: true
-      }
+      } 
     };
 
   } catch (error: any) {
@@ -356,8 +352,6 @@ if (isMultiSlotTask) {
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
-
-
   // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(
     assignmentId: string,
