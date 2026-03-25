@@ -80,19 +80,20 @@ static async createTask(
     
     const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
 
-    // If this is a recurring task
-    if (data.isRecurring) {
-      const memberCount = analysis.totalMembers;
-      const currentTasks = analysis.totalTasks;
-      
-      if (currentTasks < memberCount) {
-        console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation`);
-      } else if (currentTasks === memberCount) {
-        console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
-      } else {
-        console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
-      }
-    }
+// If this is a recurring task
+if (data.isRecurring) {
+  const memberCount = analysis.membersInRotation;  // ← USE THIS INSTEAD
+  const currentTasks = analysis.totalTasks;
+  
+  if (currentTasks < memberCount) {
+    console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation (members in rotation: ${memberCount})`);
+  } else if (currentTasks === memberCount) {
+    console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
+  } else {
+    console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
+  }
+}
+  
 
     // Get rotation members - EXCLUDE ADMINS
     let targetMemberIds = data.rotationMemberIds || [];
@@ -321,7 +322,7 @@ static async createTask(
         }
       }
     }
-
+ 
     const completeTask = await prisma.task.findUnique({
       where: { id: task.id },
       include: {

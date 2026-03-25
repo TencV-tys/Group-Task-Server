@@ -104,14 +104,15 @@ export class UserServices {
       const existingUser = await prisma.user.findUnique({
         where: { email: sanitizedEmail }
       });
-
-      if (existingUser) {
-        // Use generic message to prevent email enumeration
-        return {
-          success: false,
-          message: "Registration failed"
-        };
-      }
+ 
+         if (existingUser) {
+      // ✅ IMPROVED: Return specific message for development
+      // In production, you might want to keep it generic
+      return {
+        success: false,
+        message: "An account with this email already exists. Please login instead.",  // ← Specific message
+      };
+    }
 
       // ===== SECURE AVATAR PROCESSING =====
       let avatarUrl: string | null = null;
@@ -367,19 +368,21 @@ export class UserServices {
            /^[a-zA-Z\s\-']+$/.test(name);
   }
 
-  private static isValidPassword(password: string): boolean {
-    if (password.length < this.PASSWORD_MIN_LENGTH || password.length > this.PASSWORD_MAX_LENGTH) {
-      return false;
-    }
-
-    // At least one uppercase, one lowercase, one number, one special character
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumbers = /\d/.test(password);
-    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-
-    return hasUpperCase && hasLowerCase && hasNumbers && hasSpecial;
+ private static isValidPassword(password: string): boolean {
+  if (password.length < this.PASSWORD_MIN_LENGTH || password.length > this.PASSWORD_MAX_LENGTH) {
+    return false;
   }
+
+  // At least one uppercase, one lowercase, one number, one special character
+  const hasUpperCase = /[A-Z]/.test(password);
+  const hasLowerCase = /[a-z]/.test(password);
+  const hasNumbers = /\d/.test(password);
+  
+  // ✅ FIXED: Include +, -, _, =, ;, ', /, \, [, ], etc.
+  const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
+
+  return hasUpperCase && hasLowerCase && hasNumbers && hasSpecial;
+}
 
   private static isCommonPassword(password: string): boolean {
     // List of common passwords to block

@@ -42,7 +42,7 @@ async function main() {
 
   // Check if group with invite code 016ESZ exists
   let existingGroup = await prisma.group.findUnique({
-    where: { inviteCode: 'OVRQF4' }
+    where: { inviteCode: 'A9HWZU' }
   });
 
   // If group doesn't exist, create it
@@ -66,7 +66,7 @@ async function main() {
       data: {
         name: 'Development Team',
         description: 'A test group for development',
-        inviteCode: 'OVRQF4',
+        inviteCode: 'A9HWZU',
         createdById: firstUser.id,
       }
     });
