@@ -18,11 +18,42 @@ export async function checkAndFixRotation() {
   await updateExpiredAssignments();
   
   // ========== 4. OLD NOTIFICATIONS ==========
-  await cleanupOldNotifications();
+  await cleanupOldNotifications(); 
+
+    await fixAssignmentDays();
   
   console.log('✅ All time-based data updated to current time');
 }
 
+async function fixAssignmentDays() {
+  console.log('\n🔧 Fixing assignment days...');
+  
+  const assignments = await prisma.assignment.findMany({
+    where: {
+      task: {
+        isRecurring: true
+      }
+    }
+  });
+  
+  let fixedCount = 0;
+  
+  for (const assignment of assignments) {
+    const dueDate = new Date(assignment.dueDate);
+    const actualDay = dueDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+    
+    if (assignment.assignmentDay !== actualDay) {
+      console.log(`   Fixing assignment ${assignment.id}: ${assignment.assignmentDay} → ${actualDay}`);
+      await prisma.assignment.update({
+        where: { id: assignment.id },
+        data: { assignmentDay: actualDay as any }
+      });
+      fixedCount++;
+    }
+  }
+  
+  console.log(`✅ Fixed ${fixedCount} assignments with wrong days`);
+}
 // ========== UPDATE ROTATION ==========
 async function updateRotation() {
   console.log('\n📋 Updating rotation...');

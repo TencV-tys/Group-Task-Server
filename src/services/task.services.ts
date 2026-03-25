@@ -7,7 +7,8 @@ import { SocketService } from "./socket.services";
 import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService { 
   
- 
+// In task.services.ts - COMPLETE FIXED createTask method
+
 static async createTask(
   userId: string,
   groupId: string,
@@ -80,20 +81,19 @@ static async createTask(
     
     const analysis = await RotationHelpers.analyzeGroupRotation(groupId);
 
-// If this is a recurring task
-if (data.isRecurring) {
-  const memberCount = analysis.membersInRotation;  // ← USE THIS INSTEAD
-  const currentTasks = analysis.totalTasks;
-  
-  if (currentTasks < memberCount) {
-    console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation (members in rotation: ${memberCount})`);
-  } else if (currentTasks === memberCount) {
-    console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
-  } else {
-    console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
-  }
-}
-  
+    // If this is a recurring task
+    if (data.isRecurring) {
+      const memberCount = analysis.membersInRotation;
+      const currentTasks = analysis.totalTasks;
+      
+      if (currentTasks < memberCount) {
+        console.log(`✅ Creating task ${currentTasks + 1}/${memberCount} for rotation (members in rotation: ${memberCount})`);
+      } else if (currentTasks === memberCount) {
+        console.log(`✅ Perfect rotation reached (${memberCount}/${memberCount}). Creating extra task.`);
+      } else {
+        console.log(`✅ Creating extra task (current: ${currentTasks}/${memberCount})`);
+      }
+    }
 
     // Get rotation members - EXCLUDE ADMINS
     let targetMemberIds = data.rotationMemberIds || [];
@@ -236,23 +236,32 @@ if (data.isRecurring) {
       });
     }
 
-    // ========== CREATE ASSIGNMENTS WITH NEW FIELDS ==========
+    // ========== CREATE ASSIGNMENTS WITH FIXED DATES ==========
     if (initialAssignee) {
-      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
-      
-      // 👇 NEW: Create map of slot points
+      // Create map of slot points
       const slotPointsMap: Record<string, number> = {};
       createdSlots.forEach(slot => {
         slotPointsMap[slot.id] = slot.points || 0;
       });
       
-      // 👇 NEW: Calculate total points from all slots
+      // Calculate total points from all slots
       const totalSlotPoints = Object.values(slotPointsMap).reduce((sum, p) => sum + p, 0);
       
       if (data.executionFrequency === 'DAILY') {
+        // ✅ FIX: Start from TODAY, not from week start
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        console.log(`📅 Creating daily assignments starting from today: ${today.toLocaleDateString()}`);
+        
         for (let i = 0; i < 7; i++) {
-          const dueDate = new Date();
-          dueDate.setDate(dueDate.getDate() + i);
+          const dueDate = new Date(today);
+          dueDate.setDate(today.getDate() + i);
+          
+          // ✅ Calculate the actual day name from the date
+          const actualDayName = dueDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase() as DayOfWeek;
+          
+          console.log(`   Day ${i}: ${actualDayName} - ${dueDate.toLocaleDateString()}`);
           
           for (const timeSlot of createdSlots) {
             const timeParts = timeSlot.startTime.split(':');
@@ -271,12 +280,11 @@ if (data.isRecurring) {
                 dueDate: slotDueDate,
                 points: assignmentPoints,
                 rotationWeek: group.currentRotationWeek,
-                weekStart,
-                weekEnd,
-                assignmentDay: TaskHelpers.getDayOfWeekFromIndex(i),
+                weekStart: dueDate,
+                weekEnd: new Date(dueDate.getTime() + 24 * 60 * 60 * 1000),
+                assignmentDay: actualDayName,
                 completed: false,
                 timeSlotId: timeSlot.id,
-                // ===== NEW FIELDS (DO NOT AFFECT FRONTEND) =====
                 originalTotalPoints: totalSlotPoints,
                 slotPoints: slotPointsMap,
                 missedTimeSlotIds: []
@@ -286,15 +294,32 @@ if (data.isRecurring) {
         }
       } else if (data.executionFrequency === 'WEEKLY') {
         if (selectedDaysArray) {
+          // ✅ For weekly tasks, use the current week's Monday as base
+          const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
+          
+          console.log(`📅 Creating weekly assignments for week starting: ${weekStart.toLocaleDateString()}`);
+          
           for (const day of selectedDaysArray) {
-            const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
+            // Calculate the due date for this day in the current week
+            const dueDate = TaskHelpers.calculateDueDate(day, weekStart);
+            
+            // Skip if the due date is in the past (for this week)
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            if (dueDate < today) {
+              console.log(`   ⏭️ Skipping ${day} - already passed this week (${dueDate.toLocaleDateString()})`);
+              continue;
+            }
+            
+            console.log(`   Creating assignment for ${day}: ${dueDate.toLocaleDateString()}`);
             
             for (const timeSlot of createdSlots) {
               const timeParts = timeSlot.startTime.split(':');
               const hours = Number(timeParts[0]) || 18;
               const minutes = Number(timeParts[1]) || 0;
               
-              const slotDueDate = new Date(baseDueDate);
+              const slotDueDate = new Date(dueDate);
               slotDueDate.setHours(hours, minutes, 0, 0);
               
               const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
@@ -311,7 +336,6 @@ if (data.isRecurring) {
                   assignmentDay: day,
                   completed: false,
                   timeSlotId: timeSlot.id,
-                  // ===== NEW FIELDS (DO NOT AFFECT FRONTEND) =====
                   originalTotalPoints: totalSlotPoints,
                   slotPoints: slotPointsMap,
                   missedTimeSlotIds: []
@@ -322,7 +346,7 @@ if (data.isRecurring) {
         }
       }
     }
- 
+
     const completeTask = await prisma.task.findUnique({
       where: { id: task.id },
       include: {
@@ -1284,59 +1308,54 @@ static async rotateGroupTasks(groupId: string, userId: string) {
           }
         }
       } else if (task.executionFrequency === 'WEEKLY') {
-        let selectedDays: DayOfWeek[] = [];
-        
-        if (task.selectedDays) {
-          try {
-            selectedDays = JSON.parse(task.selectedDays as string);
-          } catch {
-            selectedDays = [];
-          }
+  let selectedDays: DayOfWeek[] = [];
+  
+  if (task.selectedDays) {
+    try {
+      selectedDays = JSON.parse(task.selectedDays as string);
+    } catch {
+      selectedDays = [];
+    }
+  }
+  
+  if (selectedDays.length === 0 && task.dayOfWeek) {
+    selectedDays = [task.dayOfWeek];
+  }
+  
+  if (selectedDays.length === 0) {
+    selectedDays = ['MONDAY'];
+  }
+  
+  for (const day of selectedDays) {
+    // ✅ FIX: Pass weekStart Date directly
+    const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
+    
+    for (const timeSlot of timeSlots) {
+      const timeParts = timeSlot.startTime.split(':');
+      const hours = Number(timeParts[0]) || 0;
+      const minutes = Number(timeParts[1]) || 0;
+      
+      const slotDueDate = new Date(baseDueDate);
+      slotDueDate.setHours(hours, minutes, 0, 0);
+      
+      await prisma.assignment.create({
+        data: {
+          taskId: task.id,
+          userId: member.userId,
+          dueDate: slotDueDate,
+          points: timeSlot.points || task.totalPoints,
+          rotationWeek: newWeek,
+          weekStart,
+          weekEnd,
+          assignmentDay: day,
+          completed: false,
+          expired: false,
+          ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
         }
-        
-        if (selectedDays.length === 0 && task.dayOfWeek) {
-          selectedDays = [task.dayOfWeek];
-        }
-        
-        if (selectedDays.length === 0) {
-          selectedDays = ['MONDAY'];
-        }
-        
-        for (const day of selectedDays) {
-          const weekStartTime = weekStart.toLocaleTimeString('en-US', { 
-            hour12: false, 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
-          
-          const baseDueDate = TaskHelpers.calculateDueDate(day, { startTime: weekStartTime });
-          
-          for (const timeSlot of timeSlots) {
-            const timeParts = timeSlot.startTime.split(':');
-            const hours = Number(timeParts[0]) || 0;
-            const minutes = Number(timeParts[1]) || 0;
-            
-            const slotDueDate = new Date(baseDueDate);
-            slotDueDate.setHours(hours, minutes, 0, 0);
-            
-            await prisma.assignment.create({
-              data: {
-                taskId: task.id,
-                userId: member.userId,
-                dueDate: slotDueDate,
-                points: timeSlot.points || task.totalPoints,
-                rotationWeek: newWeek,
-                weekStart,
-                weekEnd,
-                assignmentDay: day,
-                completed: false,
-                expired: false,
-                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
-              }
-            });
-          }
-        }
-      }
+      });
+    }
+  }
+}
 
       // Update member's cumulative points
       const taskPoints = task.totalPoints;

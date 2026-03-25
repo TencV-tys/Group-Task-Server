@@ -173,7 +173,7 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
     }
   }
 
- // In SwapRequestController.ts - Update getGroupSwapRequests method
+// In swapRequest.controller.ts - Add debug logging
 static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
@@ -183,6 +183,12 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
       limit = 50, 
       offset = 0 
     } = req.query;
+
+    console.log(`📥 getGroupSwapRequests called:`);
+    console.log(`   userId: ${userId}`);
+    console.log(`   groupId: ${groupId}`);
+    console.log(`   status filter: ${status}`);
+    console.log(`   limit: ${limit}, offset: ${offset}`);
 
     if (!userId) {
       return res.status(401).json({
@@ -208,6 +214,12 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
       }
     );
 
+    console.log(`📤 getGroupSwapRequests result:`);
+    console.log(`   success: ${result.success}`);
+    console.log(`   total requests: ${result.requests?.length}`);
+    console.log(`   status filter applied: ${status}`);
+    console.log(`   request statuses:`, result.requests?.map((r: any) => r.status));
+
     if (!result.success) {
       return res.status(400).json({
         success: false,
@@ -221,7 +233,7 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
       data: {
         requests: result.requests,
         total: result.total,
-        stats: result.stats // Include rotation stats for admin view
+        stats: result.stats
       }
     });
 
@@ -449,13 +461,14 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
       });
     }
   }
-  // In swapRequest.controller.ts - FIX THIS
+  
+    // In swapRequest.controller.ts - FIXED checkCanSwap method
 
 static async checkCanSwap(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
     const { assignmentId } = req.params as {assignmentId:string};
-    const { scope } = req.query;
+    const { scope, selectedDay, selectedTimeSlotId } = req.query; // Add selectedDay
 
     if (!userId) {
       return res.status(401).json({
@@ -485,10 +498,10 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
                 }
               }
             },
-            timeSlots: true // Add this to include timeSlots
+            timeSlots: true
           }
         },
-        timeSlot: true // Include timeSlot for the assignment
+        timeSlot: true
       }
     });
 
@@ -499,7 +512,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Check if task exists
     if (!assignment.task) {
       return res.json({
         success: true,
@@ -508,7 +520,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Check if assignment belongs to user
     if (assignment.userId !== userId) {
       return res.json({
         success: true,
@@ -517,7 +528,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Check if already completed
     if (assignment.completed) {
       return res.json({
         success: true,
@@ -526,7 +536,6 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-    // Check if there's already a pending swap request
     const existingRequest = await prisma.swapRequest.findFirst({
       where: {
         assignmentId,
@@ -545,9 +554,8 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
 
     const now = new Date();
 
-    // ===== FIXED: For WEEK swaps, check based on group's FIRST TASK creation date =====
+    // ===== WEEK SWAP =====
     if (scope === 'week') {
-      // Get the first task creation date for this group
       const firstTask = assignment.task.group?.tasks?.[0];
       if (!firstTask) {
         return res.json({
@@ -557,42 +565,19 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
         });
       }
 
-      // Calculate week start based on first task date
       const firstTaskDate = new Date(firstTask.createdAt);
-      const firstTaskDay = firstTaskDate.getDay(); // 0-6 (Sun-Sat)
-      
-      // Calculate days since start of current week
+      const firstTaskDay = firstTaskDate.getDay();
       const today = now.getDay();
       let daysSinceWeekStart = today - firstTaskDay;
       if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
       
-      // Set week start to the correct day (the day first task was created)
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - daysSinceWeekStart);
       weekStart.setHours(0, 0, 0, 0);
       
-      // Calculate hours since week started
       const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
-      
-      // Get current week number
-      const daysSinceFirstTask = Math.floor(
-        (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24)
-      );
-      const currentWeekNumber = Math.floor(daysSinceFirstTask / 7) + 1;
-      
       const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       
-      console.log(`📅 Week check for group:`, {
-        firstTaskDate: firstTaskDate.toISOString(),
-        firstTaskDay: weekDayNames[firstTaskDay],
-        weekStart: weekStart.toISOString(),
-        weekStartDay: weekDayNames[weekStart.getDay()],
-        hoursSinceWeekStart,
-        currentWeekNumber,
-        daysSinceWeekStart
-      });
-      
-      // Week swap available within first 24 hours of the week
       if (hoursSinceWeekStart > 24) {
         return res.json({
           success: true,
@@ -605,7 +590,9 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
         success: true,
         canSwap: true,
         weekInfo: {
-          weekNumber: currentWeekNumber,
+          weekNumber: Math.floor(
+            (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24) / 7
+          ) + 1,
           weekStart: weekStart.toISOString(),
           weekStartDay: weekDayNames[firstTaskDay],
           hoursLeft: Math.max(0, 24 - hoursSinceWeekStart)
@@ -613,60 +600,100 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
       });
     }
 
-   
-      // For DAY swaps, check if it's the same day
-if (scope === 'day') {
-  const dueDate = new Date(assignment.dueDate);
-  const today = new Date();
-  
-  if (dueDate.toDateString() !== today.toDateString()) {
-    return res.json({
-      success: true,
-      canSwap: false,
-      reason: "Day swaps can only be requested on the day the task is due"
-    });
-  }
-  
-  // Check if still within swap window (before end time)
-  if (assignment.timeSlot && assignment.timeSlot.endTime) {
-    const timeParts = assignment.timeSlot.endTime.split(':');
-    
-    // Validate that we have both hour and minute and they exist
-    if (timeParts.length >= 2) {
-      const hourStr = timeParts[0];
-      const minuteStr = timeParts[1];
+    // ===== DAY SWAP - FIXED: Allow any future day =====
+    if (scope === 'day') {
+      const dueDate = new Date(assignment.dueDate);
+      const dueDateDayIndex = dueDate.getDay();
+      const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
       
-      // Check if they're not undefined
-      if (hourStr !== undefined && minuteStr !== undefined) {
-        const endHour = parseInt(hourStr, 10);
-        const endMinute = parseInt(minuteStr, 10);
+      // If selectedDay is provided, check that specific day
+      let targetDay = selectedDay as string;
+      let targetDate: Date | null = null;
+      
+      if (targetDay) {
+        // Find the next occurrence of that day
+        const targetDayIndex = dayNames.indexOf(targetDay);
+        if (targetDayIndex === -1) {
+          return res.json({
+            success: true,
+            canSwap: false,
+            reason: "Invalid day selected"
+          });
+        }
         
-        // Check if parsing was successful
-        if (!isNaN(endHour) && !isNaN(endMinute)) {
-          const endTime = new Date(dueDate);
-          endTime.setHours(endHour, endMinute, 0, 0);
+        // Calculate the target date (next occurrence of that day)
+        targetDate = new Date(now);
+        let daysToAdd = targetDayIndex - now.getDay();
+        if (daysToAdd < 0) daysToAdd += 7;
+        targetDate.setDate(now.getDate() + daysToAdd);
+        targetDate.setHours(0, 0, 0, 0);
+      }
+      
+      // ✅ Allow swap for ANY future day (not just today)
+      // Only block if the due date is in the past
+      if (now > dueDate) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot swap assignments that are already past due"
+        });
+      }
+      
+      // Check if trying to swap a day that doesn't exist for this task
+      if (assignment.task.executionFrequency === 'WEEKLY' && targetDay) {
+        // Get the task's selected days
+        let taskDays: string[] = [];
+        if (assignment.task.selectedDays) {
+          try {
+            taskDays = JSON.parse(assignment.task.selectedDays as string);
+          } catch {
+            taskDays = [];
+          }
+        }
+        
+        if (taskDays.length > 0 && !taskDays.includes(targetDay)) {
+          return res.json({
+            success: true,
+            canSwap: false,
+            reason: `This task is not scheduled on ${targetDay}. Available days: ${taskDays.join(', ')}`
+          });
+        }
+      }
+      
+      // Check if within time window for today's swap
+      if (targetDay && targetDate && targetDate.toDateString() === dueDate.toDateString()) {
+        // If swapping for today, check time constraints
+        if (assignment.timeSlot && assignment.timeSlot.endTime) {
+          const timeParts = assignment.timeSlot.endTime.split(':');
+          const endHour = parseInt(timeParts[0] || '0', 10);
+          const endMinute = parseInt(timeParts[1] || '0', 10);
           
-          // Can swap up until the end time
-          if (now > endTime) {
-            return res.json({
-              success: true,
-              canSwap: false,
-              reason: "Cannot swap after the task's end time"
-            });
+          if (!isNaN(endHour) && !isNaN(endMinute)) {
+            const endTime = new Date(dueDate);
+            endTime.setHours(endHour, endMinute, 0, 0);
+            
+            if (now > endTime) {
+              return res.json({
+                success: true,
+                canSwap: false,
+                reason: "Cannot swap after the task's end time for today"
+              });
+            }
           }
         }
       }
+      
+      return res.json({
+        success: true,
+        canSwap: true,
+        dayInfo: targetDate ? {
+          day: targetDay,
+          date: targetDate.toISOString(),
+          isToday: targetDate.toDateString() === now.toDateString()
+        } : undefined
+      });
     }
-  }
-  
-  return res.json({
-    success: true,
-    canSwap: true
-  });
-}
-    
 
-    // Default to true for no scope specified
     return res.json({
       success: true,
       canSwap: true
@@ -680,5 +707,6 @@ if (scope === 'day') {
     });
   }
 }
+
    
 }

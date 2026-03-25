@@ -1,21 +1,35 @@
-// helpers/time.helpers.ts - COMPLETE FIXED VERSION
+// helpers/time.helpers.ts - COMPLETE FIXED VERSION WITH PROPER TYPES
 import { DayOfWeek } from '@prisma/client';
 
+// Define return type for canSubmitAssignment
+export interface CanSubmitResult {
+  allowed: boolean;
+  reason?: string;
+  dueDate?: Date;
+  currentDate?: Date;
+  currentTime?: Date;
+  willBePenalized?: boolean;
+  finalPoints?: number;
+  originalPoints?: number;
+  timeLeft?: number;
+  timeLeftText?: string;
+  submissionStart?: Date;
+  gracePeriodEnd?: Date;
+  opensIn?: number;
+  opensAt?: Date;
+  activeSlot?: any;
+  slotIndex?: number;
+  submissionStatus?: string;
+}
+
 export class TimeHelpers {
-  // Grace period in minutes
   static readonly GRACE_PERIOD_MINUTES = 30;
-  
-  // Penalty for submitting after grace period (percentage)
-  static readonly LATE_SUBMISSION_PENALTY = 0.5; // 50% penalty
-  
-  /**
-   * Check if submission is allowed based on assignment due date and time slot
-   */
-  static canSubmitAssignment(assignment: any, currentTime: Date = new Date()) {
+  static readonly LATE_SUBMISSION_PENALTY = 0.5;
+
+  static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
     const dueDate = new Date(assignment.dueDate);
     const currentDate = currentTime;
     
-    // Check if it's the due date
     if (dueDate.toDateString() !== currentDate.toDateString()) {
       return { 
         allowed: false, 
@@ -25,8 +39,13 @@ export class TimeHelpers {
       };
     }
     
-    // If no time slot, allow any time on due date
-    if (!assignment.timeSlot) {
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    } else {
       return { 
         allowed: true,
         willBePenalized: false,
@@ -35,115 +54,469 @@ export class TimeHelpers {
       };
     }
     
-    // Parse time slot end time
-    const endParts = assignment.timeSlot.endTime.split(':');
-    const endHour = parseInt(endParts[0] || '0', 10);
-    const endMinute = parseInt(endParts[1] || '0', 10);
+    if (assignment.timeSlotId && timeSlotsToCheck.length > 0) {
+      const specificSlot = timeSlotsToCheck.find((slot: any) => slot.id === assignment.timeSlotId);
+      if (specificSlot) {
+        timeSlotsToCheck = [specificSlot];
+      }
+    }
     
-    const endTime = new Date(dueDate);
-    endTime.setHours(endHour, endMinute, 0, 0);
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
     
-    // 30 minute grace period after end time
-    const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
-    
-    // Submission opens 30 minutes before end time
-    const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-    
-    if (currentDate < submissionStart) {
-      const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
+    if (availableSlots.length === 0) {
       return { 
         allowed: false, 
-        reason: 'Submission not open yet',
-        opensIn: Math.ceil(timeUntilStart / 60000), // minutes
-        submissionStart,
-        currentTime: currentDate,
+        reason: 'All time slots completed',
+        currentDate: currentDate,
         willBePenalized: false
       };
     }
     
-    if (currentDate <= endTime) {
-      // On-time submission
-      const timeLeft = endTime.getTime() - currentDate.getTime();
-      return { 
-        allowed: true, 
-        timeLeft: Math.ceil(timeLeft / 1000), // seconds
-        gracePeriodEnd,
-        currentTime: currentDate,
-        willBePenalized: false,
-        finalPoints: assignment.points,
-        originalPoints: assignment.points
-      };
+    let bestResult: CanSubmitResult | null = null;
+    
+    for (const slot of availableSlots) {
+      if (!slot) continue;
+      
+      const startParts = slot.startTime.split(':');
+      const endParts = slot.endTime.split(':');
+      
+      const startHour = parseInt(startParts[0] || '0', 10);
+      const startMinute = parseInt(startParts[1] || '0', 10);
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      
+      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      const lateThreshold = new Date(endTime.getTime() + 25 * 60000);
+      
+      if (currentDate < submissionStart) {
+        const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
+        const result: CanSubmitResult = { 
+          allowed: false, 
+          reason: 'Submission not open yet',
+          opensIn: Math.ceil(timeUntilStart / 60000),
+          opensAt: submissionStart,
+          submissionStart,
+          currentTime: currentDate,
+          willBePenalized: false,
+          activeSlot: slot,
+          slotIndex: timeSlotsToCheck.indexOf(slot)
+        };
+        
+        if (!bestResult || 
+            (bestResult.opensIn && result.opensIn && result.opensIn < bestResult.opensIn)) {
+          bestResult = result;
+        }
+        continue;
+      }
+      
+      if (currentDate <= endTime) {
+        const timeLeft = endTime.getTime() - currentDate.getTime();
+        const slotPoints = slot.points || assignment.points;
+        const result: CanSubmitResult = { 
+          allowed: true, 
+          timeLeft: Math.ceil(timeLeft / 1000),
+          timeLeftText: this.getTimeLeftText(Math.ceil(timeLeft / 1000)),
+          submissionStart,
+          gracePeriodEnd,
+          currentTime: currentDate,
+          willBePenalized: false,
+          finalPoints: slotPoints,
+          originalPoints: slotPoints,
+          activeSlot: slot,
+          slotIndex: timeSlotsToCheck.indexOf(slot),
+          submissionStatus: 'on_time'
+        };
+        return result;
+      }
+      
+      if (currentDate <= gracePeriodEnd) {
+        const timeLeft = gracePeriodEnd.getTime() - currentDate.getTime();
+        const isLateSubmission = currentDate > lateThreshold;
+        const slotPoints = slot.points || assignment.points;
+        
+        const result: CanSubmitResult = { 
+          allowed: true, 
+          timeLeft: Math.ceil(timeLeft / 1000),
+          timeLeftText: this.getTimeLeftText(Math.ceil(timeLeft / 1000)),
+          submissionStart,
+          gracePeriodEnd,
+          currentTime: currentDate,
+          willBePenalized: isLateSubmission,
+          finalPoints: isLateSubmission ? Math.floor(slotPoints * (1 - this.LATE_SUBMISSION_PENALTY)) : slotPoints,
+          originalPoints: slotPoints,
+          activeSlot: slot,
+          slotIndex: timeSlotsToCheck.indexOf(slot),
+          submissionStatus: isLateSubmission ? 'late' : 'grace_period'
+        };
+        return result;
+      }
     }
     
-    if (currentDate <= gracePeriodEnd) {
-      // Grace period submission (still allowed, no penalty)
-      const timeLeft = gracePeriodEnd.getTime() - currentDate.getTime();
-      return { 
-        allowed: true, 
-        timeLeft: Math.ceil(timeLeft / 1000), // seconds
-        gracePeriodEnd,
-        currentTime: currentDate,
-        willBePenalized: false,
-        finalPoints: assignment.points,
-        originalPoints: assignment.points
-      };
+    if (bestResult && !bestResult.allowed) {
+      return bestResult;
     }
     
-    // After grace period - submission not allowed
     return { 
       allowed: false, 
       reason: 'Submission window closed',
-      gracePeriodEnd,
       currentTime: currentDate,
       willBePenalized: true,
       originalPoints: assignment.points
     };
   }
   
-  /**
-   * Check if assignment was neglected (no submission within time window)
-   */
   static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): boolean {
-    // If already completed, not neglected
     if (assignment.completed) return false;
     
     const dueDate = new Date(assignment.dueDate);
     
-    // Check if it's past the due date
     if (currentTime < dueDate) return false;
     
-    // If no time slot, check if past due date
-    if (!assignment.timeSlot) {
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    }
+    
+    if (timeSlotsToCheck.length === 0) {
       return currentTime > dueDate;
     }
     
-    // Parse time slot end time
-    const endParts = assignment.timeSlot.endTime.split(':');
-    const endHour = parseInt(endParts[0] || '0', 10);
-    const endMinute = parseInt(endParts[1] || '0', 10);
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+    const remainingSlots = timeSlotsToCheck.filter((slot: any) => 
+      !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
+    );
     
-    const endTime = new Date(dueDate);
-    endTime.setHours(endHour, endMinute, 0, 0);
+    if (remainingSlots.length === 0) return false;
     
-    // Grace period after end time
-    const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+    for (const slot of remainingSlots) {
+      if (!slot) continue;
+      
+      const endParts = slot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      
+      if (currentTime <= gracePeriodEnd) {
+        return false;
+      }
+    }
     
-    // If current time is past grace period and assignment not completed, it's neglected
-    return currentTime > gracePeriodEnd && !assignment.completed;
+    return true;
   }
   
-  /**
-   * Calculate penalty for neglected assignments
-   * Returns negative points to deduct
-   */
-  static calculateNeglectPenalty(assignment: any): number {
-    // Deduct full points for neglected assignments
-    return -Math.abs(assignment.points);
+  static getNeglectedTimeSlots(assignment: any, currentTime: Date = new Date()): any[] {
+    if (assignment.completed) return [];
+    
+    const dueDate = new Date(assignment.dueDate);
+    const neglectedSlots: any[] = [];
+    
+    if (currentTime < dueDate) return [];
+    
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    }
+    
+    if (timeSlotsToCheck.length === 0) return [];
+    
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+    
+    for (const slot of timeSlotsToCheck) {
+      if (completedSlotIds.includes(slot.id) || missedSlotIds.includes(slot.id)) continue;
+      
+      const endParts = slot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      
+      if (currentTime > gracePeriodEnd) {
+        neglectedSlots.push({
+          ...slot,
+          neglectedAt: new Date(),
+          pointsLost: slot.points || assignment.points
+        });
+      }
+    }
+    
+    return neglectedSlots;
   }
   
-  /**
-   * Get time left for submission in human-readable format
-   */
+  static hasAvailableTimeSlot(assignment: any, currentTime: Date = new Date()): boolean {
+    const dueDate = new Date(assignment.dueDate);
+    const currentDate = currentTime;
+    
+    if (dueDate.toDateString() !== currentDate.toDateString()) {
+      return false;
+    }
+    
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    } else {
+      return true;
+    }
+    
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
+    
+    if (availableSlots.length === 0) return false;
+    
+    for (const slot of availableSlots) {
+      if (!slot) continue;
+      
+      const endParts = slot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      
+      if (currentDate <= gracePeriodEnd) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
+    const dueDate = new Date(assignment.dueDate);
+    const currentDate = currentTime;
+    
+    if (dueDate.toDateString() !== currentDate.toDateString()) {
+      return null;
+    }
+    
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    } else {
+      return null;
+    }
+    
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
+    
+    for (const slot of availableSlots) {
+      if (!slot) continue;
+      
+      const endParts = slot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      
+      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      
+      if (currentDate >= submissionStart && currentDate <= gracePeriodEnd) {
+        return slot;
+      }
+    }
+    
+    return null;
+  }
+  
+  static getNextTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
+    const dueDate = new Date(assignment.dueDate);
+    const currentDate = currentTime;
+    
+    if (dueDate.toDateString() !== currentDate.toDateString()) {
+      return null;
+    }
+    
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    } else {
+      return null;
+    }
+    
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
+    
+    if (availableSlots.length === 0) return null;
+    
+    const sortedSlots = [...availableSlots].sort((a: any, b: any) => {
+      const aStartParts = a.startTime.split(':');
+      const bStartParts = b.startTime.split(':');
+      
+      const aStart = parseInt(aStartParts[0] || '0', 10) * 60 + 
+                    parseInt(aStartParts[1] || '0', 10);
+      const bStart = parseInt(bStartParts[0] || '0', 10) * 60 + 
+                    parseInt(bStartParts[1] || '0', 10);
+      return aStart - bStart;
+    });
+    
+    const currentMinutes = currentDate.getHours() * 60 + currentDate.getMinutes();
+    
+    for (const slot of sortedSlots) {
+      const startParts = slot.startTime.split(':');
+      const startHour = parseInt(startParts[0] || '0', 10);
+      const startMinute = parseInt(startParts[1] || '0', 10);
+      const startInMinutes = startHour * 60 + startMinute;
+      
+      if (startInMinutes > currentMinutes) {
+        return slot;
+      }
+    }
+    
+    return null;
+  }
+  
+  static calculateLatePenalty(assignment: any, currentTime: Date = new Date()): {
+    isLate: boolean;
+    penaltyAmount: number;
+    finalPoints: number;
+    activeSlot: any | null;
+  } {
+    const result = this.canSubmitAssignment(assignment, currentTime);
+    
+    if (!result.allowed) {
+      return {
+        isLate: true,
+        penaltyAmount: assignment.points,
+        finalPoints: 0,
+        activeSlot: null
+      };
+    }
+    
+    if (result.willBePenalized) {
+      const originalPoints = result.originalPoints || assignment.points;
+      const penaltyAmount = Math.floor(originalPoints * this.LATE_SUBMISSION_PENALTY);
+      return {
+        isLate: true,
+        penaltyAmount,
+        finalPoints: originalPoints - penaltyAmount,
+        activeSlot: result.activeSlot || null
+      };
+    }
+    
+    return {
+      isLate: false,
+      penaltyAmount: 0,
+      finalPoints: result.originalPoints || assignment.points,
+      activeSlot: result.activeSlot || null
+    };
+  }
+  
+  static getCurrentSlotPoints(assignment: any, currentTime: Date = new Date()): number {
+    const activeSlot = this.getCurrentActiveTimeSlot(assignment, currentTime);
+    
+    if (activeSlot) {
+      return activeSlot.points || assignment.points;
+    }
+    
+    return assignment.points;
+  }
+  
+  static getAllSlotsSubmissionInfo(assignment: any): {
+    slotId: string;
+    startTime: string;
+    endTime: string;
+    label: string | null;
+    points: number;
+    status: 'pending' | 'completed' | 'missed' | 'available' | 'expired';
+    submissionStart: Date;
+    gracePeriodEnd: Date;
+    timeLeft: number | null;
+    timeLeftText: string | null;
+  }[] {
+    const dueDate = new Date(assignment.dueDate);
+    const currentTime = new Date();
+    
+    let timeSlotsToCheck: any[] = [];
+    
+    if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+      timeSlotsToCheck = assignment.task.timeSlots;
+    } else if (assignment.timeSlot) {
+      timeSlotsToCheck = [assignment.timeSlot];
+    } else {
+      return [];
+    }
+    
+    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+    
+    return timeSlotsToCheck.map((slot: any) => {
+      const endParts = slot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
+      
+      const endTime = new Date(dueDate);
+      endTime.setHours(endHour, endMinute, 0, 0);
+      
+      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      
+      let status: 'pending' | 'completed' | 'missed' | 'available' | 'expired' = 'pending';
+      
+      if (completedSlotIds.includes(slot.id)) {
+        status = 'completed';
+      } else if (missedSlotIds.includes(slot.id)) {
+        status = 'missed';
+      } else if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
+        status = 'available';
+      } else if (currentTime > gracePeriodEnd) {
+        status = 'expired';
+      }
+      
+      let timeLeft: number | null = null;
+      let timeLeftText: string | null = null;
+      
+      if (status === 'available') {
+        timeLeft = Math.max(0, Math.floor((gracePeriodEnd.getTime() - currentTime.getTime()) / 1000));
+        timeLeftText = this.getTimeLeftText(timeLeft);
+      } else if (status === 'pending' && currentTime < submissionStart) {
+        timeLeft = Math.floor((submissionStart.getTime() - currentTime.getTime()) / 1000);
+        timeLeftText = this.getTimeLeftText(timeLeft);
+      }
+      
+      return {
+        slotId: slot.id,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        label: slot.label || null,
+        points: slot.points || assignment.points,
+        status,
+        submissionStart,
+        gracePeriodEnd,
+        timeLeft,
+        timeLeftText
+      };
+    });
+  }
+  
   static getTimeLeftText(timeLeftSeconds: number) {
     if (timeLeftSeconds <= 0) return 'Expired';
     
@@ -160,9 +533,6 @@ export class TimeHelpers {
     }
   }
   
-  /**
-   * Check if current time is within any of the task's time slots
-   */
   static isWithinAnyTimeSlot(timeSlots: any[], currentTime: Date = new Date()) {
     if (!timeSlots || timeSlots.length === 0) return null;
     
@@ -180,7 +550,6 @@ export class TimeHelpers {
       const startInMinutes = startHour * 60 + startMinute;
       const endInMinutes = endHour * 60 + endMinute;
       
-      // Check if current time is within the slot plus 30 minute grace period
       if (currentInMinutes >= startInMinutes && 
           currentInMinutes <= (endInMinutes + 30)) {
         return slot;
@@ -190,45 +559,6 @@ export class TimeHelpers {
     return null;
   }
   
-  /**
-   * Get the next upcoming time slot
-   */
-  static getNextTimeSlot(timeSlots: any[], currentTime: Date = new Date()) {
-    if (!timeSlots || timeSlots.length === 0) return null;
-    
-    const currentInMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
-    
-    // Sort time slots by start time
-    const sortedSlots = [...timeSlots].sort((a, b) => {
-      const aStartParts = a.startTime.split(':');
-      const bStartParts = b.startTime.split(':');
-      
-      const aStart = parseInt(aStartParts[0] || '0', 10) * 60 + 
-                    parseInt(aStartParts[1] || '0', 10);
-      const bStart = parseInt(bStartParts[0] || '0', 10) * 60 + 
-                    parseInt(bStartParts[1] || '0', 10);
-      return aStart - bStart;
-    });
-    
-    // Find next slot
-    for (const slot of sortedSlots) {
-      const startParts = slot.startTime.split(':');
-      const startHour = parseInt(startParts[0] || '0', 10);
-      const startMinute = parseInt(startParts[1] || '0', 10);
-      const startInMinutes = startHour * 60 + startMinute;
-      
-      if (startInMinutes > currentInMinutes) {
-        return slot;
-      }
-    }
-    
-    // If no upcoming slots today, return first slot tomorrow
-    return sortedSlots[0];
-  }
-  
-  /**
-   * Check if current time is within submission window for a specific time slot
-   */
   static isWithinSubmissionWindow(timeSlot: any, currentTime: Date = new Date()): boolean {
     const endParts = timeSlot.endTime.split(':');
     const endHour = parseInt(endParts[0] || '0', 10);
@@ -243,9 +573,6 @@ export class TimeHelpers {
            currentInMinutes <= graceEndInMinutes;
   }
   
-  /**
-   * Get submission window information for a time slot
-   */
   static getSubmissionWindowInfo(timeSlot: any, dueDate: Date) {
     const endParts = timeSlot.endTime.split(':');
     const endHour = parseInt(endParts[0] || '0', 10);
@@ -266,30 +593,19 @@ export class TimeHelpers {
     };
   }
   
-  /**
-   * Get time until a specific datetime
-   */
   static getTimeUntil(targetDate: Date, currentTime: Date = new Date()): number | null {
     const diff = targetDate.getTime() - currentTime.getTime();
     if (diff <= 0) return null;
-    return Math.ceil(diff / 1000); // return seconds
+    return Math.ceil(diff / 1000);
   }
   
-  /**
-   * Format a date to time string (HH:MM)
-   */
   static formatTime(date: Date): string {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   
-  /**
-   * Get current week boundaries
-   */
   static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date; weekEnd: Date } {
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    
-    // Calculate days to subtract to get to Monday (assuming week starts Monday)
+    const dayOfWeek = now.getDay();
     const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
     
     const weekStart = new Date(now);
@@ -303,22 +619,12 @@ export class TimeHelpers {
     return { weekStart, weekEnd };
   }
   
-  /**
-   * Get day of week from index
-   */
-  /**
- * Get day of week from index - CONCISE FIX
- */
-static getDayOfWeekFromIndex(index: number): DayOfWeek {
-  const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
-  const safeIndex = ((index % 7) + 7) % 7; // Handle negative indices
-  return days[safeIndex] as DayOfWeek;
-}
+  static getDayOfWeekFromIndex(index: number): DayOfWeek {
+    const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
+    const safeIndex = ((index % 7) + 7) % 7;
+    return days[safeIndex] as DayOfWeek;
+  }
   
-  
-  /**
-   * Calculate due date based on day of week
-   */
   static calculateDueDate(day: DayOfWeek, referenceDate: Date = new Date()): Date {
     const daysMap: Record<DayOfWeek, number> = {
       'SUNDAY': 0,
@@ -345,11 +651,7 @@ static getDayOfWeekFromIndex(index: number): DayOfWeek {
     return dueDate;
   }
   
-  /**
-   * Validate time slot (end time after start time) - FIXED
-   */
   static validateTimeSlot(startTime: string, endTime: string): boolean {
-    // Split and parse start time with defaults
     const startParts = startTime.split(':');
     const startHourStr = startParts[0] || '0';
     const startMinuteStr = startParts[1] || '0';
@@ -357,7 +659,6 @@ static getDayOfWeekFromIndex(index: number): DayOfWeek {
     const startHour = parseInt(startHourStr, 10);
     const startMinute = parseInt(startMinuteStr, 10);
     
-    // Split and parse end time with defaults
     const endParts = endTime.split(':');
     const endHourStr = endParts[0] || '0';
     const endMinuteStr = endParts[1] || '0';
@@ -365,17 +666,14 @@ static getDayOfWeekFromIndex(index: number): DayOfWeek {
     const endHour = parseInt(endHourStr, 10);
     const endMinute = parseInt(endMinuteStr, 10);
     
-    // Validate that all values are valid numbers
     if (isNaN(startHour) || isNaN(startMinute) || isNaN(endHour) || isNaN(endMinute)) {
       return false;
     }
     
-    // Validate hour ranges (0-23)
     if (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
       return false;
     }
     
-    // Validate minute ranges (0-59)
     if (startMinute < 0 || startMinute > 59 || endMinute < 0 || endMinute > 59) {
       return false;
     }
@@ -386,9 +684,6 @@ static getDayOfWeekFromIndex(index: number): DayOfWeek {
     return endInMinutes > startInMinutes;
   }
   
-  /**
-   * Convert 12-hour time to 24-hour format
-   */
   static convertTo24Hour(hour: string, minute: string, period: string): string {
     let hourNum = parseInt(hour, 10);
     
@@ -401,30 +696,24 @@ static getDayOfWeekFromIndex(index: number): DayOfWeek {
     return `${hourNum.toString().padStart(2, '0')}:${minute}`;
   }
   
-  /**
-   * Convert 24-hour time to 12-hour format
-   */
-  /**
- * Convert 24-hour time to 12-hour format - CONCISE WITH NULLISH COALESCING
- */
-static convertTo12Hour(time24: string): { hour: string; minute: string; period: string } {
-  const parts = time24?.split(':') ?? [];
-  const hour24 = parts[0] ?? '0';
-  const minute = parts[1] ?? '00';
-  
-  const hourNum = parseInt(hour24, 10);
-  if (isNaN(hourNum)) {
-    return { hour: '12', minute: '00', period: 'AM' };
+  static convertTo12Hour(time24: string): { hour: string; minute: string; period: string } {
+    const parts = time24?.split(':') ?? [];
+    const hour24 = parts[0] ?? '0';
+    const minute = parts[1] ?? '00';
+    
+    const hourNum = parseInt(hour24, 10);
+    if (isNaN(hourNum)) {
+      return { hour: '12', minute: '00', period: 'AM' };
+    }
+    
+    const period = hourNum >= 12 ? 'PM' : 'AM';
+    let hour12 = hourNum % 12;
+    hour12 = hour12 === 0 ? 12 : hour12;
+    
+    return {
+      hour: hour12.toString(),
+      minute,
+      period
+    };
   }
-  
-  const period = hourNum >= 12 ? 'PM' : 'AM';
-  let hour12 = hourNum % 12;
-  hour12 = hour12 === 0 ? 12 : hour12;
-  
-  return {
-    hour: hour12.toString(),
-    minute,
-    period
-  };
-}
 }

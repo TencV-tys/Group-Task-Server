@@ -11,7 +11,7 @@ export class TaskController {
     try {
       const userId = req.user?.id;
       const { groupId } = req.params as { groupId: string };
-      const { 
+      const {  
         title, 
         description, 
         points = 1,

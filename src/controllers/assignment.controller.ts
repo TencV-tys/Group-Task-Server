@@ -18,7 +18,7 @@ export class AssignmentController {
       // The file is available at req.file
       // The notes are available at req.body.notes
       
-      let photoUrl = undefined;
+      let photoUrl = undefined; 
       const file = (req as any).file;
       
       if (file) {

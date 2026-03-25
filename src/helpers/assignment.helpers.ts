@@ -18,7 +18,7 @@ export class AssignmentHelpers {
     const trimmed = notes.trim();
     return trimmed.length > 0 ? trimmed : undefined;
   }
-
+ 
   static calculateCompletionTime(dueDate: Date, completedAt: Date): string {
     const diffMs = completedAt.getTime() - dueDate.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
@@ -109,4 +109,4 @@ export class AssignmentHelpers {
       };
     }
   }
-}
+} 

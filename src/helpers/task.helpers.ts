@@ -31,42 +31,49 @@ export class TaskHelpers {
     return { weekStart: monday, weekEnd: sunday };
   }
 
-  // Helper to calculate due date with specific time
-  static calculateDueDate(day: DayOfWeek, timeSlot?: { startTime: string } | null): Date {
-    const now = new Date();
-    const dueDate = new Date();
-    
-    const days = {
-      MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4,
-      FRIDAY: 5, SATURDAY: 6, SUNDAY: 0
-    };
-    
-    const targetDay = days[day];
-    const currentDay = now.getDay();
-    
-    let daysToAdd = targetDay - currentDay;
-    if (daysToAdd < 0) daysToAdd += 7;
-    
-    dueDate.setDate(dueDate.getDate() + daysToAdd);
-    
-    if (timeSlot?.startTime) {
-      const timeParts = timeSlot.startTime.split(':');
-      const hours = Number(timeParts[0]) || 18;
-      const minutes = Number(timeParts[1]) || 0;
-      dueDate.setHours(hours, minutes, 0, 0);
-    } else {
-      dueDate.setHours(18, 0, 0, 0);
-    }
-    
-    return dueDate;
+// helpers/task.helpers.ts
+static calculateDueDate(day: DayOfWeek, weekStart?: Date): Date {
+  const daysMap: Record<DayOfWeek, number> = {
+    'SUNDAY': 0,
+    'MONDAY': 1,
+    'TUESDAY': 2,
+    'WEDNESDAY': 3,
+    'THURSDAY': 4,
+    'FRIDAY': 5,
+    'SATURDAY': 6
+  };
+  
+  const targetDay = daysMap[day];
+  const baseDate = weekStart || new Date();
+  const currentDay = baseDate.getDay();
+  
+  let daysToAdd = targetDay - currentDay;
+  if (daysToAdd < 0) {
+    daysToAdd += 7;
   }
+  
+  const dueDate = new Date(baseDate);
+  dueDate.setDate(baseDate.getDate() + daysToAdd);
+  dueDate.setHours(0, 0, 0, 0);
+  
+  return dueDate;
+}
 
-  // Helper to get DayOfWeek from index
-  static getDayOfWeekFromIndex(index: number): DayOfWeek {
-    const days: DayOfWeek[] = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const safeIndex = Math.max(0, Math.min(index, 6));
-    return days[safeIndex] as DayOfWeek;
+// helpers/task.helpers.ts
+static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
+  const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
+  
+  if (weekStart) {
+    // Calculate actual day based on week start
+    const weekStartDay = weekStart.getDay();
+    const actualDayIndex = (weekStartDay + index) % 7;
+    return days[actualDayIndex] as DayOfWeek;
   }
+  
+  // Fallback to simple index (keeps compatibility)
+  const safeIndex = ((index % 7) + 7) % 7;
+  return days[safeIndex] as DayOfWeek;
+}
 
   // Helper to validate time slot points distribution
   static validateAndCalculateTimeSlotPoints(
@@ -194,4 +201,4 @@ export class TaskHelpers {
     const num = Number(value);
     return isNaN(num) ? defaultValue : num;
   }
-}
+} 

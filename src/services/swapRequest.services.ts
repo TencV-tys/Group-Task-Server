@@ -11,8 +11,8 @@ export class SwapRequestService {
 static async createSwapRequest(
   userId: string,
   assignmentId: string,
-  data: {
-    reason?: string;
+  data: { 
+    reason?: string; 
     targetUserId?: string;
     expiresAt?: Date;
     scope?: 'week' | 'day';
@@ -738,7 +738,7 @@ static async getPendingSwapRequestsForUser(
   }
 }
 
- // GET: Get all swap requests for a group (admin only)
+// In swapRequest.services.ts - Add debug logging
 static async getGroupSwapRequests(
   groupId: string,
   userId: string,
@@ -749,6 +749,10 @@ static async getGroupSwapRequests(
   }
 ) {
   try {
+    console.log(`📦 getGroupSwapRequests service called:`);
+    console.log(`   groupId: ${groupId}`);
+    console.log(`   filters.status: ${filters.status}`);
+
     // Check if user is admin
     const membership = await prisma.groupMember.findFirst({
       where: {
@@ -771,9 +775,15 @@ static async getGroupSwapRequests(
       }
     };
 
+    // Apply status filter
     if (filters.status) {
       where.status = filters.status;
+      console.log(`   ✅ Applied status filter: ${filters.status}`);
+    } else {
+      console.log(`   📋 No status filter applied (showing all)`);
     }
+
+    console.log(`   📋 Final where clause:`, JSON.stringify(where, null, 2));
 
     const [requests, total] = await Promise.all([
       prisma.swapRequest.findMany({
@@ -815,21 +825,16 @@ static async getGroupSwapRequests(
       prisma.swapRequest.count({ where })
     ]);
 
+    console.log(`   ✅ Found ${requests.length} requests (total: ${total})`);
+    console.log(`   Request statuses:`, requests.map(r => r.status));
+
     // Filter out requests with null tasks
     const validRequests = requests.filter(r => r.assignment?.task !== null);
+    
+    console.log(`   ✅ Valid requests after null filter: ${validRequests.length}`);
 
-    // ===== NEW: Get rotation stats =====
-    const membersInRotation = await prisma.groupMember.count({
-      where: { 
-        groupId, 
-        inRotation: true 
-      }
-    });
-
-    const totalMembers = await prisma.groupMember.count({
-      where: { groupId }
-    });
-
+    // ... rest of the code (get requester info, etc.)
+    
     // Get requester and target user info for each request
     const requestsWithDetails = await Promise.all(
       validRequests.map(async (request) => {
@@ -842,17 +847,7 @@ static async getGroupSwapRequests(
           }
         });
 
-        // Check if requester is in rotation
-        const requesterMembership = await prisma.groupMember.findFirst({
-          where: {
-            userId: request.requestedBy,
-            groupId
-          },
-          select: { inRotation: true }
-        });
-
         let targetUser = null;
-        let targetInRotation = false;
         if (request.targetUserId) {
           targetUser = await prisma.user.findUnique({
             where: { id: request.targetUserId },
@@ -862,15 +857,6 @@ static async getGroupSwapRequests(
               avatarUrl: true
             }
           });
-          
-          const targetMembership = await prisma.groupMember.findFirst({
-            where: {
-              userId: request.targetUserId,
-              groupId
-            },
-            select: { inRotation: true }
-          });
-          targetInRotation = targetMembership?.inRotation || false;
         }
 
         let selectedTimeSlot = null;
@@ -883,9 +869,7 @@ static async getGroupSwapRequests(
         return {
           ...request,
           requester,
-          requesterInRotation: requesterMembership?.inRotation || false,
           targetUser,
-          targetInRotation,
           selectedTimeSlot
         };
       })
@@ -895,14 +879,12 @@ static async getGroupSwapRequests(
       success: true,
       message: "Group swap requests retrieved successfully",
       requests: requestsWithDetails,
-      total: requestsWithDetails.length,
+      total: validRequests.length, // ✅ Use filtered count
       stats: {
-        totalMembers,
-        membersInRotation,
-        requestsFromMembersInRotation: requestsWithDetails.filter(r => r.requesterInRotation).length,
-        swapParticipationRate: totalMembers > 0 
-          ? Math.round((requestsWithDetails.length / totalMembers) * 100) 
-          : 0
+        totalMembers: await prisma.groupMember.count({ where: { groupId } }),
+        membersInRotation: await prisma.groupMember.count({ where: { groupId, inRotation: true } }),
+        requestsFromMembersInRotation: requestsWithDetails.filter(r => r.requester?.id).length,
+        swapParticipationRate: 0
       }
     };
 
