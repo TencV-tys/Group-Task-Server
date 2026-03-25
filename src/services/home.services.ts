@@ -3,314 +3,330 @@ import prisma from "../prisma";
 
 export class HomeServices {
 
-  static async getHomeData(userId: string) {
-    try {
-      console.log(`Fetching home data for user: ${userId}`);
+  // services/home.services.ts - UPDATED getHomeData method
 
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { 
-          id: true,
-          fullName: true,
-          email: true,
-          avatarUrl: true
-        }
-      });
+static async getHomeData(userId: string) {
+  try {
+    console.log(`Fetching home data for user: ${userId}`);
 
-      if (!user) {
-        return {
-          success: false,
-          message: "User not found"
-        };
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        id: true,
+        fullName: true,
+        email: true,
+        avatarUrl: true
       }
+    });
 
-      // Get user's group memberships with rotation status
-      const userMemberships = await prisma.groupMember.findMany({
-        where: { userId: userId },
-        include: {
-          group: {
-            select: {
-              id: true,
-              name: true,
-              avatarUrl: true,
-              currentRotationWeek: true,
-              lastRotationUpdate: true,
-              _count: {
-                select: {
-                  tasks: {
-                    where: { isRecurring: true }
-                  },
-                  members: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: { joinedAt: 'desc' }
-      });
-
-      const groupsCount = userMemberships.length;
-
-      // ===== NEW: Check user's rotation status across groups =====
-      const userInRotation = userMemberships.some(m => m.inRotation);
-      const userIsAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
-      const groupsWhereUserInRotation = userMemberships.filter(m => m.inRotation).length;
-      const groupsWhereUserIsAdmin = userMemberships.filter(m => m.groupRole === "ADMIN").length;
-
-      // Calculate date ranges
-      const now = new Date();
-      const today = new Date(now);
-      today.setHours(0, 0, 0, 0);
-      
-      // Get start of current week (Monday)
-      const currentWeekStart = new Date(now);
-      const day = currentWeekStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
-      const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
-      currentWeekStart.setDate(diff);
-      currentWeekStart.setHours(0, 0, 0, 0);
-      
-      // Get end of current week (Sunday)
-      const currentWeekEnd = new Date(currentWeekStart);
-      currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
-      currentWeekEnd.setHours(23, 59, 59, 999);
-
-      console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
-      console.log(`📅 Today: ${today.toISOString()}`);
-
-      // Count tasks due this week (excluding expired) - only if user is in rotation
-      const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
-        where: {
-          userId: userId,
-          completed: false,
-          expired: false,
-          dueDate: {
-            gte: today,
-            lte: currentWeekEnd
-          }
-        }
-      }) : 0;
-
-      console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
-
-      // Count overdue tasks (excluding expired) - only if user is in rotation
-      const overdueTasks = userInRotation ? await prisma.assignment.count({
-        where: {
-          userId: userId,
-          completed: false,
-          expired: false,
-          dueDate: { lt: today }
-        }
-      }) : 0;
-
-      console.log(`📊 Overdue tasks: ${overdueTasks}`);
-
-      // Get current week assignments (excluding expired) - only if user is in rotation
-      const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
-        where: {
-          userId: userId,
-          completed: false,
-          expired: false,
-          dueDate: {
-            gte: currentWeekStart,
-            lte: currentWeekEnd
-          }
-        },
-        include: {
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              timeOfDay: true,
-              dayOfWeek: true,
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
-              }
-            }
-          }
-        },
-        orderBy: { dueDate: 'asc' }
-      }) : [];
-
-      // Separate into overdue and upcoming
-      const overdueAssignments = currentWeekAssignments.filter(
-        assignment => assignment.dueDate < today
-      );
-      
-      const upcomingAssignmentsThisWeek = currentWeekAssignments.filter(
-        assignment => assignment.dueDate >= today
-      );
-
-      // Get completed tasks count - only if user is in rotation
-      const completedTasks = userInRotation ? await prisma.assignment.count({
-        where: {
-          userId: userId,
-          completed: true
-        }
-      }) : 0;
-
-      // Get total assignments count - only if user is in rotation
-      const totalTasks = userInRotation ? await prisma.assignment.count({
-        where: { userId: userId }
-      }) : 0;
-
-      // Get pending swap requests - only if user is in rotation
-      const swapRequests = userInRotation ? await prisma.swapRequest.count({
-        where: {
-          assignment: {
-            userId: userId
-          },
-          status: "PENDING"
-        }
-      }) : 0;
-
-      // Get recent activity (notifications)
-      const recentActivity = await prisma.userNotification.findMany({
-        where: { userId: userId },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        select: {
-          id: true,
-          type: true,
-          title: true,
-          message: true,
-          createdAt: true,
-          read: true
-        }
-      });
-
-      // Calculate points earned this week - only if user is in rotation
-      const pointsThisWeek = userInRotation ? await this.getWeeklyPoints(userId, currentWeekStart) : 0;
-
-      // Format groups with rotation info
-      const groups = await Promise.all(userMemberships.map(async (member) => {
-        const group = member.group;
-        const tasksForThisGroup = currentWeekAssignments.filter(
-          assignment => assignment.task?.group?.id === group.id
-        );
-
-        // Get rotation stats for this group
-        const membersInRotation = await prisma.groupMember.count({
-          where: { 
-            groupId: group.id, 
-            inRotation: true 
-          }
-        });
-
-        const adminsInGroup = await prisma.groupMember.count({
-          where: { 
-            groupId: group.id, 
-            groupRole: "ADMIN" 
-          }
-        });
-
-        return {
-          id: group.id,
-          name: group.name,
-          avatarUrl: group.avatarUrl,
-          role: member.groupRole,
-          rotationOrder: member.rotationOrder,
-          isActive: member.isActive,
-          inRotation: member.inRotation,
-          currentRotationWeek: group.currentRotationWeek,
-          lastRotationUpdate: group.lastRotationUpdate,
-          stats: {
-            totalTasks: group._count.tasks,
-            totalMembers: group._count.members,
-            yourTasksThisWeek: tasksForThisGroup.length,
-            recurringTasks: group._count.tasks,
-            membersInRotation, // Number of members who get tasks
-            admins: adminsInGroup // Number of admins
-          }
-        };
-      }));
-
-      // Sort groups by activity
-      groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
-
-      return {
-        success: true,
-        data: {
-          user: {
-            ...user,
-            groupsCount,
-            pointsThisWeek,
-            totalPoints: userInRotation ? await this.getTotalPoints(userId) : 0,
-            inRotation: userInRotation,
-            isAdmin: userIsAdmin,
-            groupsWhereUserInRotation,
-            groupsWhereUserIsAdmin
-          },
-          stats: {
-            groupsCount,
-            tasksDueThisWeek,
-            overdueTasks,
-            completedTasks,
-            totalTasks,
-            swapRequests,
-            completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-            pointsThisWeek,
-            userInRotation, // Flag if user gets tasks
-            isAdmin: userIsAdmin // Flag if user is admin
-          },
-          currentWeekTasks: upcomingAssignmentsThisWeek
-            .filter(assignment => assignment.task !== null)
-            .map(assignment => ({
-              id: assignment.id,
-              taskId: assignment.task!.id,
-              title: assignment.task!.title,
-              points: assignment.task!.points,
-              timeOfDay: assignment.task!.timeOfDay,
-              dayOfWeek: assignment.task!.dayOfWeek,
-              dueDate: assignment.dueDate,
-              completed: assignment.completed,
-              groupName: assignment.task!.group?.name || 'Unknown Group',
-              groupId: assignment.task!.group?.id,
-              isOverdue: false,
-              daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-            })),
-          overdueTasks: overdueAssignments
-            .filter(assignment => assignment.task !== null)
-            .map(assignment => ({
-              id: assignment.id,
-              taskId: assignment.task!.id,
-              title: assignment.task!.title,
-              points: assignment.task!.points,
-              timeOfDay: assignment.task!.timeOfDay,
-              dayOfWeek: assignment.task!.dayOfWeek,
-              dueDate: assignment.dueDate,
-              completed: assignment.completed,
-              groupName: assignment.task!.group?.name || 'Unknown Group',
-              groupId: assignment.task!.group?.id,
-              isOverdue: true,
-              daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
-            })),
-          groups: groups,
-          recentActivity: recentActivity.map(activity => ({
-            ...activity,
-            icon: this.getActivityIcon(activity.type),
-            timeAgo: this.getTimeAgo(activity.createdAt)
-          })),
-          rotationInfo: {
-            currentWeekStart,
-            currentWeekEnd,
-            nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
-            daysUntilNextRotation: Math.max(0, Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-          }
-        }
-      };
-
-    } catch (e: any) {
-      console.error("HomeServices error:", e);
+    if (!user) {
       return {
         success: false,
-        message: e.message || "Internal server error"
+        message: "User not found"
       };
     }
+
+    // Get user's group memberships with rotation status
+    const userMemberships = await prisma.groupMember.findMany({
+      where: { userId: userId },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            currentRotationWeek: true,
+            lastRotationUpdate: true,
+            _count: {
+              select: {
+                tasks: {
+                  where: { isRecurring: true, isDeleted: false } // ✅ Exclude deleted tasks
+                },
+                members: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { joinedAt: 'desc' }
+    });
+
+    const groupsCount = userMemberships.length;
+
+    // Check user's rotation status across groups
+    const userInRotation = userMemberships.some(m => m.inRotation);
+    const userIsAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
+    const groupsWhereUserInRotation = userMemberships.filter(m => m.inRotation).length;
+    const groupsWhereUserIsAdmin = userMemberships.filter(m => m.groupRole === "ADMIN").length;
+
+    // Calculate date ranges
+    const now = new Date();
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    
+    // Get start of current week (Monday)
+    const currentWeekStart = new Date(now);
+    const day = currentWeekStart.getDay();
+    const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+    currentWeekStart.setDate(diff);
+    currentWeekStart.setHours(0, 0, 0, 0);
+    
+    // Get end of current week (Sunday)
+    const currentWeekEnd = new Date(currentWeekStart);
+    currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+    currentWeekEnd.setHours(23, 59, 59, 999);
+
+    console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
+    console.log(`📅 Today: ${today.toISOString()}`);
+
+    // ✅ FIX: Count tasks due this week - EXCLUDE assignments from deleted tasks
+    const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
+      where: {
+        userId: userId,
+        completed: false,
+        expired: false,
+        dueDate: {
+          gte: today,
+          lte: currentWeekEnd
+        },
+        // ✅ Only count assignments that have a valid task (not deleted)
+        taskId: { not: null }
+      }
+    }) : 0;
+
+    console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
+
+    // ✅ FIX: Count overdue tasks - EXCLUDE assignments from deleted tasks
+    const overdueTasks = userInRotation ? await prisma.assignment.count({
+      where: {
+        userId: userId,
+        completed: false,
+        expired: false,
+        dueDate: { lt: today },
+        // ✅ Only count assignments that have a valid task (not deleted)
+        taskId: { not: null }
+      }
+    }) : 0;
+
+    console.log(`📊 Overdue tasks: ${overdueTasks}`);
+
+    // ✅ FIX: Get current week assignments - EXCLUDE assignments from deleted tasks
+    const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
+      where: {
+        userId: userId,
+        completed: false,
+        expired: false,
+        dueDate: {
+          gte: currentWeekStart,
+          lte: currentWeekEnd
+        },
+        // ✅ Only include assignments that have a valid task (not deleted)
+        taskId: { not: null }
+      },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            timeOfDay: true,
+            dayOfWeek: true,
+            group: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { dueDate: 'asc' }
+    }) : [];
+
+    // Separate into overdue and upcoming
+    const overdueAssignments = currentWeekAssignments.filter(
+      assignment => assignment.dueDate < today
+    );
+    
+    const upcomingAssignmentsThisWeek = currentWeekAssignments.filter(
+      assignment => assignment.dueDate >= today
+    );
+
+    // ✅ FIX: Get completed tasks count - EXCLUDE assignments from deleted tasks
+    const completedTasks = userInRotation ? await prisma.assignment.count({
+      where: {
+        userId: userId,
+        completed: true,
+        // ✅ Only count assignments that have a valid task (not deleted)
+        taskId: { not: null }
+      }
+    }) : 0;
+
+    // ✅ FIX: Get total assignments count - EXCLUDE assignments from deleted tasks
+    const totalTasks = userInRotation ? await prisma.assignment.count({
+      where: { 
+        userId: userId,
+        // ✅ Only count assignments that have a valid task (not deleted)
+        taskId: { not: null }
+      }
+    }) : 0;
+
+    // Get pending swap requests - only if user is in rotation
+    const swapRequests = userInRotation ? await prisma.swapRequest.count({
+      where: {
+        assignment: {
+          userId: userId,
+          // ✅ Only count swaps for assignments that have a valid task
+          taskId: { not: null }
+        },
+        status: "PENDING"
+      }
+    }) : 0;
+
+    // Get recent activity (notifications) - no change needed
+    const recentActivity = await prisma.userNotification.findMany({
+      where: { userId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        type: true,
+        title: true,
+        message: true,
+        createdAt: true,
+        read: true
+      }
+    });
+
+    // Calculate points earned this week - only for valid tasks
+    const pointsThisWeek = userInRotation ? await this.getWeeklyPoints(userId, currentWeekStart) : 0;
+
+    // Format groups with rotation info
+    const groups = await Promise.all(userMemberships.map(async (member) => {
+      const group = member.group;
+      const tasksForThisGroup = currentWeekAssignments.filter(
+        assignment => assignment.task?.group?.id === group.id
+      );
+
+      // Get rotation stats for this group
+      const membersInRotation = await prisma.groupMember.count({
+        where: { 
+          groupId: group.id, 
+          inRotation: true 
+        }
+      });
+
+      const adminsInGroup = await prisma.groupMember.count({
+        where: { 
+          groupId: group.id, 
+          groupRole: "ADMIN" 
+        }
+      });
+
+      return {
+        id: group.id,
+        name: group.name,
+        avatarUrl: group.avatarUrl,
+        role: member.groupRole,
+        rotationOrder: member.rotationOrder,
+        isActive: member.isActive,
+        inRotation: member.inRotation,
+        currentRotationWeek: group.currentRotationWeek,
+        lastRotationUpdate: group.lastRotationUpdate,
+        stats: {
+          totalTasks: group._count.tasks,
+          totalMembers: group._count.members,
+          yourTasksThisWeek: tasksForThisGroup.length,
+          recurringTasks: group._count.tasks,
+          membersInRotation,
+          admins: adminsInGroup
+        }
+      };
+    }));
+
+    // Sort groups by activity
+    groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
+
+    return {
+      success: true,
+      data: {
+        user: {
+          ...user,
+          groupsCount,
+          pointsThisWeek,
+          totalPoints: userInRotation ? await this.getTotalPoints(userId) : 0,
+          inRotation: userInRotation,
+          isAdmin: userIsAdmin,
+          groupsWhereUserInRotation,
+          groupsWhereUserIsAdmin
+        },
+        stats: {
+          groupsCount,
+          tasksDueThisWeek,
+          overdueTasks,
+          completedTasks,
+          totalTasks,
+          swapRequests,
+          completionRate: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
+          pointsThisWeek,
+          userInRotation,
+          isAdmin: userIsAdmin
+        },
+        currentWeekTasks: upcomingAssignmentsThisWeek
+          .filter(assignment => assignment.task !== null)
+          .map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task!.id,
+            title: assignment.task!.title,
+            points: assignment.task!.points,
+            timeOfDay: assignment.task!.timeOfDay,
+            dayOfWeek: assignment.task!.dayOfWeek,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            groupName: assignment.task!.group?.name || 'Unknown Group',
+            groupId: assignment.task!.group?.id,
+            isOverdue: false,
+            daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          })),
+        overdueTasks: overdueAssignments
+          .filter(assignment => assignment.task !== null)
+          .map(assignment => ({
+            id: assignment.id,
+            taskId: assignment.task!.id,
+            title: assignment.task!.title,
+            points: assignment.task!.points,
+            timeOfDay: assignment.task!.timeOfDay,
+            dayOfWeek: assignment.task!.dayOfWeek,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            groupName: assignment.task!.group?.name || 'Unknown Group',
+            groupId: assignment.task!.group?.id,
+            isOverdue: true,
+            daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
+          })),
+        groups: groups,
+        recentActivity: recentActivity.map(activity => ({
+          ...activity,
+          icon: this.getActivityIcon(activity.type),
+          timeAgo: this.getTimeAgo(activity.createdAt)
+        })),
+        rotationInfo: {
+          currentWeekStart,
+          currentWeekEnd,
+          nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
+          daysUntilNextRotation: Math.max(0, Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        }
+      }
+    };
+
+  } catch (e: any) {
+    console.error("HomeServices error:", e);
+    return {
+      success: false,
+      message: e.message || "Internal server error"
+    };
   }
+}
     
   static async getWeeklySummary(userId: string) {
     try {

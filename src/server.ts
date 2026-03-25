@@ -69,7 +69,7 @@ import { checkAndFixRotation } from './utils/devRotation';
 import { setupSocketIO, setIO } from './socket';
 
 dotenv.config(); 
-
+ 
 const svr = express();
 
 // ========== 1. CORS FIRST - BEFORE ANYTHING ELSE ==========
