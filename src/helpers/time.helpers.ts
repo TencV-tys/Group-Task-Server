@@ -15,7 +15,7 @@ export interface CanSubmitResult {
   timeLeftText?: string;
   submissionStart?: Date;
   gracePeriodEnd?: Date;
-  opensIn?: number;
+  opensIn?: number; 
   opensAt?: Date;
   activeSlot?: any;
   slotIndex?: number;

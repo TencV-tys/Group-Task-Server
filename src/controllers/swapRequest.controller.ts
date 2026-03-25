@@ -244,7 +244,7 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
       message: "Internal server error"
     });
   }
-}
+} 
 
   // GET: Get single swap request details
   static async getSwapRequestDetails(req: UserAuthRequest, res: Response) {
@@ -294,75 +294,85 @@ static async getGroupSwapRequests(req: UserAuthRequest, res: Response) {
   }
 
    // ACCEPT: Accept a swap request
-  static async acceptSwapRequest(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { requestId } = req.params as {requestId:string};
+static async acceptSwapRequest(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { requestId } = req.params as { requestId: string };
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated"
-        });
-      }
-
-      if (!requestId) {
-        return res.status(400).json({
-          success: false,
-          message: "Request ID is required"
-        });
-      }
-
-      const result = await SwapRequestService.acceptSwapRequest(
-        requestId,
-        userId
-      );
-
-      if (!result.success) {
-        return res.status(400).json({
-          success: false,
-          message: result.message
-        });
-      }
-
-      // Build response dynamically based on scope
-      const responseData: any = {
-        swapRequest: result.swapRequest,
-        previousAssignee: result.previousAssignee,
-        scope: result.scope,
-        selectedDay: result.selectedDay,
-        selectedTimeSlotId: result.selectedTimeSlotId,
-        notifications: result.notifications // Include notification info
-      };
-
-      // Add scope-specific fields - ONLY if they exist
-      if (result.scope === 'week' && result.newAssignment) {
-        responseData.newAssignment = result.newAssignment;
-      }
-
-      if (result.scope === 'day') {
-        if (result.newAssignments) {
-          responseData.newAssignments = result.newAssignments;
-        }
-        if (result.transferredCount !== undefined) {
-          responseData.transferredCount = result.transferredCount;
-        }
-      }
-
-      return res.json({
-        success: true,
-        message: result.message,
-        data: responseData
-      });
-
-    } catch (error: any) {
-      console.error("SwapRequestController.acceptSwapRequest error:", error);
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "User not authenticated"
       });
-    } 
+    }
+
+    if (!requestId) {
+      return res.status(400).json({
+        success: false,
+        message: "Request ID is required"
+      });
+    }
+
+    const result = await SwapRequestService.acceptSwapRequest(
+      requestId,
+      userId
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    // ✅ Build response based on what the service actually returns
+    const responseData: any = {
+      swapRequest: result.swapRequest,
+      previousAssignee: result.previousAssignee,
+      scope: result.scope,
+      selectedDay: result.selectedDay,
+      transferredCount: result.transferredCount,
+      notifications: result.notifications
+    };
+
+    // ✅ Add new assignee info if exists (from week swap)
+    if (result.newAssignee) {
+      responseData.newAssignee = result.newAssignee;
+    }
+
+    // ✅ Week swap response - both users get assignments
+    if (result.scope === 'week') {
+      // Check if these properties exist (from the updated service)
+      if ('requesterNewAssignments' in result) {
+        responseData.requesterNewAssignments = result.requesterNewAssignments;
+        responseData.acceptorNewAssignments = result.acceptorNewAssignments;
+        responseData.requesterReceivedCount = result.requesterNewAssignments?.length || 0;
+        responseData.acceptorReceivedCount = result.acceptorNewAssignments?.length || 0;
+      }
+    }
+
+    // ✅ Day swap response - single transfer
+    if (result.scope === 'day') {
+      // Check if newAssignments exists (for day swap)
+      if ('newAssignments' in result) {
+        responseData.newAssignments = result.newAssignments;
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: responseData
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.acceptSwapRequest error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
 
   // REJECT: Reject a swap request
   static async rejectSwapRequest(req: UserAuthRequest, res: Response) {
