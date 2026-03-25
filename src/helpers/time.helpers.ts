@@ -17,6 +17,8 @@ export interface CanSubmitResult {
   gracePeriodEnd?: Date;
   opensIn?: number; 
   opensAt?: Date;
+   onTimeEnd?: Date;       
+  lateWindowEnd?: Date; 
   activeSlot?: any;
   slotIndex?: number;
   submissionStatus?: string;
@@ -26,10 +28,13 @@ export class TimeHelpers {
   static readonly GRACE_PERIOD_MINUTES = 30;
   static readonly LATE_SUBMISSION_PENALTY = 0.5;
 
-  static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
+ // helpers/time.helpers.ts - CORRECTED timing
+
+static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
     const dueDate = new Date(assignment.dueDate);
     const currentDate = currentTime;
     
+    // Check if it's the due date
     if (dueDate.toDateString() !== currentDate.toDateString()) {
       return { 
         allowed: false, 
@@ -39,13 +44,8 @@ export class TimeHelpers {
       };
     }
     
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
-    } else {
+    // If no time slot, allow any time on due date
+    if (!assignment.timeSlot) {
       return { 
         allowed: true,
         willBePenalized: false,
@@ -54,122 +54,94 @@ export class TimeHelpers {
       };
     }
     
-    if (assignment.timeSlotId && timeSlotsToCheck.length > 0) {
-      const specificSlot = timeSlotsToCheck.find((slot: any) => slot.id === assignment.timeSlotId);
-      if (specificSlot) {
-        timeSlotsToCheck = [specificSlot];
-      }
-    }
+    // Parse time slot end time
+    const endParts = assignment.timeSlot.endTime.split(':');
+    const endHour = parseInt(endParts[0] || '0', 10);
+    const endMinute = parseInt(endParts[1] || '0', 10);
     
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
+    const endTime = new Date(dueDate);
+    endTime.setHours(endHour, endMinute, 0, 0);
     
-    if (availableSlots.length === 0) {
+    // ✅ Submission opens AT end time
+    const submissionStart = endTime;
+    
+    // ✅ On-time window: 0 to 25 minutes after end time
+    const onTimeEnd = new Date(endTime.getTime() + 25 * 60000);
+    
+    // ✅ Late window: 25 to 30 minutes after end time (5 minutes)
+    const lateWindowEnd = new Date(endTime.getTime() + 30 * 60000);
+    
+    // ✅ Grace period end (window closes)
+    const gracePeriodEnd = lateWindowEnd;
+    
+    console.log(`⏰ Time check:`, {
+      now: currentDate.toLocaleTimeString(),
+      submissionStart: submissionStart.toLocaleTimeString(),
+      onTimeEnd: onTimeEnd.toLocaleTimeString(),
+      lateWindowEnd: lateWindowEnd.toLocaleTimeString(),
+      endTime: endTime.toLocaleTimeString()
+    });
+    
+    // BEFORE submission opens
+    if (currentDate < submissionStart) {
+      const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
       return { 
         allowed: false, 
-        reason: 'All time slots completed',
-        currentDate: currentDate,
-        willBePenalized: false
+        reason: 'Submission not open yet',
+        opensIn: Math.ceil(timeUntilStart / 60000),
+        submissionStart,
+        currentTime: currentDate,
+        willBePenalized: false,
+        activeSlot: null // ✅ Add activeSlot
       };
     }
     
-    let bestResult: CanSubmitResult | null = null;
-    
-    for (const slot of availableSlots) {
-      if (!slot) continue;
-      
-      const startParts = slot.startTime.split(':');
-      const endParts = slot.endTime.split(':');
-      
-      const startHour = parseInt(startParts[0] || '0', 10);
-      const startMinute = parseInt(startParts[1] || '0', 10);
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
-      
-      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
-      const lateThreshold = new Date(endTime.getTime() + 25 * 60000);
-      
-      if (currentDate < submissionStart) {
-        const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
-        const result: CanSubmitResult = { 
-          allowed: false, 
-          reason: 'Submission not open yet',
-          opensIn: Math.ceil(timeUntilStart / 60000),
-          opensAt: submissionStart,
-          submissionStart,
-          currentTime: currentDate,
-          willBePenalized: false,
-          activeSlot: slot,
-          slotIndex: timeSlotsToCheck.indexOf(slot)
-        };
-        
-        if (!bestResult || 
-            (bestResult.opensIn && result.opensIn && result.opensIn < bestResult.opensIn)) {
-          bestResult = result;
-        }
-        continue;
-      }
-      
-      if (currentDate <= endTime) {
-        const timeLeft = endTime.getTime() - currentDate.getTime();
-        const slotPoints = slot.points || assignment.points;
-        const result: CanSubmitResult = { 
-          allowed: true, 
-          timeLeft: Math.ceil(timeLeft / 1000),
-          timeLeftText: this.getTimeLeftText(Math.ceil(timeLeft / 1000)),
-          submissionStart,
-          gracePeriodEnd,
-          currentTime: currentDate,
-          willBePenalized: false,
-          finalPoints: slotPoints,
-          originalPoints: slotPoints,
-          activeSlot: slot,
-          slotIndex: timeSlotsToCheck.indexOf(slot),
-          submissionStatus: 'on_time'
-        };
-        return result;
-      }
-      
-      if (currentDate <= gracePeriodEnd) {
-        const timeLeft = gracePeriodEnd.getTime() - currentDate.getTime();
-        const isLateSubmission = currentDate > lateThreshold;
-        const slotPoints = slot.points || assignment.points;
-        
-        const result: CanSubmitResult = { 
-          allowed: true, 
-          timeLeft: Math.ceil(timeLeft / 1000),
-          timeLeftText: this.getTimeLeftText(Math.ceil(timeLeft / 1000)),
-          submissionStart,
-          gracePeriodEnd,
-          currentTime: currentDate,
-          willBePenalized: isLateSubmission,
-          finalPoints: isLateSubmission ? Math.floor(slotPoints * (1 - this.LATE_SUBMISSION_PENALTY)) : slotPoints,
-          originalPoints: slotPoints,
-          activeSlot: slot,
-          slotIndex: timeSlotsToCheck.indexOf(slot),
-          submissionStatus: isLateSubmission ? 'late' : 'grace_period'
-        };
-        return result;
-      }
+    // ON TIME: Within first 25 minutes after end time
+    if (currentDate <= onTimeEnd) {
+      const timeLeft = onTimeEnd.getTime() - currentDate.getTime();
+      return { 
+        allowed: true, 
+        timeLeft: Math.ceil(timeLeft / 1000),
+        onTimeEnd,
+        currentTime: currentDate,
+        willBePenalized: false,
+        finalPoints: assignment.points,
+        originalPoints: assignment.points,
+        submissionStatus: 'on_time',
+        activeSlot: assignment.timeSlot // ✅ Add activeSlot
+      };
     }
     
-    if (bestResult && !bestResult.allowed) {
-      return bestResult;
+    // LATE: Within next 5 minutes (25-30 minutes after end time)
+    if (currentDate <= lateWindowEnd) {
+      const timeLeft = lateWindowEnd.getTime() - currentDate.getTime();
+      return { 
+        allowed: true, 
+        timeLeft: Math.ceil(timeLeft / 1000),
+        onTimeEnd,
+        lateWindowEnd,
+        currentTime: currentDate,
+        willBePenalized: true,
+        finalPoints: Math.floor(assignment.points * (1 - this.LATE_SUBMISSION_PENALTY)),
+        originalPoints: assignment.points,
+        submissionStatus: 'late',
+        activeSlot: assignment.timeSlot // ✅ Add activeSlot
+      };
     }
     
+    // After 30 minutes - closed
     return { 
       allowed: false, 
       reason: 'Submission window closed',
+      lateWindowEnd,
       currentTime: currentDate,
       willBePenalized: true,
-      originalPoints: assignment.points
+      originalPoints: assignment.points,
+      activeSlot: null // ✅ Add activeSlot
     };
   }
   
+
   static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): boolean {
     if (assignment.completed) return false;
     

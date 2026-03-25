@@ -16,7 +16,7 @@ router.use(UserAuthMiddleware);
 
 // ============= ASSIGNMENT ROUTES =============
 // Complete an assignment - with photo upload support
-router.post(
+router.post( 
   '/:assignmentId/complete', 
   photoUpload, // Add this to handle file uploads
   AssignmentController.completeAssignment

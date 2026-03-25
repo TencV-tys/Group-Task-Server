@@ -16,7 +16,7 @@ static async createSwapRequest(
     targetUserId?: string;
     expiresAt?: Date;
     scope?: 'week' | 'day';
-    selectedDay?: string;
+    selectedDay?: string; 
     selectedTimeSlotId?: string;
   }
 ) {
@@ -1024,9 +1024,10 @@ static async getGroupSwapRequests(
     }
   }
  
-  // services/swapRequest.services.ts - UPDATED acceptSwapRequest with true swap
+ 
+// services/swapRequest.services.ts - FIXED WEEK SWAP (true exchange)
 
-// ACCEPT: Accept a swap request - UPDATED FOR TRUE WEEK SWAP
+// ACCEPT: Accept a swap request - FIXED WEEK SWAP
 static async acceptSwapRequest(requestId: string, userId: string) {
   try {
     // Get swap request with all needed relations
@@ -1127,17 +1128,15 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     let acceptorNewAssignments: any[] = [];
 
     if (swapRequest.scope === 'day' && swapRequest.selectedDay) {
-      // ============= DAY SWAP =============
+      // ============= DAY SWAP (unchanged) =============
       console.log(`🔄 Processing DAY swap for ${swapRequest.selectedDay}`);
       
       const transactionResult = await prisma.$transaction(async (prisma) => {
-        // Update swap request status
         const updated = await prisma.swapRequest.update({
           where: { id: requestId },
           data: { status: "ACCEPTED", targetUserId: userId }
         });
 
-        // Get requester's assignment for that day
         const requesterWhere: any = {
           taskId: task.id,
           userId: requesterId,
@@ -1153,7 +1152,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           where: requesterWhere
         });
 
-        // Get acceptor's assignment for that day
         const acceptorWhere: any = {
           taskId: task.id,
           userId: userId,
@@ -1173,7 +1171,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           throw new Error(`No assignment found for requester on ${swapRequest.selectedDay}`);
         }
 
-        // Swap assignments: update both users' assignments
         if (acceptorAssignment) {
           // Swap: Update both assignments
           await prisma.assignment.update({
@@ -1199,7 +1196,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
             acceptorNew: [requesterAssignment]
           };
         } else {
-          // Acceptor has no assignment that day - just transfer
           await prisma.assignment.update({
             where: { id: requesterAssignment.id },
             data: {
@@ -1223,7 +1219,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       requesterNewAssignments = transactionResult.requesterNew;
 
     } else {
-      // ============= WEEK SWAP - TRUE SWAP =============
+      // ============= WEEK SWAP - TRUE EXCHANGE =============
       console.log(`🔄 Processing WEEK swap - EXCHANGING all tasks between users`);
 
       const transactionResult = await prisma.$transaction(async (prisma) => {
@@ -1258,11 +1254,13 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           throw new Error("No assignments found for requester this week");
         }
 
-        // Create arrays to store swapped assignments
+        // ✅ IMPORTANT: For true exchange, we need to UPDATE both users' assignments
+        // NOT delete and create! We just swap the userId fields.
+        
         const updatedRequesterAssignments: any[] = [];
         const updatedAcceptorAssignments: any[] = [];
 
-        // Swap requester's assignments to acceptor
+        // STEP 1: Update requester's assignments to acceptor
         for (const assignment of requesterAssignments) {
           const updated = await prisma.assignment.update({
             where: { id: assignment.id },
@@ -1276,7 +1274,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           updatedAcceptorAssignments.push(updated);
         }
 
-        // Swap acceptor's assignments to requester
+        // STEP 2: Update acceptor's assignments to requester
         for (const assignment of acceptorAssignments) {
           const updated = await prisma.assignment.update({
             where: { id: assignment.id },
@@ -1290,14 +1288,18 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           updatedRequesterAssignments.push(updated);
         }
 
-        // Update task's current assignee for the week (if needed)
+        // Update task's current assignee for the week
         await prisma.task.update({
           where: { id: task.id },
           data: {
-            currentAssignee: userId, // Acceptor now has the task for this week
+            currentAssignee: userId,
             lastAssignedAt: new Date()
           }
         });
+
+        console.log(`✅ WEEK SWAP completed:`);
+        console.log(`   Requester (${requesterDetails?.fullName}) now has ${updatedRequesterAssignments.length} tasks`);
+        console.log(`   Acceptor (${acceptorDetails?.fullName}) now has ${updatedAcceptorAssignments.length} tasks`);
 
         return {
           updatedRequest: updated,
@@ -1326,7 +1328,9 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         successMessage = `Swap completed! You've taken over ${swapRequest.selectedDay}'s assignment from ${requesterDetails?.fullName}.`;
       }
     } else {
-      successMessage = `Week swap completed! You and ${requesterDetails?.fullName} have exchanged ALL tasks for week ${currentWeek}.`;
+      successMessage = `Week swap completed! You and ${requesterDetails?.fullName} have exchanged ALL tasks for week ${currentWeek}.\n\n` +
+        `You now have ${acceptorNewAssignments.length} task(s) (from ${requesterDetails?.fullName})\n` +
+        `${requesterDetails?.fullName} now has ${requesterNewAssignments.length} task(s) (from you)`;
     }
 
     // ============= CREATE NOTIFICATIONS =============
@@ -1335,8 +1339,10 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     await UserNotificationService.createNotification({
       userId: swapRequest.requestedBy,
       type: "SWAP_ACCEPTED",
-      title: "✅ Week Swap Completed",
-      message: `${acceptorDetails?.fullName || "A user"} has swapped the entire week with you! You now have ${requesterNewAssignments.length} tasks (from ${acceptorDetails?.fullName}) for week ${currentWeek}.`,
+      title: swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed",
+      message: swapRequest.scope === 'week'
+        ? `${acceptorDetails?.fullName || "A user"} has swapped the entire week with you! You now have ${requesterNewAssignments.length} tasks (from ${acceptorDetails?.fullName}) for week ${currentWeek}.`
+        : `${acceptorDetails?.fullName || "A user"} has accepted your day swap for ${swapRequest.selectedDay}.`,
       data: {
         swapRequestId: requestId,
         taskId: task.id,
@@ -1357,8 +1363,10 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     await UserNotificationService.createNotification({
       userId,
       type: "SWAP_COMPLETED",
-      title: "✅ Week Swap Completed",
-      message: `You have swapped the entire week with ${requesterDetails?.fullName || "another user"}! You now have ${acceptorNewAssignments.length} tasks for week ${currentWeek}.`,
+      title: swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed",
+      message: swapRequest.scope === 'week'
+        ? `You have swapped the entire week with ${requesterDetails?.fullName || "another user"}! You now have ${acceptorNewAssignments.length} tasks for week ${currentWeek}.`
+        : `You have accepted the day swap for ${swapRequest.selectedDay} from ${requesterDetails?.fullName}.`,
       data: {
         swapRequestId: requestId,
         taskId: task.id,
@@ -1405,8 +1413,10 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       await UserNotificationService.createNotification({
         userId: admin.userId,
         type: "SWAP_ADMIN_NOTIFICATION",
-        title: "🔄 Week Swap Completed",
-        message: `${requesterDetails?.fullName || "A user"} and ${acceptorDetails?.fullName || "another user"} have swapped ALL tasks for week ${currentWeek}.`,
+        title: swapRequest.scope === 'week' ? "🔄 Week Swap Completed" : "🔄 Day Swap Completed",
+        message: swapRequest.scope === 'week'
+          ? `${requesterDetails?.fullName || "A user"} and ${acceptorDetails?.fullName || "another user"} have exchanged ALL tasks for week ${currentWeek}.`
+          : `${requesterDetails?.fullName || "A user"} and ${acceptorDetails?.fullName || "another user"} have exchanged ${swapRequest.selectedDay}'s tasks.`,
         data: {
           swapRequestId: requestId,
           taskId: task.id,
@@ -1468,6 +1478,8 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       transferredCount,
       requesterNewAssignments,
       acceptorNewAssignments,
+      requesterTaskCount: requesterNewAssignments.length,
+      acceptorTaskCount: acceptorNewAssignments.length,
       notifications: {
         notifiedRequester: true,
         notifiedAcceptor: true,
@@ -1481,8 +1493,9 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       success: false, 
       message: error.message || "Error accepting swap request" 
     };
-  }
+  } 
 }
+
 
   // REJECT: Reject a swap request
   static async rejectSwapRequest(

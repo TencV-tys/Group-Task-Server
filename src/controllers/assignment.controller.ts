@@ -17,7 +17,7 @@ export class AssignmentController {
       // For multipart requests, multer already processed the file
       // The file is available at req.file
       // The notes are available at req.body.notes
-      
+       
       let photoUrl = undefined; 
       const file = (req as any).file;
       
