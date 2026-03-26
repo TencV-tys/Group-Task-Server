@@ -15,7 +15,7 @@ export interface GroupFilters {
   createdBefore?: Date;
   status?: GroupStatus;
   hasReports?: boolean;
-  minReports?: number;
+  minReports?: number; 
 }
 
 // Define which report types trigger which actions
@@ -89,167 +89,168 @@ export interface ReportAnalysis {
 
 export class AdminGroupsService {
   
-  // ========== GET ALL GROUPS WITH FILTERS ==========
-  static async getGroups(filters: GroupFilters = {}) {
-    try {
-      const {
-        search,
-        page = 1,
-        limit = 20,
-        sortBy = 'createdAt',
-        sortOrder = 'desc',
-        minMembers,
-        maxMembers,
-        createdAfter,
-        createdBefore,
-        status,
-        hasReports,
-        minReports
-      } = filters;
+ // ========== GET ALL GROUPS WITH FILTERS ==========
+static async getGroups(filters: GroupFilters = {}) {
+  try {
+    const {
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      minMembers,
+      maxMembers,
+      createdAfter,
+      createdBefore,
+      status,
+      hasReports,
+      minReports
+    } = filters;
 
-      // Validate member count - only 6 allowed for min, and 6-10 for max
-      if (minMembers !== undefined && minMembers !== 6) {
-        return {
-          success: false,
-          message: 'Minimum members can only be 6'
-        };
-      }
-
-      if (maxMembers !== undefined && (maxMembers < 6 || maxMembers > 10)) {
-        return {
-          success: false,
-          message: 'Maximum members must be between 6 and 10'
-        };
-      }
-
-      const where: any = {};
-
-      // Search filter
-      if (search) {
-        where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } },
-        ];
-      }
-
-      // Date filters
-      if (createdAfter || createdBefore) {
-        where.createdAt = {};
-        if (createdAfter) where.createdAt.gte = createdAfter;
-        if (createdBefore) where.createdAt.lte = createdBefore;
-      }
-
-      // Status filter
-      if (status) {
-        where.status = status;
-      }
-
-      // Reports filter
-      if (hasReports !== undefined || minReports !== undefined) {
-        where.reports = {
-          some: {
-            status: { in: ['PENDING', 'REVIEWING'] }
-          }
-        };
-        
-        if (minReports !== undefined) {
-          where.reports = {
-            ...where.reports,
-            every: {
-              status: { in: ['PENDING', 'REVIEWING'] }
-            }
-          };
-        }
-      }
-
-      const skip = (page - 1) * limit;
-
-      // Get groups with counts
-      const [groups, total] = await Promise.all([
-        prisma.group.findMany({
-          where,
-          include: {
-            creator: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true
-              }
-            },
-            _count: {
-              select: {
-                members: true,
-                tasks: {
-                  where: { isDeleted: false }
-                },
-                reports: {
-                  where: { status: { in: ['PENDING', 'REVIEWING'] } }
-                }
-              }
-            }
-          },
-          orderBy: { [sortBy]: sortOrder },
-          skip,
-          take: limit
-        }),
-        prisma.group.count({ where })
-      ]);
-
-      // Filter by member count if needed (after query since member count isn't in where)
-      let filteredGroups = groups;
-      if (minMembers !== undefined || maxMembers !== undefined) {
-        filteredGroups = groups.filter(group => {
-          const memberCount = group._count.members;
-          if (minMembers !== undefined && memberCount < minMembers) return false;
-          if (maxMembers !== undefined && memberCount > maxMembers) return false;
-          return true;
-        });
-      }
-
-      // Filter by min reports if needed
-      if (minReports !== undefined) {
-        filteredGroups = filteredGroups.filter(group => 
-          group._count.reports >= minReports!
-        );
-      }
-
-      const formattedGroups = filteredGroups.map(group => ({
-        id: group.id,
-        name: group.name,
-        description: group.description,
-        avatarUrl: group.avatarUrl,
-        inviteCode: group.inviteCode,
-        status: group.status,
-        isDeleted: group.isDeleted,
-        createdAt: group.createdAt,
-        updatedAt: group.updatedAt,
-        currentRotationWeek: group.currentRotationWeek,
-        lastRotationUpdate: group.lastRotationUpdate,
-        creator: group.creator,
-        _count: group._count,
-      }));
-
-      return {
-        success: true,
-        message: 'Groups retrieved successfully',
-        groups: formattedGroups,
-        pagination: {
-          total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit),
-          hasMore: page < Math.ceil(total / limit)
-        }
-      };
-
-    } catch (error: any) {
-      console.error('Error fetching groups:', error);
+    // Validate member count - only 6 allowed for min, and 6-10 for max
+    if (minMembers !== undefined && minMembers !== 6) {
       return {
         success: false,
-        message: error.message || 'Failed to fetch groups'
+        message: 'Minimum members can only be 6'
       };
     }
+
+    if (maxMembers !== undefined && (maxMembers < 6 || maxMembers > 10)) {
+      return {
+        success: false,
+        message: 'Maximum members must be between 6 and 10'
+      };
+    }
+
+    const where: any = {};
+
+    // Search filter
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    // Date filters
+    if (createdAfter || createdBefore) {
+      where.createdAt = {};
+      if (createdAfter) where.createdAt.gte = createdAfter;
+      if (createdBefore) where.createdAt.lte = createdBefore;
+    }
+
+    // Status filter
+    if (status) {
+      if (status === 'DELETED') {
+        where.isDeleted = true;
+      } else {
+        where.status = status;
+        where.isDeleted = false;
+      }
+    }
+
+    // ✅ FIXED: Reports filter - only add if explicitly requested
+    if (hasReports === true) {
+      where.reports = {
+        some: {
+          status: { in: ['PENDING', 'REVIEWING'] }
+        }
+      };
+    }
+    
+    // ✅ For minReports, we'll handle it after query since it's a count condition
+    // (We can't filter by count in WHERE easily with Prisma)
+
+    const skip = (page - 1) * limit;
+
+    // Get groups with counts
+    const [groups, total] = await Promise.all([
+      prisma.group.findMany({
+        where,
+        include: {
+          creator: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
+          },
+          _count: {
+            select: {
+              members: true,
+              tasks: {
+                where: { isDeleted: false }
+              },
+              reports: {
+                where: { status: { in: ['PENDING', 'REVIEWING'] } }
+              }
+            }
+          }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      prisma.group.count({ where })
+    ]);
+
+    // Filter by member count if needed (after query since member count isn't in where)
+    let filteredGroups = groups;
+    if (minMembers !== undefined || maxMembers !== undefined) {
+      filteredGroups = groups.filter(group => {
+        const memberCount = group._count.members;
+        if (minMembers !== undefined && memberCount < minMembers) return false;
+        if (maxMembers !== undefined && memberCount > maxMembers) return false;
+        return true;
+      });
+    }
+
+    // Filter by min reports if needed (after query)
+    if (minReports !== undefined) {
+      filteredGroups = filteredGroups.filter(group => 
+        group._count.reports >= minReports!
+      );
+    }
+
+    console.log(`📊 [AdminGroupsService] Found ${groups.length} groups from DB, filtered to ${filteredGroups.length}`);
+
+    const formattedGroups = filteredGroups.map(group => ({
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      avatarUrl: group.avatarUrl,
+      inviteCode: group.inviteCode,
+      status: group.status,
+      isDeleted: group.isDeleted,
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+      currentRotationWeek: group.currentRotationWeek,
+      lastRotationUpdate: group.lastRotationUpdate,
+      creator: group.creator,
+      _count: group._count,
+    }));
+
+    return {
+      success: true,
+      message: 'Groups retrieved successfully',
+      groups: formattedGroups,
+      pagination: {
+        total: total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+        hasMore: page < Math.ceil(total / limit)
+      }
+    };
+
+  } catch (error: any) {
+    console.error('Error fetching groups:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to fetch groups'
+    };
   }
+}
 
   // ========== GET GROUP BY ID ==========
   static async getGroupById(groupId: string) {

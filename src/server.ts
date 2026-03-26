@@ -79,11 +79,20 @@ console.log('🔓 Configuring CORS...');
 svr.use(cors({
     origin: true,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-    exposedHeaders: ['Content-Length', 'X-Request-Id']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+        'Content-Type', 
+        'Authorization', 
+        'Accept', 
+        'X-Requested-With',
+        'cache-control',      // ✅ Add this
+        'Cache-Control',      // ✅ Add this (capitalized)
+        'x-access-token',
+        'X-Access-Token'
+    ],
+    exposedHeaders: ['Content-Length', 'X-Total-Count', 'X-Request-Id'],
+    maxAge: 86400 // 24 hours - cache preflight requests
 }));
-
 // ============================================================================
 // 2. BASIC MIDDLEWARE - Parsing, Logging
 // ============================================================================
@@ -166,7 +175,7 @@ svr.use('/api/auth/users/login', loginThrottle);
 svr.use('/api/auth/users/signup', loginThrottle);
 svr.use('/api/auth/users/refresh-token', strictThrottle);
 svr.use('/api/auth/users/logout', lightThrottle);
-svr.use('/api/uploads', uploadThrottle);
+svr.use('/api/uploads', uploadThrottle); 
 svr.use('/api/tasks', lightThrottle);
 svr.use('/api/swap-requests', lightThrottle);
 svr.use('/api/feedback', lightThrottle);
