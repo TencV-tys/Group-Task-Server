@@ -306,7 +306,7 @@ if (data.executionFrequency === 'DAILY') {
         let selectedDaysArray = data.selectedDays;
         if (!selectedDaysArray && data.dayOfWeek) {
           selectedDaysArray = [data.dayOfWeek];
-        }
+        } 
         
         if (selectedDaysArray && selectedDaysArray.length > 0) {
           // Get the current week's start (Monday)
@@ -1159,7 +1159,9 @@ return {
     }
   }
 
- // Rotate group tasks - UPDATED with expired field handling
+ // services/task.services.ts - FIXED rotateGroupTasks (REMOVE points addition)
+
+// Rotate group tasks - UPDATED with expired field handling (NO POINTS ADDED HERE)
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -1175,7 +1177,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       return { success: false, message: "Group not found" };
     }
 
-    // ✅ STEP 1: Mark previous week's incomplete assignments as expired
+    // STEP 1: Mark previous week's incomplete assignments as expired
     const previousWeek = group.currentRotationWeek;
     
     const expiredCount = await prisma.assignment.updateMany({
@@ -1222,12 +1224,12 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       return { success: false, message: "No recurring tasks to rotate" };
     }
 
-    // ===== UPDATED: Get all active members that are in rotation (EXCLUDE ADMINS) =====
+    // Get all active members that are in rotation (EXCLUDE ADMINS)
     const members = await prisma.groupMember.findMany({
       where: { 
         groupId, 
         isActive: true,
-        inRotation: true // ← ADD THIS
+        inRotation: true
       },
       include: { 
         user: { 
@@ -1330,85 +1332,75 @@ static async rotateGroupTasks(groupId: string, userId: string) {
                 assignmentDay: TaskHelpers.getDayOfWeekFromIndex(day),
                 completed: false,
                 expired: false,
+                verified: null, // Important: null = pending verification
                 ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
               }
             });
           }
         }
       } else if (task.executionFrequency === 'WEEKLY') {
-  let selectedDays: DayOfWeek[] = [];
-  
-  if (task.selectedDays) {
-    try {
-      selectedDays = JSON.parse(task.selectedDays as string);
-    } catch {
-      selectedDays = [];
-    }
-  }
-  
-  if (selectedDays.length === 0 && task.dayOfWeek) {
-    selectedDays = [task.dayOfWeek];
-  }
-  
-  if (selectedDays.length === 0) {
-    selectedDays = ['MONDAY'];
-  }
-  
-  for (const day of selectedDays) {
-    // ✅ FIX: Pass weekStart Date directly
-    const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
-    
-    for (const timeSlot of timeSlots) {
-      const timeParts = timeSlot.startTime.split(':');
-      const hours = Number(timeParts[0]) || 0;
-      const minutes = Number(timeParts[1]) || 0;
-      
-      const slotDueDate = new Date(baseDueDate);
-      slotDueDate.setHours(hours, minutes, 0, 0);
-      
-      await prisma.assignment.create({
-        data: {
-          taskId: task.id,
-          userId: member.userId,
-          dueDate: slotDueDate,
-          points: timeSlot.points || task.totalPoints,
-          rotationWeek: newWeek,
-          weekStart,
-          weekEnd,
-          assignmentDay: day,
-          completed: false,
-          expired: false,
-          ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+        let selectedDays: DayOfWeek[] = [];
+        
+        if (task.selectedDays) {
+          try {
+            selectedDays = JSON.parse(task.selectedDays as string);
+          } catch {
+            selectedDays = [];
+          }
         }
-      });
-    }
-  }
-}
+        
+        if (selectedDays.length === 0 && task.dayOfWeek) {
+          selectedDays = [task.dayOfWeek];
+        }
+        
+        if (selectedDays.length === 0) {
+          selectedDays = ['MONDAY'];
+        }
+        
+        for (const day of selectedDays) {
+          const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
+          
+          for (const timeSlot of timeSlots) {
+            const timeParts = timeSlot.startTime.split(':');
+            const hours = Number(timeParts[0]) || 0;
+            const minutes = Number(timeParts[1]) || 0;
+            
+            const slotDueDate = new Date(baseDueDate);
+            slotDueDate.setHours(hours, minutes, 0, 0);
+            
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: member.userId,
+                dueDate: slotDueDate,
+                points: timeSlot.points || task.totalPoints,
+                rotationWeek: newWeek,
+                weekStart,
+                weekEnd,
+                assignmentDay: day,
+                completed: false,
+                expired: false,
+                verified: null, // Important: null = pending verification
+                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+              }
+            });
+          }
+        }
+      }
 
-      // Update member's cumulative points
-      const taskPoints = task.totalPoints;
-      await prisma.groupMember.update({
-        where: { id: member.id },
-        data: {
-          cumulativePoints: {
-            increment: taskPoints
-          },
-          pointsUpdatedAt: new Date()
-        }
-      });
+      // ✅ REMOVED: Points are NOT added here anymore!
+      // Points will be added when admin VERIFIES the submission
 
       rotatedTasks.push({
         taskId: task.id,
         taskTitle: task.title,
-        taskPoints,
+        taskPoints: task.totalPoints,
         previousAssignee: task.currentAssignee,
         newAssignee: member.userId,
-        newAssigneeName: member.user?.fullName || 'Unknown',
-        oldCumulative: member.cumulativePoints,
-        newCumulative: member.cumulativePoints + taskPoints
+        newAssigneeName: member.user?.fullName || 'Unknown'
       });
     }
-
+ 
     // Update group rotation week
     await prisma.group.update({
       where: { id: groupId },
@@ -1418,23 +1410,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       }
     });
 
-    // Calculate fairness metrics
-    const updatedMembers = await prisma.groupMember.findMany({
-      where: { groupId, isActive: true, inRotation: true },
-      include: { user: { select: { fullName: true } } },
-      orderBy: { cumulativePoints: 'desc' }
-    });
-
-    const maxPoints = updatedMembers.length > 0 ? updatedMembers[0]?.cumulativePoints || 0 : 0;
-    const minPoints = updatedMembers.length > 0 ? updatedMembers[updatedMembers.length - 1]?.cumulativePoints || 0 : 0;
-    const fairnessScore = maxPoints > 0 ? Math.round(100 - ((maxPoints - minPoints) / maxPoints) * 100) : 100;
-
-    console.log('✅ FAIRNESS PROOF:');
-    if (members.length > 0 && sortedTasks.length > 0) {
-      console.log(`Lowest points member (${members[0]?.user?.fullName || 'Unknown'} - ${members[0]?.cumulativePoints || 0}pts) → got highest task (${sortedTasks[0]?.title || 'Unknown'} - ${sortedTasks[0]?.totalPoints || 0}pts)`);
-      console.log(`Highest points member (${members[members.length-1]?.user?.fullName || 'Unknown'} - ${members[members.length-1]?.cumulativePoints || 0}pts) → got lowest task (${sortedTasks[sortedTasks.length-1]?.title || 'Unknown'} - ${sortedTasks[sortedTasks.length-1]?.totalPoints || 0}pts)`);
-    }
-
     return {
       success: true,
       message: `Rotated ${rotatedTasks.length} tasks to week ${newWeek}`,
@@ -1442,20 +1417,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       newWeek,
       weekStart,
       weekEnd,
-      fairnessMetrics: {
-        lowestPointsMember: members.length > 0 ? members[0]?.user?.fullName || 'Unknown' : 'Unknown',
-        lowestPointsValue: members.length > 0 ? members[0]?.cumulativePoints || 0 : 0,
-        gotHighestTask: sortedTasks.length > 0 ? sortedTasks[0]?.title || 'Unknown' : 'Unknown',
-        gotHighestPoints: sortedTasks.length > 0 ? sortedTasks[0]?.totalPoints || 0 : 0,
-        highestPointsMember: members.length > 0 ? members[members.length-1]?.user?.fullName || 'Unknown' : 'Unknown',
-        highestPointsValue: members.length > 0 ? members[members.length-1]?.cumulativePoints || 0 : 0,
-        gotLowestTask: sortedTasks.length > 0 ? sortedTasks[sortedTasks.length-1]?.title || 'Unknown' : 'Unknown',
-        gotLowestPoints: sortedTasks.length > 0 ? sortedTasks[sortedTasks.length-1]?.totalPoints || 0 : 0,
-        fairnessScore,
-        afterRotationMax: maxPoints,
-        afterRotationMin: minPoints,
-        afterRotationDiff: maxPoints - minPoints
-      }
+      note: "Points will be awarded only after admin verification"
     };
 
   } catch (error: any) {
@@ -1463,6 +1425,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
+
 
 // Get rotation schedule - FIXED to show ACTUAL assignments
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {

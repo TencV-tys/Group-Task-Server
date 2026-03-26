@@ -239,7 +239,7 @@ static async completeAssignment(
       photoUrl: data.photoUrl || undefined,
       notes: data.notes || (isLate ? `[LATE: Submitted after ${targetTimeSlot?.endTime}]` : undefined),
         verified: allSlotsCompleted ? null : undefined, 
-      points: updatedPoints
+      points: updatedPoints 
     };
     
     if (isMultiSlotTask && targetTimeSlot) {
@@ -318,169 +318,197 @@ static async completeAssignment(
   }
 }
 
-  // ========== VERIFY ASSIGNMENT ==========
-  static async verifyAssignment(
-    assignmentId: string,
-    userId: string,
-    data: {
-      verified: boolean;
-      adminNotes?: string;
-    }
-  ) {
-    try {
-      const assignment = await prisma.assignment.findUnique({
-        where: { id: assignmentId },
-        include: {
-          task: {
-            include: {
-              group: true
-            }
-          },
-          user: {
-            select: {
-              id: true,
-              fullName: true
-            }
+// services/assignment.services.ts - FIXED verifyAssignment (ADD points on verification)
+
+// ========== VERIFY ASSIGNMENT ==========
+static async verifyAssignment(
+  assignmentId: string,
+  userId: string,
+  data: {
+    verified: boolean;
+    adminNotes?: string;
+  }
+) {
+  try {
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        task: {
+          include: {
+            group: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            fullName: true
           }
         }
-      });
-
-      if (!assignment) {
-        return { success: false, message: "Assignment not found" };
       }
+    });
 
-      if (!assignment.task) {
-        return { 
-          success: false, 
-          message: "The task associated with this assignment has been deleted" 
-        };
+    if (!assignment) {
+      return { success: false, message: "Assignment not found" };
+    }
+
+    if (!assignment.task) {
+      return { 
+        success: false, 
+        message: "The task associated with this assignment has been deleted" 
+      };
+    }
+
+    const membership = await prisma.groupMember.findFirst({
+      where: {
+        userId,
+        groupId: assignment.task.groupId,
+        groupRole: "ADMIN"
       }
+    });
 
-      const membership = await prisma.groupMember.findFirst({
-        where: {
-          userId,
-          groupId: assignment.task.groupId,
-          groupRole: "ADMIN"
-        }
-      });
+    if (!membership) {
+      return { success: false, message: "Only group admins can verify assignments" };
+    }
 
-      if (!membership) {
-        return { success: false, message: "Only group admins can verify assignments" };
-      }
+    if (!assignment.completed) {
+      return { success: false, message: "Assignment must be completed before verification" };
+    }
 
-      if (!assignment.completed) {
-        return { success: false, message: "Assignment must be completed before verification" };
-      }
-
-      const updatedAssignment = await prisma.assignment.update({
-        where: { id: assignmentId },
-        data: {
-          verified: data.verified,
-          adminNotes: data.adminNotes || undefined
+    const updatedAssignment = await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: {
+        verified: data.verified,
+        adminNotes: data.adminNotes || undefined
+      },
+      include: {
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            group: { select: { id: true, name: true } }
+          }
         },
-        include: {
-          user: { select: { id: true, fullName: true, avatarUrl: true } },
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              group: { select: { id: true, name: true } }
-            }
+        timeSlot: true
+      }
+    });
+
+    // ✅ ADD THIS: Award points only when verified (approved)
+    if (data.verified === true && assignment.points > 0) {
+      await prisma.groupMember.updateMany({
+        where: {
+          userId: assignment.userId,
+          groupId: assignment.task.groupId,
+          isActive: true
+        },
+        data: {
+          cumulativePoints: {
+            increment: assignment.points
           },
-          timeSlot: true
+          pointsUpdatedAt: new Date()
         }
       });
+      
+      console.log(`💰💰💰 [POINTS AWARDED] User ${assignment.userId} earned +${assignment.points} points for verified assignment ${assignmentId}`);
+      console.log(`   Task: ${assignment.task.title}`);
+      console.log(`   Group: ${assignment.task.group.name}`);
+    } else if (data.verified === false) {
+      console.log(`⚠️ [ASSIGNMENT REJECTED] No points awarded for assignment ${assignmentId}`);
+    }
 
-      const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
-      const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
-      const notificationMessage = data.verified 
-        ? `Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
-        : `Your submission for "${assignment.task.title}" needs revision.`;
+    const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
+    const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
+    const notificationMessage = data.verified 
+      ? `✅ Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
+      : `❌ Your submission for "${assignment.task.title}" needs revision. No points awarded.`;
 
+    await UserNotificationService.createNotification({
+      userId: assignment.userId,
+      type: notificationType,
+      title: notificationTitle,
+      message: notificationMessage,
+      data: {
+        assignmentId: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task.title,
+        groupId: assignment.task.group.id,
+        groupName: assignment.task.group.name,
+        verified: data.verified,
+        adminNotes: data.adminNotes,
+        points: assignment.points,
+        verifiedBy: userId,
+        verifiedAt: new Date(),
+        pointsAwarded: data.verified ? assignment.points : 0
+      }
+    });
+
+    const verifierName = await prisma.user.findUnique({ 
+      where: { id: userId }, 
+      select: { fullName: true } 
+    });
+
+    await SocketService.emitAssignmentVerified(
+      assignment.id,
+      assignment.taskId || 'unknown-task',
+      assignment.task.title,
+      assignment.userId,
+      assignment.user?.fullName || 'Unknown',
+      assignment.task.groupId,
+      data.verified,
+      userId,
+      verifierName?.fullName || 'Admin',
+      assignment.points
+    );
+
+    const otherAdmins = await prisma.groupMember.findMany({
+      where: {
+        groupId: assignment.task.groupId,
+        groupRole: "ADMIN",
+        isActive: true,
+        userId: { not: userId }
+      }
+    });
+
+    for (const admin of otherAdmins) {
       await UserNotificationService.createNotification({
-        userId: assignment.userId,
-        type: notificationType,
-        title: notificationTitle,
-        message: notificationMessage,
+        userId: admin.userId,
+        type: "SUBMISSION_DECISION",
+        title: data.verified ? "✅ Submission Verified" : "❌ Submission Rejected",
+        message: `${assignment.user?.fullName || 'Unknown'}'s submission for "${assignment.task.title}" was ${data.verified ? 'verified' : 'rejected'}${data.verified ? ` and awarded ${assignment.points} points` : ''}`,
         data: {
           assignmentId: assignment.id,
           taskId: assignment.taskId,
           taskTitle: assignment.task.title,
           groupId: assignment.task.group.id,
           groupName: assignment.task.group.name,
+          userId: assignment.userId,
+          userName: assignment.user?.fullName || 'Unknown',
           verified: data.verified,
           adminNotes: data.adminNotes,
-          points: assignment.points,
           verifiedBy: userId,
-          verifiedAt: new Date()
+          verifiedAt: new Date(),
+          pointsAwarded: data.verified ? assignment.points : 0
         }
       });
-
-      const verifierName = await prisma.user.findUnique({ 
-        where: { id: userId }, 
-        select: { fullName: true } 
-      });
-
-      await SocketService.emitAssignmentVerified(
-        assignment.id,
-        assignment.taskId || 'unknown-task',
-        assignment.task.title,
-        assignment.userId,
-        assignment.user?.fullName || 'Unknown',
-        assignment.task.groupId,
-        data.verified,
-        userId,
-        verifierName?.fullName || 'Admin',
-        assignment.points
-      );
-
-      const otherAdmins = await prisma.groupMember.findMany({
-        where: {
-          groupId: assignment.task.groupId,
-          groupRole: "ADMIN",
-          isActive: true,
-          userId: { not: userId }
-        }
-      });
-
-      for (const admin of otherAdmins) {
-        await UserNotificationService.createNotification({
-          userId: admin.userId,
-          type: "SUBMISSION_DECISION",
-          title: data.verified ? "✅ Submission Verified" : "❌ Submission Rejected",
-          message: `${assignment.user?.fullName || 'Unknown'}'s submission for "${assignment.task.title}" was ${data.verified ? 'verified' : 'rejected'}`,
-          data: {
-            assignmentId: assignment.id,
-            taskId: assignment.taskId,
-            taskTitle: assignment.task.title,
-            groupId: assignment.task.group.id,
-            groupName: assignment.task.group.name,
-            userId: assignment.userId,
-            userName: assignment.user?.fullName || 'Unknown',
-            verified: data.verified,
-            adminNotes: data.adminNotes,
-            verifiedBy: userId,
-            verifiedAt: new Date()
-          }
-        });
-      }
-
-      return { 
-        success: true,
-        message: data.verified ? "Assignment verified successfully" : "Assignment rejected",
-        assignment: updatedAssignment,
-        notifications: {
-          notifiedUser: true,
-          notifiedOtherAdmins: otherAdmins.length
-        }
-      };
-
-    } catch (error: any) {
-      console.error("AssignmentService.verifyAssignment error:", error);
-      return { success: false, message: error.message || "Error verifying assignment" };
     }
+
+    return { 
+      success: true,
+      message: data.verified ? "Assignment verified successfully! Points awarded." : "Assignment rejected. No points awarded.",
+      assignment: updatedAssignment,
+      pointsAwarded: data.verified ? assignment.points : 0,
+      notifications: {
+        notifiedUser: true,
+        notifiedOtherAdmins: otherAdmins.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("AssignmentService.verifyAssignment error:", error);
+    return { success: false, message: error.message || "Error verifying assignment" };
   }
+} 
 
   // ========== CHECK NEGLECTED ASSIGNMENTS (FOR CRON) ==========
   static async checkNeglectedAssignments() {

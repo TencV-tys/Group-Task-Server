@@ -311,9 +311,9 @@ model Assignment {
   // Points awarded for this specific assignment
   points Int @default(1)
 
-  completed   Boolean   @default(false)
+  completed   Boolean?  @default(false)
   completedAt DateTime?
-  verified    Boolean   @default(false)
+  verified    Boolean?
   photoUrl    String?
 
   // User notes when completing task

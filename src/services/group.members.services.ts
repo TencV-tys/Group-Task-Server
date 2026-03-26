@@ -86,7 +86,8 @@ static async getGroupMembers(groupId: string, userId: string) {
   }
 }
 
-// Get group members with detailed rotation info
+// services/group.members.services.ts - FIXED getGroupMembersWithRotation (only count verified)
+
 static async getGroupMembersWithRotation(groupId: string, userId: string) {
   try {
     // Check if user is a member of the group
@@ -148,7 +149,7 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
           groupId: groupId
         },
         rotationWeek: group.currentRotationWeek,
-        userId: { in: memberIdsInRotation } // Only members in rotation
+        userId: { in: memberIdsInRotation }
       },
       include: {
         task: {
@@ -202,6 +203,8 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
           taskTitle: assignment.task!.title,
           points: assignment.task!.points,
           completed: assignment.completed,
+          verified: assignment.verified,
+          isVerified: assignment.verified === true,
           isHistorical: false
         })) : [];
 
@@ -218,6 +221,8 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
           taskTitle: assignment.taskTitle || "Deleted Task",
           points: assignment.taskPoints || assignment.points,
           completed: assignment.completed,
+          verified: assignment.verified,
+          isVerified: assignment.verified === true,
           isHistorical: true,
           originalTaskId: assignment.taskId
         }));
@@ -225,9 +230,19 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
       // Combine current and historical assignments
       const allAssignments = [...memberCurrentAssignments, ...memberHistoricalAssignments];
 
-      // Calculate cumulative points for this member
+      // ✅ FIXED: Calculate cumulative points - ONLY VERIFIED assignments count
       const cumulativePoints = allAssignments
+        .filter(a => a.completed && a.verified === true)  // Only verified assignments!
+        .reduce((sum, a) => sum + a.points, 0);
+
+      // Calculate total potential points (for info)
+      const totalPotentialPoints = allAssignments
         .filter(a => a.completed)
+        .reduce((sum, a) => sum + a.points, 0);
+
+      // Calculate pending verification points
+      const pendingVerificationPoints = allAssignments
+        .filter(a => a.completed && a.verified === null)
         .reduce((sum, a) => sum + a.points, 0);
 
       // Calculate which tasks this member would get in upcoming weeks (only if in rotation)
@@ -268,16 +283,18 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
         role: member.groupRole,
         rotationOrder: member.rotationOrder,
         isActive: member.isActive,
-        inRotation: member.inRotation, // ← ADD THIS
+        inRotation: member.inRotation,
         joinedAt: member.joinedAt,
         stats: {
           currentTasks: allAssignments.length,
           completedTasks: allAssignments.filter(a => a.completed).length,
           pendingTasks: allAssignments.filter(a => !a.completed).length,
-          cumulativePoints: cumulativePoints,
+          cumulativePoints: cumulativePoints,        // ✅ Points earned from verified assignments
+          totalPotentialPoints: totalPotentialPoints, // Points from all completed assignments
+          pendingVerificationPoints: pendingVerificationPoints, // Points waiting for admin
           historicalTasks: memberHistoricalAssignments.length,
           pendingSwapRequests: pendingSwapRequests,
-          isInRotation: isInRotation // ← ADD THIS
+          isInRotation: isInRotation
         },
         currentTasks: allAssignments,
         upcomingTasks: upcomingTasks,
@@ -295,7 +312,9 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
       membersInRotation: membersInRotationCount,
       admins: adminsCount,
       totalTasksCompleted: formattedMembers.reduce((sum, m) => sum + m.stats.completedTasks, 0),
-      totalPointsEarned: formattedMembers.reduce((sum, m) => sum + m.stats.cumulativePoints, 0),
+      totalPointsEarned: formattedMembers.reduce((sum, m) => sum + m.stats.cumulativePoints, 0), // ✅ Only verified points
+      totalPotentialPoints: formattedMembers.reduce((sum, m) => sum + m.stats.totalPotentialPoints, 0),
+      totalPendingVerificationPoints: formattedMembers.reduce((sum, m) => sum + m.stats.pendingVerificationPoints, 0),
       totalHistoricalTasks: formattedMembers.reduce((sum, m) => sum + m.stats.historicalTasks, 0)
     };
 
@@ -331,6 +350,7 @@ static async getGroupMembersWithRotation(groupId: string, userId: string) {
     };
   }
 }
+
   // Remove a member from group (admin only) - UPDATED FOR ROTATION
   static async removeMember(groupId: string, memberId: string, adminId: string) {
     try {
