@@ -1,4 +1,5 @@
 // services/group.activity.services.ts - COMPLETE FIXED VERSION
+
 import prisma from "../prisma";
 
 export class GroupActivityService {
@@ -101,8 +102,10 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
     ).length;
 
     const totalPoints = validAssignments.reduce((sum, a) => sum + a.points, 0);
+    
+    // ✅ FIXED: Only count VERIFIED assignments for earned points
     const earnedPoints = validAssignments
-      .filter(a => a.completed)
+      .filter(a => a.completed && a.verified === true)
       .reduce((sum, a) => sum + a.points, 0);
 
     // ===== UPDATED: Get member contributions - ONLY for members in rotation =====
@@ -149,8 +152,10 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
         const totalAssignments = validUserAssignments.length;
         const completedAssignments = validUserAssignments.filter(a => a.completed).length;
         const verifiedAssignments = validUserAssignments.filter(a => a.verified === true).length;
+        
+        // ✅ FIXED: Only count VERIFIED assignments for earned points
         const earnedPoints = validUserAssignments
-          .filter(a => a.completed)
+          .filter(a => a.completed && a.verified === true)
           .reduce((sum, a) => sum + a.points, 0);
 
         return {
@@ -223,7 +228,7 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
         memberContributions,
         admins: adminList,
         rotationInfo: {
-          hasEnoughMembers: membersInRotation >= Math.ceil(totalTasks / 5), // Rough estimate
+          hasEnoughMembers: membersInRotation >= Math.ceil(totalTasks / 5),
           membersNeeded: Math.max(0, Math.ceil(totalTasks / 5) - membersInRotation),
           tasksPerMember: membersInRotation > 0 ? (totalTasks / membersInRotation).toFixed(1) : 0
         }
@@ -332,6 +337,7 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
       return { success: false, message: error.message || "Error retrieving completion history" };
     }
   }
+
 // ========== GET MEMBER CONTRIBUTION DETAILS ==========
 static async getMemberContributionDetails(
   groupId: string,
@@ -428,7 +434,10 @@ static async getMemberContributionDetails(
 
       if (assignment.completed) {
         weeks[weekNum].completedAssignments++;
-        weeks[weekNum].earnedPoints += assignment.points;
+        // ✅ FIXED: Only count VERIFIED assignments for earned points
+        if (assignment.verified === true) {
+          weeks[weekNum].earnedPoints += assignment.points;
+        }
       }
 
       weeks[weekNum].assignments.push({
@@ -451,8 +460,10 @@ static async getMemberContributionDetails(
     const totalAssignments = validAssignments.length;
     const completedAssignments = validAssignments.filter(a => a.completed).length;
     const totalPoints = validAssignments.reduce((sum, a) => sum + a.points, 0);
+    
+    // ✅ FIXED: Only count VERIFIED assignments for earned points
     const earnedPoints = validAssignments
-      .filter(a => a.completed)
+      .filter(a => a.completed && a.verified === true)
       .reduce((sum, a) => sum + a.points, 0);
 
     // ===== NEW: Add role-based response =====
@@ -499,8 +510,7 @@ static async getMemberContributionDetails(
   }
 }
 
-// services/group.activity.services.ts - FIXED getTaskCompletionHistory
-
+// ========== GET TASK COMPLETION HISTORY ==========
 static async getTaskCompletionHistory(
   groupId: string,
   userId: string,
@@ -561,7 +571,7 @@ static async getTaskCompletionHistory(
 
       // ✅ ADD assignmentId to the completion object
       taskGroups[taskId].completions.push({
-        assignmentId: item.id,        // ✅ This is the key fix
+        assignmentId: item.id,
         userId: item.userId,
         userName: item.user.fullName,
         userAvatar: item.user.avatarUrl,
@@ -586,7 +596,8 @@ static async getTaskCompletionHistory(
     return { success: false, message: error.message || "Error retrieving task history" };
   }
 }
- // ===== NEW: Get admin dashboard data (WITH NEGLECTED COUNTS) =====
+
+// ===== ADMIN DASHBOARD DATA =====
 static async getAdminDashboard(groupId: string, userId: string) {
   try {
     // Check if user is admin
@@ -650,7 +661,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
     const completedThisWeek = currentWeekAssignments.filter(a => a.completed).length;
     const totalThisWeek = currentWeekAssignments.length;
     
-    // ===== ADD THIS: Calculate neglected tasks =====
+    // Calculate neglected tasks
     const now = new Date();
     const neglectedAssignments = currentWeekAssignments.filter(a => 
       !a.completed && new Date(a.dueDate) < now
@@ -671,6 +682,20 @@ static async getAdminDashboard(groupId: string, userId: string) {
       neglectedByMember[userId].count++;
       neglectedByMember[userId].points += assignment.points || 0;
     });
+
+    // ✅ FIXED: Calculate points from VERIFIED assignments only
+    const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
+    const completedPoints = currentWeekAssignments
+      .filter(a => a.completed && a.verified === true)
+      .reduce((sum, a) => sum + a.points, 0);
+    
+    const pendingVerificationPoints = currentWeekAssignments
+      .filter(a => a.completed && a.verified === null)
+      .reduce((sum, a) => sum + a.points, 0);
+    
+    const rejectedPoints = currentWeekAssignments
+      .filter(a => a.verified === false)
+      .reduce((sum, a) => sum + a.points, 0);
 
     return {
       success: true,
@@ -695,7 +720,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
             completed: completedThisWeek,
             percentage: totalThisWeek > 0 ? (completedThisWeek / totalThisWeek) * 100 : 0
           },
-          // ===== ADD THIS =====
+          points: {
+            total: totalPoints,
+            earned: completedPoints,
+            pendingVerification: pendingVerificationPoints,
+            rejected: rejectedPoints
+          },
           neglected: {
             count: neglectedCount,
             points: neglectedPoints,
@@ -722,7 +752,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
-// ===== FIXED: Get member dashboard data (WITH NEGLECTED COUNTS) =====
+// ===== MEMBER DASHBOARD DATA =====
 static async getMemberDashboard(groupId: string, userId: string) {
   try {
     // Check if user is member
@@ -796,7 +826,6 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const myNeglected = pending.filter(a => new Date(a.dueDate) < now);
     const myNeglectedCount = myNeglected.length;
     const myNeglectedPoints = myNeglected.reduce((sum, a) => {
-      // Safe points calculation for neglected tasks
       const assignment = a as any;
       const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
       return sum + points;
@@ -810,8 +839,10 @@ static async getMemberDashboard(groupId: string, userId: string) {
       return today === dueDate;
     });
 
-    // Calculate points safely
-    const pointsThisWeek = completed
+    // ✅ FIXED: Only count VERIFIED assignments for points
+    const verifiedCompleted = completed.filter(a => a.verified === true);
+    
+    const pointsThisWeek = verifiedCompleted
       .filter(a => {
         const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         return a.completedAt && a.completedAt > weekAgo;
@@ -822,7 +853,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
         return sum + points;
       }, 0);
 
-    const totalPoints = completed.reduce((sum, a) => {
+    const totalPoints = verifiedCompleted.reduce((sum, a) => {
       const assignment = a as any;
       const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
       return sum + points;
@@ -880,7 +911,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
         isOverdue: new Date(t.dueDate) < now
       }));
 
-    // Format neglected tasks - FIXED with proper null checks
+    // Format neglected tasks
     const formattedNeglected = myNeglected
       .map(t => {
         const assignment = t as any;
@@ -967,8 +998,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
   }
 }
 
-
-// ===== NEW: Get recent activity (FIXED with null checks) =====
+// ===== GET RECENT ACTIVITY =====
 static async getRecentActivity(groupId: string, userId: string, limit: number = 10) {
   try {
     // Check if user is member
@@ -1006,13 +1036,13 @@ static async getRecentActivity(groupId: string, userId: string, limit: number = 
 
     // Format activity - FIXED with null checks
     const activity = assignments
-      .filter(a => a.task !== null) // Filter out assignments with null tasks
+      .filter(a => a.task !== null)
       .map(a => {
-        const task = a.task!; // Safe after filtering
+        const task = a.task!;
         let type = 'TASK_UPDATED';
         let description = '';
 
-        if (a.completed && a.verified) {
+        if (a.completed && a.verified === true) {
           type = 'TASK_VERIFIED';
           description = `${a.user?.fullName || 'A member'} completed "${task.title}"`;
         } else if (a.completed) {
