@@ -21,7 +21,10 @@ router.get('/pending-for-me', SwapRequestController.getPendingForMe);
 // Check if assignment can be swapped
 router.get('/check/:assignmentId', SwapRequestController.checkCanSwap);
 
-// ===== UPDATED: Get group swap requests with pagination and filters (admin only) =====
+// ✅ NEW: Check if user has assignment on a specific day
+router.get('/check-user-assignment', SwapRequestController.checkUserHasAssignmentOnDay);
+
+// Get group swap requests with pagination and filters (admin only)
 router.get('/group/:groupId', SwapRequestController.getGroupSwapRequests);
 
 // Get single swap request details
@@ -36,4 +39,4 @@ router.post('/:requestId/reject', SwapRequestController.rejectSwapRequest);
 // Cancel a swap request (only by requester)
 router.post('/:requestId/cancel', SwapRequestController.cancelSwapRequest);
 
-export default router; 
+export default router;

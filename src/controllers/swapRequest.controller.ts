@@ -52,10 +52,10 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
           message: result.message
         });
       }
-
+ 
       return res.status(201).json({
         success: true,
-        message: result.message,
+        message: result.message, 
         data: result.swapRequest,
         notifications: result.notifications,
           eligibleMembersCount: result.eligibleMembersCount 
@@ -718,6 +718,71 @@ static async checkCanSwap(req: UserAuthRequest, res: Response) {
     });
   }
 }
+// In swapRequest.controller.ts - Add this method after checkCanSwap
 
+// CHECK: Check if a user has an assignment on a specific day
+static async checkUserHasAssignmentOnDay(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { targetUserId, groupId, day, week } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    if (!targetUserId || !groupId || !day || !week) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameters: targetUserId, groupId, day, week"
+      });
+    }
+
+    console.log(`🔍 Checking if user ${targetUserId} has assignment on ${day} (week ${week}) in group ${groupId}`);
+
+    // Find if the target user has an assignment for this task on the specified day
+    const assignment = await prisma.assignment.findFirst({
+      where: {
+        userId: targetUserId as string,
+        task: {
+          groupId: groupId as string
+        },
+        rotationWeek: parseInt(week as string, 10),
+        assignmentDay: day as any // DayOfWeek enum
+      },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true
+          }
+        }
+      }
+    });
+
+    console.log(`📋 Result: ${assignment ? `Found assignment for ${assignment.task?.title}` : 'No assignment found'}`);
+
+    return res.json({
+      success: true,
+      hasAssignment: !!assignment,
+      assignment: assignment ? {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task?.title,
+        dueDate: assignment.dueDate
+      } : null
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.checkUserHasAssignmentOnDay error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      hasAssignment: false
+    });
+  }
+}
    
 }

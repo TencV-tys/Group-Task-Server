@@ -502,7 +502,7 @@ static async createSwapRequest(
         ...swapRequestWithDetails,
         requester
       },
-      weekInfo,
+      weekInfo, 
       notifications: {
         notifiedUsers: notifiedUsersCount,
         notifiedAdmins: admins.length
