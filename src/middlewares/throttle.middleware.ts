@@ -1,18 +1,19 @@
-// middlewares/throttle.middleware.ts - UPDATED WITH CORS HEADERS
+// middlewares/throttle.middleware.ts - MOBILE OPTIMIZED
+
 import { Request, Response, NextFunction } from 'express';
 
 interface ThrottleEntry {
   count: number;
   resetTime: number;
   endpoint: string;
-  userId?: string; // Track by user ID when authenticated
+  userId?: string;
 }
 
 const throttle = new Map<string, ThrottleEntry>();
 const DEFAULT_WINDOW = 10 * 1000; // 10 seconds
-const DEFAULT_MAX_REQUESTS = 5; // 5 requests per window
+const DEFAULT_MAX_REQUESTS = 15; // ✅ Increased for mobile (more network calls)
 
-// Clean up old entries every 5 minutes (less frequent for better performance)
+// Clean up old entries every 2 minutes (faster cleanup for mobile)
 setInterval(() => {
   const now = Date.now();
   let deletedCount = 0;
@@ -24,20 +25,31 @@ setInterval(() => {
     }
   }
   
-  if (deletedCount > 100) { // Only log if significant cleanup
+  // ✅ Limit throttle map size for mobile memory
+  if (throttle.size > 200) {
+    const entriesToDelete = throttle.size - 200;
+    const oldestEntries = Array.from(throttle.entries())
+      .sort((a, b) => a[1].resetTime - b[1].resetTime)
+      .slice(0, entriesToDelete);
+    
+    oldestEntries.forEach(([key]) => throttle.delete(key));
+    deletedCount += oldestEntries.length;
+  }
+  
+  if (deletedCount > 0) {
     console.log(`🧹 Cleaned ${deletedCount} expired throttle entries`);
   }
-}, 5 * 60 * 1000);
+}, 2 * 60 * 1000); // Every 2 minutes
 
-// Helper function to set CORS headers
+// Helper function to set CORS headers (important for mobile)
 const setCORSHeaders = (req: Request, res: Response) => {
   const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With');
-  }
+  // ✅ Allow all origins for mobile, but allow credentials
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, X-Requested-With, Accept, X-Device-ID');
+  res.setHeader('Access-Control-Expose-Headers', 'X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
 };
 
 export const throttleMiddleware = (
@@ -58,10 +70,11 @@ export const throttleMiddleware = (
       return next();
     }
 
-    // Use user ID if authenticated, otherwise use IP
+    // Use user ID if authenticated, otherwise use device ID or IP
     const userId = (req as any).user?.id;
+    const deviceId = req.headers['x-device-id'] as string;
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const identifier = userId || ip;
+    const identifier = userId || deviceId || ip;
     
     const endpoint = req.baseUrl + req.path;
     const method = req.method;
@@ -97,7 +110,7 @@ export const throttleMiddleware = (
       
       next();
     } else {
-      // Rate limited - CORS headers ALREADY SET by setCORSHeaders at the beginning
+      // Rate limited
       const retryAfter = Math.ceil((entry.resetTime - now) / 1000);
       
       res.setHeader('X-RateLimit-Limit', maxRequests.toString());
@@ -117,29 +130,29 @@ export const throttleMiddleware = (
 };
 
 // Mobile-optimized throttle configurations
-export const strictThrottle = throttleMiddleware(10 * 1000, 3);  // Auth: 3/10s
-export const mediumThrottle = throttleMiddleware(10 * 1000, 5);  // Admin: 5/10s
-export const lightThrottle = throttleMiddleware(10 * 1000, 15);  // General: 15/10s (increased for mobile)
-export const heavyThrottle = throttleMiddleware(30 * 1000, 30);  // Heavy: 30/30s
+export const strictThrottle = throttleMiddleware(10 * 1000, 5);    // Auth: 5/10s
+export const mediumThrottle = throttleMiddleware(10 * 1000, 10);   // Admin: 10/10s
+export const lightThrottle = throttleMiddleware(10 * 1000, 25);    // General: 25/10s (increased for mobile)
+export const heavyThrottle = throttleMiddleware(30 * 1000, 50);     // Heavy: 50/30s
 
 // Special throttles for critical endpoints
 export const loginThrottle = throttleMiddleware(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
-export const uploadThrottle = throttleMiddleware(60 * 1000, 3);     // 3 uploads per minute
+export const uploadThrottle = throttleMiddleware(60 * 1000, 5);     // 5 uploads per minute (increased)
 
-// Admin-specific throttles (higher limits) with CORS already handled
-export const adminStrictThrottle = throttleMiddleware(10 * 1000, 8);  // 8 requests per 10s
-export const adminMediumThrottle = throttleMiddleware(10 * 1000, 15); // 15 requests per 10s
-export const adminLightThrottle = throttleMiddleware(10 * 1000, 25);  // 25 requests per 10s
+// Admin-specific throttles
+export const adminStrictThrottle = throttleMiddleware(10 * 1000, 15);  // 15 requests per 10s
+export const adminMediumThrottle = throttleMiddleware(10 * 1000, 25); // 25 requests per 10s
+export const adminLightThrottle = throttleMiddleware(10 * 1000, 40);  // 40 requests per 10s
 
-// Get throttle stats for monitoring (admin only)
+// Get throttle stats for monitoring
 export const getThrottleStats = () => ({
   size: throttle.size,
   memoryUsage: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`,
   entries: Array.from(throttle.entries())
     .sort((a, b) => b[1].resetTime - a[1].resetTime)
-    .slice(0, 100) // Only return top 100 for performance
+    .slice(0, 50) // Only return top 50 for mobile
     .map(([key, entry]) => ({
-      key: key.substring(0, 50), // Truncate long keys
+      key: key.substring(0, 50),
       count: entry.count,
       resetIn: Math.max(0, entry.resetTime - Date.now()),
       endpoint: entry.endpoint,

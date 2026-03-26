@@ -1,4 +1,5 @@
-// middlewares/cache.middleware.ts - FIXED VERSION
+// middlewares/cache.middleware.ts - MOBILE OPTIMIZED
+
 import { Request, Response, NextFunction } from 'express';
 
 interface CacheEntry {
@@ -6,55 +7,77 @@ interface CacheEntry {
   timestamp: number;
   etag: string;
   hits: number;
+  size: number; // Track response size for memory management
 }
 
 const cache = new Map<string, CacheEntry>();
-const DEFAULT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_CACHE_TTL = 30 * 1000; // ✅ Reduced to 30 seconds for mobile (fresher data)
+const MAX_CACHE_SIZE = 50; // ✅ Limit cache size for mobile memory
 
 // Cache stats for monitoring
 let cacheHits = 0;
 let cacheMisses = 0;
 
-// Clean up old cache entries every 15 minutes
+// ✅ Clean up more frequently for mobile (every 5 minutes)
 setInterval(() => {
   const now = Date.now();
   let deletedCount = 0;
+  let size = 0;
   
   for (const [key, entry] of cache.entries()) {
+    size++;
     if (now - entry.timestamp > DEFAULT_CACHE_TTL) {
       cache.delete(key);
       deletedCount++;
     }
   }
   
+  // ✅ Enforce max cache size (LRU-like)
+  if (size > MAX_CACHE_SIZE) {
+    const entriesToDelete = size - MAX_CACHE_SIZE;
+    const oldestEntries = Array.from(cache.entries())
+      .sort((a, b) => a[1].timestamp - b[1].timestamp)
+      .slice(0, entriesToDelete);
+    
+    oldestEntries.forEach(([key]) => cache.delete(key));
+    deletedCount += oldestEntries.length;
+    console.log(`🧹 Enforced max cache size: deleted ${oldestEntries.length} oldest entries`);
+  }
+  
   if (deletedCount > 0) {
     console.log(`🧹 Cleaned ${deletedCount} expired cache entries`);
   }
-}, 15 * 60 * 1000);
+}, 5 * 60 * 1000);
 
-// Generate ETag for response data
+// Generate ETag for response data (optimized)
 const generateETag = (data: any): string => {
   const str = JSON.stringify(data);
   let hash = 0;
-  for (let i = 0; i < str.length; i++) {
+  for (let i = 0; i < Math.min(str.length, 1000); i++) { // ✅ Limit string length for performance
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }
-  return hash.toString(16);
+  return Math.abs(hash).toString(36); // ✅ Shorter ETag
 };
 
-// ✅ List of routes that should NEVER be cached
+// ✅ Routes that should NEVER be cached (mobile-specific)
 const NEVER_CACHE_PATTERNS = [
-  '/api/assignments',      // Assignment operations
-  '/api/swap-requests',    // Swap operations  
-  '/api/tasks',            // Task operations
-  '/api/group',            // Group operations
-  '/api/notifications',    // Notifications
-  '/api/feedback',         // Feedback
-  '/api/reports',          // Reports
-  '/api/uploads',          // Uploads
-  '/api/auth',             // Auth endpoints
+  '/api/assignments/complete',     // Assignment completion
+  '/api/assignments/verify',       // Verification
+  '/api/swap-requests',            // Swap operations  
+  '/api/tasks/create',             // Task creation
+  '/api/tasks/update',             // Task updates
+  '/api/tasks/delete',             // Task deletion
+  '/api/group/create',             // Group creation
+  '/api/group/update',             // Group updates
+  '/api/group/delete',             // Group deletion
+  '/api/notifications/read',       // Mark notifications read
+  '/api/feedback',                 // Feedback submissions
+  '/api/reports',                  // Report submissions
+  '/api/uploads',                  // Uploads
+  '/api/auth',                     // Auth endpoints
+  '/api/home',                     // Home data (personalized)
 ];
 
 const shouldNeverCache = (url: string): boolean => {
@@ -74,82 +97,71 @@ export const cacheMiddleware = (duration: number = DEFAULT_CACHE_TTL) => {
       return next();
     }
     
-    // Check if request is for authenticated user
-    const hasAuthHeader = req.headers.authorization;
-    const hasAuthCookie = req.cookies?.accessToken;
-    const isAuthenticated = hasAuthHeader || hasAuthCookie;
+    // ✅ For mobile, we can cache authenticated data that's the same for all users
+    // but with shorter TTL
+    const isAuthenticated = !!req.headers.authorization;
     
-    // ✅ DON'T CACHE authenticated requests (personalized data)
-    if (isAuthenticated) {
-      console.log(`🚫 Skipping cache for authenticated request: ${req.originalUrl}`);
-      // Set no-cache headers for authenticated requests
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-      return next();
-    }
-
-    // For public endpoints, use cache
-    const key = `${req.originalUrl.split('?')[0]}|${JSON.stringify(req.query)}`;
+    // ✅ Use different TTL for authenticated vs public
+    const effectiveTTL = isAuthenticated ? Math.min(duration, 15000) : duration; // 15 seconds for authenticated
+    
+    const key = `${isAuthenticated ? 'auth:' : 'public:'}${req.originalUrl.split('?')[0]}|${JSON.stringify(req.query)}`;
     const cached = cache.get(key);
     
     const ifNoneMatch = req.headers['if-none-match'];
     
-    if (cached) {
-      cacheMisses++;
+    if (cached && Date.now() - cached.timestamp < effectiveTTL) {
+      cacheHits++;
+      console.log(`✅ Cache hit: ${req.originalUrl}`);
+      
+      cached.hits++;
+      cache.set(key, cached);
       
       if (ifNoneMatch === cached.etag) {
-        cacheHits++;
-        console.log(`✅ Cache 304: ${req.originalUrl}`);
         return res.status(304).send();
       }
       
-      if (Date.now() - cached.timestamp < duration) {
-        cacheHits++;
-        console.log(`✅ Cache hit: ${req.originalUrl}`);
-        
-        cached.hits++;
-        cache.set(key, cached);
-        
-        res.setHeader('Cache-Control', `public, max-age=${Math.floor(duration / 1000)}`);
-        res.setHeader('ETag', cached.etag);
-        res.setHeader('X-Cache', 'HIT');
-        
-        return res.json(cached.data);
-      }
+      res.setHeader('Cache-Control', `private, max-age=${Math.floor(effectiveTTL / 1000)}`);
+      res.setHeader('ETag', cached.etag);
+      res.setHeader('X-Cache', 'HIT');
       
+      return res.json(cached.data);
+    }
+    
+    if (cached) {
       cache.delete(key);
     }
     
     cacheMisses++;
     console.log(`❌ Cache miss: ${req.originalUrl}`);
     
-    // ✅ Store original json method
+    // Store original json method
     const originalJson = res.json;
     let responseSent = false;
     
-    // ✅ Override json method to capture response
+    // Override json method to capture response
     res.json = function(body) {
       if (responseSent) {
         return originalJson.call(this, body);
       }
       responseSent = true;
       
-      // ✅ Only cache successful public responses
-      if (body && body.success === true && !isAuthenticated) {
+      // ✅ Cache successful responses
+      if (body && body.success === true) {
         const etag = generateETag(body);
+        const responseSize = JSON.stringify(body).length;
         
         cache.set(key, {
           data: body,
           timestamp: Date.now(),
           etag,
-          hits: 1
+          hits: 1,
+          size: responseSize
         });
         
-        res.setHeader('Cache-Control', `public, max-age=${Math.floor(duration / 1000)}`);
+        res.setHeader('Cache-Control', `private, max-age=${Math.floor(effectiveTTL / 1000)}`);
         res.setHeader('ETag', etag);
         res.setHeader('X-Cache', 'MISS');
-      } else {
-        // For authenticated or failed requests, don't cache
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.setHeader('X-Cache-Size', `${Math.floor(responseSize / 1024)}KB`); // Mobile: show size
       }
       
       return originalJson.call(this, body);
@@ -186,5 +198,6 @@ export const getCacheStats = () => ({
   size: cache.size,
   hits: cacheHits,
   misses: cacheMisses,
-  hitRate: cacheHits + cacheMisses > 0 ? Math.round((cacheHits / (cacheHits + cacheMisses)) * 100) : 0
+  hitRate: cacheHits + cacheMisses > 0 ? Math.round((cacheHits / (cacheHits + cacheMisses)) * 100) : 0,
+  memoryEstimate: `${(Array.from(cache.values()).reduce((sum, e) => sum + (e.size || 0), 0) / 1024 / 1024).toFixed(2)} MB`
 });

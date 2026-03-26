@@ -238,7 +238,7 @@ static async completeAssignment(
       completedAt: allSlotsCompleted ? new Date() : undefined,
       photoUrl: data.photoUrl || undefined,
       notes: data.notes || (isLate ? `[LATE: Submitted after ${targetTimeSlot?.endTime}]` : undefined),
-      verified: allSlotsCompleted ? false : null,
+        verified: allSlotsCompleted ? null : undefined, 
       points: updatedPoints
     };
     
@@ -985,145 +985,333 @@ static async completeAssignment(
     }
   }
 
-  // ========== GET USER ASSIGNMENTS ==========
-  static async getUserAssignments(
-    userId: string,
-    filters: {
-      status?: string;
-      week?: number;
-      limit: number;
-      offset: number;
+  // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
+
+// ========== GET USER ASSIGNMENTS ==========
+static async getUserAssignments(
+  userId: string,
+  filters: {
+    status?: string;
+    week?: number;
+    limit: number;
+    offset: number;
+  }
+) {
+  try {
+    console.log('🔍🔍🔍 [getUserAssignments] START 🔍🔍🔍');
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`📋 Filters:`, filters);
+    
+    const where: any = { userId };
+    
+    console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
+
+    if (filters.status) {
+      switch (filters.status) {
+        case 'pending':
+          where.completed = false;
+          console.log(`   ✅ Filter: pending (completed = false)`);
+          break;
+        case 'completed':
+          where.completed = true;
+          where.verified = null;
+          console.log(`   ✅ Filter: completed (completed = true, verified = null)`);
+          break;
+        case 'verified':
+          where.completed = true;
+          where.verified = true;
+          console.log(`   ✅ Filter: verified (completed = true, verified = true)`);
+          break;
+        case 'rejected':
+          where.completed = true;
+          where.verified = false;
+          console.log(`   ✅ Filter: rejected (completed = true, verified = false)`);
+          break;
+      }
     }
-  ) {
-    try {
-      const where: any = { userId };
 
-      if (filters.status) {
-        switch (filters.status) {
-          case 'pending':
-            where.completed = false;
-            break;
-          case 'completed':
-            where.completed = true;
-            where.verified = null;
-            break;
-          case 'verified':
-            where.completed = true;
-            where.verified = true;
-            break;
-          case 'rejected':
-            where.completed = true;
-            where.verified = false;
-            break;
-        }
-      }
+    if (filters.week !== undefined) {
+      where.rotationWeek = filters.week;
+      console.log(`   ✅ Filter: week = ${filters.week}`);
+    }
 
-      if (filters.week !== undefined) {
-        where.rotationWeek = filters.week;
-      }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    console.log(`📅 Today: ${today.toISOString()}`);
+    console.log(`📅 Tomorrow: ${tomorrow.toISOString()}`);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const [assignments, total] = await Promise.all([
-        prisma.assignment.findMany({
-          where,
-          include: {
-            task: {
-              select: {
-                id: true,
-                title: true,
-                points: true,
-                executionFrequency: true,
-                group: { select: { id: true, name: true } }
-              }
-            },
-            timeSlot: true
-          },
-          orderBy: { dueDate: 'asc' },
-          take: filters.limit,
-          skip: filters.offset
-        }),
-        prisma.assignment.count({ where })
-      ]);
-
-      const validAssignments = assignments.filter(a => a.task !== null);
-      
-      const formattedAssignments = validAssignments.map(assignment => {
-        const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
-        const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
-        
-        return {
-          id: assignment.id,
-          taskId: assignment.taskId,
-          taskTitle: assignment.task!.title,
-          group: assignment.task!.group,
-          points: assignment.points,
-          completed: assignment.completed,
-          verified: assignment.verified,
-          verificationStatus,
-          photoUrl: assignment.photoUrl,
-          notes: assignment.notes,
-          adminNotes: assignment.adminNotes,
-          dueDate: assignment.dueDate,
-          completedAt: assignment.completedAt,
-          timeUntilDue,
-          timeSlot: assignment.timeSlot,
-          rotationWeek: assignment.rotationWeek,
-          isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
-        };
-      });
-
-      const historicalAssignments = await prisma.assignment.findMany({
-        where: {
-          userId,
-          taskId: null,
-          taskTitle: { not: null },
-          ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
-        },
+    console.log(`🔍 Executing Prisma query...`);
+    const [assignments, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
         include: {
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              executionFrequency: true,
+              group: { select: { id: true, name: true } }
+            }
+          },
           timeSlot: true
         },
-        orderBy: { dueDate: 'asc' }
-      });
+        orderBy: { dueDate: 'asc' },
+        take: filters.limit,
+        skip: filters.offset
+      }),
+      prisma.assignment.count({ where })
+    ]);
 
-      const formattedHistorical = historicalAssignments.map(assignment => ({
+    console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
+
+    const validAssignments = assignments.filter(a => a.task !== null);
+    console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
+    
+    if (assignments.length > 0 && validAssignments.length === 0) {
+      console.log(`⚠️ WARNING: ${assignments.length} assignments found but all have null tasks!`);
+      assignments.forEach((a, i) => {
+        console.log(`   Assignment ${i+1}: id=${a.id}, taskId=${a.taskId}, hasTask=${!!a.task}`);
+      });
+    }
+    
+    const formattedAssignments = validAssignments.map(assignment => {
+      const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
+      const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
+      
+      return {
         id: assignment.id,
-        taskId: null,
-        taskTitle: assignment.taskTitle || "Deleted Task",
-        group: { id: '', name: 'Deleted Group' },
-        points: assignment.taskPoints || assignment.points,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
+        group: assignment.task!.group,
+        points: assignment.points,
         completed: assignment.completed,
         verified: assignment.verified,
-        verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
+        verificationStatus,
         photoUrl: assignment.photoUrl,
         notes: assignment.notes,
         adminNotes: assignment.adminNotes,
         dueDate: assignment.dueDate,
         completedAt: assignment.completedAt,
-        timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
+        timeUntilDue,
         timeSlot: assignment.timeSlot,
         rotationWeek: assignment.rotationWeek,
-        isDueToday: false,
-        isHistorical: true
-      }));
-
-      return {
-        success: true,
-        message: "Assignments retrieved successfully",
-        assignments: [...formattedAssignments, ...formattedHistorical],
-        total: validAssignments.length + historicalAssignments.length,
-        filters,
-        currentDate: { today, tomorrow }
+        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
       };
+    });
 
-    } catch (error: any) {
-      console.error("AssignmentService.getUserAssignments error:", error);
-      return { success: false, message: error.message || "Error retrieving assignments" };
-    }
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        taskId: null,
+        taskTitle: { not: null },
+        ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
+      },
+      include: {
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    console.log(`📚 Historical assignments (deleted tasks): ${historicalAssignments.length}`);
+
+    const formattedHistorical = historicalAssignments.map(assignment => ({
+      id: assignment.id,
+      taskId: null,
+      taskTitle: assignment.taskTitle || "Deleted Task",
+      group: { id: '', name: 'Deleted Group' },
+      points: assignment.taskPoints || assignment.points,
+      completed: assignment.completed,
+      verified: assignment.verified,
+      verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
+      photoUrl: assignment.photoUrl,
+      notes: assignment.notes,
+      adminNotes: assignment.adminNotes,
+      dueDate: assignment.dueDate,
+      completedAt: assignment.completedAt,
+      timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
+      timeSlot: assignment.timeSlot,
+      rotationWeek: assignment.rotationWeek,
+      isDueToday: false,
+      isHistorical: true
+    }));
+
+    const allAssignments = [...formattedAssignments, ...formattedHistorical];
+    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
+    console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
+
+    return {
+      success: true,
+      message: "Assignments retrieved successfully",
+      assignments: allAssignments,
+      total: validAssignments.length + historicalAssignments.length,
+      filters,
+      currentDate: { today, tomorrow }
+    };
+
+  } catch (error: any) {
+    console.error('❌❌❌ [getUserAssignments] ERROR ❌❌❌');
+    console.error(error);
+    return { success: false, message: error.message || "Error retrieving assignments" };
   }
+}
+
+// ========== GET TODAY'S ASSIGNMENTS ==========
+static async getTodayAssignments(
+  userId: string,
+  filters?: {
+    groupId?: string;
+  }
+) {
+  try {
+    console.log('🔍🔍🔍 [getTodayAssignments] START 🔍🔍🔍');
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`🎯 Group filter:`, filters?.groupId || 'none');
+    
+    const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    console.log(`📅 Today: ${today.toISOString()}`);
+    console.log(`📅 Tomorrow: ${tomorrow.toISOString()}`);
+    console.log(`⏰ Current time: ${now.toLocaleTimeString()}`);
+    
+    // First, get all assignments for this user
+    console.log(`📡 Calling getUserAssignments for user ${userId}...`);
+    const userAssignmentsResult = await this.getUserAssignments(userId, {
+      limit: 100,
+      offset: 0
+    });
+    
+    console.log(`📊 getUserAssignments result:`, {
+      success: userAssignmentsResult.success,
+      totalAssignments: userAssignmentsResult.total,
+      assignmentsLength: userAssignmentsResult.assignments?.length
+    });
+    
+    if (!userAssignmentsResult.success) {
+      console.log(`❌ Failed to get user assignments: ${userAssignmentsResult.message}`);
+      return {
+        success: false,
+        data: { assignments: [], currentTime: now, total: 0 },
+        message: userAssignmentsResult.message
+      };
+    }
+    
+    const allAssignments = userAssignmentsResult.assignments || [];
+    console.log(`📊 Total assignments from API: ${allAssignments.length}`);
+    
+    // Log first 3 assignments for debugging
+    if (allAssignments.length > 0) {
+      console.log(`📋 First 3 assignments:`);
+      allAssignments.slice(0, 3).forEach((a: any, i: number) => {
+        console.log(`   ${i+1}. ID: ${a.id}, Title: ${a.taskTitle}, Due: ${a.dueDate}, Completed: ${a.completed}, IsDueToday: ${a.isDueToday}`);
+      });
+    }
+    
+    // Filter assignments due today and not completed
+    const todayAssignments = allAssignments.filter((assignment: any) => {
+      // Skip completed assignments
+      if (assignment.completed) {
+        console.log(`⏭️ Skipping completed assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      // Check due date
+      if (!assignment.dueDate) {
+        console.log(`⏭️ Skipping assignment without due date: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      const dueDate = new Date(assignment.dueDate);
+      const isDueToday = dueDate >= today && dueDate < tomorrow;
+      
+      // Filter by group if specified
+      const belongsToGroup = !filters?.groupId || assignment.group?.id === filters.groupId;
+      
+      if (isDueToday) {
+        console.log(`✅ Assignment due today: ${assignment.taskTitle} (${assignment.id})`);
+        console.log(`   Due date: ${dueDate.toLocaleString()}`);
+        console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+      }
+      
+      return isDueToday && belongsToGroup;
+    });
+    
+    console.log(`📋 Found ${todayAssignments.length} assignments due today`);
+    
+    // Transform to TodayAssignment format with time validation
+    const assignmentsWithTimeInfo = todayAssignments.map((assignment: any) => {
+      // Create assignment object with timeSlot for validation
+      const assignmentForValidation = {
+        ...assignment,
+        timeSlot: assignment.timeSlot,
+        points: assignment.points,
+        dueDate: assignment.dueDate
+      };
+      
+      const validation = TimeHelpers.canSubmitAssignment(assignmentForValidation, now);
+      
+      console.log(`📝 Assignment: ${assignment.taskTitle}`, {
+        timeSlot: assignment.timeSlot ? `${assignment.timeSlot.startTime}-${assignment.timeSlot.endTime}` : 'none',
+        currentTime: now.toLocaleTimeString(),
+        canSubmit: validation.allowed,
+        reason: validation.reason,
+        submissionStatus: validation.submissionStatus,
+        willBePenalized: validation.willBePenalized,
+        timeLeft: validation.timeLeft
+      });
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.taskTitle,
+        taskPoints: assignment.points,
+        group: assignment.group,
+        dueDate: assignment.dueDate,
+        canSubmit: validation.allowed,
+        timeLeft: validation.timeLeft,
+        timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+        reason: validation.reason,
+        timeSlot: assignment.timeSlot,
+        willBePenalized: validation.willBePenalized,
+        finalPoints: validation.finalPoints,
+        submissionStatus: validation.submissionStatus
+      };
+    });
+    
+    console.log(`✅ Final assignments count: ${assignmentsWithTimeInfo.length}`);
+    console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
+    
+    return {
+      success: true,
+      message: "Today's assignments retrieved",
+      data: {
+        assignments: assignmentsWithTimeInfo,
+        currentTime: now,
+        total: assignmentsWithTimeInfo.length
+      }
+    };
+    
+  } catch (error: any) {
+    console.error('❌❌❌ [getTodayAssignments] ERROR ❌❌❌');
+    console.error(error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving today's assignments",
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      } 
+    };
+  }
+}
 
   // ========== GET GROUP ASSIGNMENTS ==========
   static async getGroupAssignments(
@@ -1365,132 +1553,6 @@ static async completeAssignment(
     }
   }
 
-  // services/assignment.services.ts - FIXED getTodayAssignments to show all due today assignments
-
-static async getTodayAssignments(
-  userId: string,
-  filters?: {
-    groupId?: string;
-  }
-) {
-  try {
-    console.log('🔍🔍🔍 [getTodayAssignments] START 🔍🔍🔍');
-    console.log(`👤 User ID: ${userId}`);
-    console.log(`🎯 Filters:`, filters);
-    
-    const now = new Date();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    console.log(`📅 Today: ${today.toISOString()}`);
-    console.log(`📅 Tomorrow: ${tomorrow.toISOString()}`);
-    console.log(`⏰ Current time: ${now.toLocaleTimeString()}`);
-    
-    const where: any = {
-      userId,
-      completed: false,
-      dueDate: {
-        gte: today,
-        lt: tomorrow
-      }
-    };
-
-    if (filters?.groupId) {
-      where.task = {
-        groupId: filters.groupId
-      };
-    }
-
-    console.log(`🔍 Query where clause:`, JSON.stringify(where, null, 2));
-
-    const assignments = await prisma.assignment.findMany({
-      where,
-      include: {
-        timeSlot: true,
-        task: {
-          select: {
-            id: true,
-            title: true,
-            points: true,
-            group: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { dueDate: 'asc' }
-    });
-
-    console.log(`📊 Found ${assignments.length} assignments due today`);
-
-    const validAssignments = assignments.filter(a => a.task !== null);
-    console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
-
-    const assignmentsWithTimeInfo = validAssignments.map(assignment => {
-      // ✅ This will now correctly show:
-      // - "waiting" status for assignments not yet open
-      // - "on_time" status for on-time submissions
-      // - "late" status for late submissions
-      const validation = TimeHelpers.canSubmitAssignment(assignment, now);
-      
-      console.log(`📝 Assignment: ${assignment.task!.title}`, {
-        timeSlot: assignment.timeSlot ? `${assignment.timeSlot.startTime}-${assignment.timeSlot.endTime}` : 'none',
-        canSubmit: validation.allowed,
-        reason: validation.reason,
-        submissionStatus: validation.submissionStatus,
-        willBePenalized: validation.willBePenalized,
-        timeLeft: validation.timeLeft
-      });
-      
-      return {
-        id: assignment.id,
-        taskId: assignment.taskId,
-        taskTitle: assignment.task!.title,
-        taskPoints: assignment.task!.points,
-        group: assignment.task!.group,
-        dueDate: assignment.dueDate,
-        canSubmit: validation.allowed,
-        timeLeft: validation.timeLeft,
-        timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-        reason: validation.reason,
-        timeSlot: assignment.timeSlot,
-        willBePenalized: validation.willBePenalized,
-        finalPoints: validation.finalPoints,
-        submissionStatus: validation.submissionStatus // Add this so frontend knows status
-      };
-    });
-
-    console.log(`✅ Final assignments count: ${assignmentsWithTimeInfo.length}`);
-    console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
-
-    return {
-      success: true,
-      message: "Today's assignments retrieved",
-      data: {
-        assignments: assignmentsWithTimeInfo,
-        currentTime: now,
-        total: assignmentsWithTimeInfo.length
-      }
-    };
-
-  } catch (error: any) {
-    console.error('❌ [getTodayAssignments] ERROR:', error);
-    return {
-      success: false,
-      message: error.message || "Error retrieving today's assignments",
-      data: {
-        assignments: [],
-        currentTime: new Date(),
-        total: 0
-      }
-    };
-  }
-}
 
   // ========== GET NEGLECTED TASKS FOR USER ==========
   static async getUserNeglectedTasks(userId: string, filters?: {

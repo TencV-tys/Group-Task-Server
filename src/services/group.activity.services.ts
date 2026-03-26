@@ -499,90 +499,93 @@ static async getMemberContributionDetails(
   }
 }
 
-  // ========== GET TASK COMPLETION HISTORY ==========
-  static async getTaskCompletionHistory(
-    groupId: string,
-    userId: string,
-    filters?: {
-      taskId?: string;
-      week?: number;
-    }
-  ) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
+// services/group.activity.services.ts - FIXED getTaskCompletionHistory
 
-      if (!membership) {
-        return { success: false, message: "You are not a member of this group" };
-      }
-
-      const where: any = {
-        task: { groupId },
-        completed: true
-      };
-
-      if (filters?.taskId) {
-        where.taskId = filters.taskId;
-      }
-
-      if (filters?.week) {
-        where.rotationWeek = filters.week;
-      }
-
-      const history = await prisma.assignment.findMany({
-        where,
-        include: {
-          user: { select: { id: true, fullName: true, avatarUrl: true } },
-          task: { select: { id: true, title: true } }
-        },
-        orderBy: [{ rotationWeek: 'desc' }, { completedAt: 'desc' }],
-        take: 100
-      });
-
-      // Filter out items with null tasks
-      const validHistory = history.filter(item => item.task !== null);
-
-      // Group by task
-      const taskGroups: Record<string, any> = {};
-
-      validHistory.forEach(item => {
-        const taskId = item.taskId;
-        if (!taskId) return;
-        
-        if (!taskGroups[taskId]) {
-          taskGroups[taskId] = {
-            taskId: item.taskId,
-            taskTitle: item.task!.title,
-            completions: []
-          };
-        }
-
-        taskGroups[taskId].completions.push({
-          userId: item.userId,
-          userName: item.user.fullName,
-          userAvatar: item.user.avatarUrl,
-          completedAt: item.completedAt,
-          week: item.rotationWeek,
-          points: item.points,
-          verified: item.verified
-        });
-      });
-
-      return {
-        success: true,
-        message: "Task completion history retrieved",
-        data: {
-          tasks: Object.values(taskGroups),
-          totalCompletions: validHistory.length
-        }
-      };
-
-    } catch (error: any) {
-      console.error("GroupActivityService.getTaskCompletionHistory error:", error);
-      return { success: false, message: error.message || "Error retrieving task history" };
-    }
+static async getTaskCompletionHistory(
+  groupId: string,
+  userId: string,
+  filters?: {
+    taskId?: string;
+    week?: number;
   }
+) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+
+    if (!membership) {
+      return { success: false, message: "You are not a member of this group" };
+    }
+
+    const where: any = {
+      task: { groupId },
+      completed: true
+    };
+
+    if (filters?.taskId) {
+      where.taskId = filters.taskId;
+    }
+
+    if (filters?.week) {
+      where.rotationWeek = filters.week;
+    }
+
+    const history = await prisma.assignment.findMany({
+      where,
+      include: {
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        task: { select: { id: true, title: true } }
+      },
+      orderBy: [{ rotationWeek: 'desc' }, { completedAt: 'desc' }],
+      take: 100
+    });
+
+    // Filter out items with null tasks
+    const validHistory = history.filter(item => item.task !== null);
+
+    // Group by task
+    const taskGroups: Record<string, any> = {};
+
+    validHistory.forEach(item => {
+      const taskId = item.taskId;
+      if (!taskId) return;
+      
+      if (!taskGroups[taskId]) {
+        taskGroups[taskId] = {
+          taskId: item.taskId,
+          taskTitle: item.task!.title,
+          completions: []
+        };
+      }
+
+      // ✅ ADD assignmentId to the completion object
+      taskGroups[taskId].completions.push({
+        assignmentId: item.id,        // ✅ This is the key fix
+        userId: item.userId,
+        userName: item.user.fullName,
+        userAvatar: item.user.avatarUrl,
+        completedAt: item.completedAt,
+        week: item.rotationWeek,
+        points: item.points,
+        verified: item.verified
+      });
+    });
+
+    return {
+      success: true,
+      message: "Task completion history retrieved",
+      data: {
+        tasks: Object.values(taskGroups),
+        totalCompletions: validHistory.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("GroupActivityService.getTaskCompletionHistory error:", error);
+    return { success: false, message: error.message || "Error retrieving task history" };
+  }
+}
  // ===== NEW: Get admin dashboard data (WITH NEGLECTED COUNTS) =====
 static async getAdminDashboard(groupId: string, userId: string) {
   try {

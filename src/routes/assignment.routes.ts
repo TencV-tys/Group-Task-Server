@@ -9,14 +9,14 @@ const router = Router();
 // Log all routes as they're registered
 router.use((req, res, next) => {
   next();
-});
+}); 
 
 // All assignment routes require authentication
 router.use(UserAuthMiddleware);
-
+  
 // ============= ASSIGNMENT ROUTES =============
 // Complete an assignment - with photo upload support
-router.post( 
+router.post(  
   '/:assignmentId/complete', 
   photoUpload, // Add this to handle file uploads
   AssignmentController.completeAssignment
