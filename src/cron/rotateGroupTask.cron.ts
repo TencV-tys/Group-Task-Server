@@ -1,4 +1,5 @@
-// cron/rotateGroupTask.cron.ts - COMPLETELY UPDATED with earliest task date logic
+// cron/rotateGroupTask.cron.ts - FIXED with safe property access
+
 import cron from 'node-cron';
 import { TaskService } from '../services/task.services';
 import { SocketService } from '../services/socket.services';
@@ -32,12 +33,12 @@ export class CronService {
                   select: { points: true }
                 }
               },
-              orderBy: { createdAt: 'asc' } // 👈 IMPORTANT: Get earliest task first
+              orderBy: { createdAt: 'asc' }
             },
             members: {
               where: { 
                 isActive: true,
-                inRotation: true // 👈 Only members in rotation
+                inRotation: true
               },
               select: {
                 userId: true,
@@ -76,7 +77,7 @@ export class CronService {
           console.log(`\n📋 Group: ${group.name || group.id}`);
           console.log(`   👥 Members in rotation: ${membersInRotation.length}, Admins: ${admins}`);
 
-          // ===== FIXED: Check rotation based on EARLIEST TASK creation date =====
+          // Check rotation based on EARLIEST TASK creation date
           const shouldRotate = await this.shouldRotateGroup(group);
           
           if (shouldRotate) {
@@ -141,6 +142,7 @@ export class CronService {
                 if (result.success) {
                   console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
                   
+                  // ✅ Safe emission with optional chaining
                   if (result.newWeek && result.weekStart && result.weekEnd) {
                     await SocketService.emitRotationCompleted(
                       group.id,
@@ -152,14 +154,23 @@ export class CronService {
                     console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
                   }
                   
-                  if (result.fairnessMetrics) {
-                    console.log(`   📊 Fairness Metrics:`);
-                    console.log(`      Lowest points member: ${result.fairnessMetrics.lowestPointsMember} (${result.fairnessMetrics.lowestPointsValue}pts)`);
-                    console.log(`      → got highest task: ${result.fairnessMetrics.gotHighestTask} (${result.fairnessMetrics.gotHighestPoints}pts)`);
-                    console.log(`      Highest points member: ${result.fairnessMetrics.highestPointsMember} (${result.fairnessMetrics.highestPointsValue}pts)`);
-                    console.log(`      → got lowest task: ${result.fairnessMetrics.gotLowestTask} (${result.fairnessMetrics.gotLowestPoints}pts)`);
-                    console.log(`      Fairness Score: ${result.fairnessMetrics.fairnessScore}%`);
+                  // ✅ Safe logging with null checks
+                  console.log(`   📊 Rotation Results:`);
+                  console.log(`      New Week: ${result.newWeek}`);
+                  console.log(`      Week Start: ${result.weekStart ? result.weekStart.toLocaleDateString() : 'N/A'}`);
+                  console.log(`      Week End: ${result.weekEnd ? result.weekEnd.toLocaleDateString() : 'N/A'}`);
+                  
+                  if (result.rotatedTasks && result.rotatedTasks.length > 0) {
+                    console.log(`      Tasks rotated:`);
+                    result.rotatedTasks.forEach((task: any, idx: number) => {
+                      console.log(`         ${idx + 1}. ${task.taskTitle} → ${task.newAssigneeName}`);
+                    });
                   }
+                  
+                  if (result.note) {
+                    console.log(`      ℹ️ Note: ${result.note}`);
+                  }
+                  
                 } else {
                   console.log(`   ❌ Rotation failed: ${result.message}`);
                 }
@@ -183,7 +194,7 @@ export class CronService {
     console.log('✅ Rotation cron initialized (using earliest task creation date)');
   }
 
-  // ===== FIXED: Now uses EARLIEST TASK creation date, NOT group creation date =====
+  // Check if group should rotate based on earliest task creation date
   private static async shouldRotateGroup(group: any): Promise<boolean> {
     // Get the earliest task in the group
     const earliestTask = await prisma.task.findFirst({
