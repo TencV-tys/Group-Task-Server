@@ -189,7 +189,7 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
     
     return filtered.length > 0 ? filtered as DayOfWeek[] : undefined;
   }
-
+ 
   // Helper to get time slot label based on time
   static getTimeSlotLabel(startTime: string): string {
     if (!startTime) return 'Default';

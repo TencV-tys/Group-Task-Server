@@ -5,9 +5,10 @@ import { UserNotificationService } from "./user.notification.services";
 import { SocketService } from "./socket.services";
 
 export class SwapRequestService {
-  
  
- // CREATE: Create a new swap request with scope support
+
+  // services/swapRequest.services.ts - COMPLETE UPDATED createSwapRequest
+
 static async createSwapRequest(
   userId: string,
   assignmentId: string,
@@ -55,7 +56,6 @@ static async createSwapRequest(
       return { success: false, message: "Assignment not found" };
     }
 
-    // Check if task exists
     if (!assignment.task) {
       return { 
         success: false, 
@@ -77,7 +77,7 @@ static async createSwapRequest(
         userId,
         groupId: assignment.task.groupId,
         isActive: true,
-        inRotation: true // Must be in rotation to request swaps
+        inRotation: true
       }
     });
 
@@ -85,14 +85,127 @@ static async createSwapRequest(
       return { success: false, message: "You must be an active member in rotation to request swaps" };
     }
 
-    // ===== UPDATED: Check if target user is specified, valid, and in rotation =====
+    // ========== DAY SWAP VALIDATION ==========
+    if (data.scope === 'day') {
+      if (!data.selectedDay) {
+        return { 
+          success: false, 
+          message: "Please select a day to swap" 
+        };
+      }
+
+      // ✅ Check if requester actually has a task that day
+      const requesterAssignment = await prisma.assignment.findFirst({
+        where: {
+          userId,
+          taskId: assignment.taskId,
+          rotationWeek: assignment.rotationWeek,
+          assignmentDay: data.selectedDay as DayOfWeek
+        }
+      });
+
+      if (!requesterAssignment) {
+        return { 
+          success: false, 
+          message: `You don't have any tasks on ${data.selectedDay} to swap` 
+        };
+      }
+
+      // ✅ For daily tasks with time slots, validate time slot exists
+      if (data.selectedTimeSlotId && assignment.task.timeSlots) {
+        const timeSlotExists = assignment.task.timeSlots.some(
+          slot => slot.id === data.selectedTimeSlotId
+        );
+        if (!timeSlotExists) {
+          return { 
+            success: false, 
+            message: "Selected time slot does not exist for this task" 
+          };
+        }
+      }
+
+      // ✅ Check if there are any members who CAN accept (no task that day)
+      if (!data.targetUserId) {
+        const availableMembers = await prisma.groupMember.findMany({
+          where: {
+            groupId: assignment.task.groupId,
+            isActive: true,
+            inRotation: true,
+            userId: { not: userId }
+          },
+          include: {
+            user: {
+              select: { fullName: true }
+            }
+          }
+        });
+
+        const membersWithNoTask = [];
+        
+        for (const member of availableMembers) {
+          const existingAssignment = await prisma.assignment.findFirst({
+            where: {
+              userId: member.userId,
+              taskId: assignment.taskId,
+              rotationWeek: assignment.rotationWeek,
+              assignmentDay: data.selectedDay as DayOfWeek
+            }
+          });
+          
+          if (!existingAssignment) {
+            membersWithNoTask.push(member.user.fullName);
+          }
+        }
+
+        if (membersWithNoTask.length === 0) {
+          return { 
+            success: false, 
+            message: `No members available to accept this day swap. All members already have tasks on ${data.selectedDay}.` 
+          };
+        }
+      }
+    }
+
+    // ========== WEEK SWAP VALIDATION ==========
+    if (data.scope === 'week') {
+      // For week swaps, validate time constraints
+      const firstTask = assignment.task.group?.tasks?.[0];
+      if (!firstTask) {
+        return { 
+          success: false, 
+          message: "Cannot determine week start date - no tasks found" 
+        };
+      }
+
+      const firstTaskDate = new Date(firstTask.createdAt);
+      const firstTaskDay = firstTaskDate.getDay();
+      
+      let daysSinceWeekStart = new Date().getDay() - firstTaskDay;
+      if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
+      
+      const weekStart = new Date();
+      weekStart.setDate(new Date().getDate() - daysSinceWeekStart);
+      weekStart.setHours(0, 0, 0, 0);
+      
+      const hoursSinceWeekStart = (new Date().getTime() - weekStart.getTime()) / (1000 * 60 * 60);
+      
+      if (hoursSinceWeekStart > 24) {
+        const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        return { 
+          success: false, 
+          message: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})` 
+        };
+      }
+    }
+
+    // ========== TARGET USER VALIDATION ==========
     if (data.targetUserId) {
       const targetMembership = await prisma.groupMember.findFirst({
         where: {
           userId: data.targetUserId,
           groupId: assignment.task.groupId,
           isActive: true,
-          inRotation: true // Target must be in rotation
+          inRotation: true
         }
       });
 
@@ -105,6 +218,25 @@ static async createSwapRequest(
 
       if (data.targetUserId === userId) {
         return { success: false, message: "Cannot swap assignment with yourself" };
+      }
+
+      // ✅ For DAY swaps with specific target, check if target has a task that day
+      if (data.scope === 'day' && data.selectedDay) {
+        const targetAssignment = await prisma.assignment.findFirst({
+          where: {
+            userId: data.targetUserId,
+            taskId: assignment.taskId,
+            rotationWeek: assignment.rotationWeek,
+            assignmentDay: data.selectedDay as DayOfWeek
+          }
+        });
+
+        if (targetAssignment) {
+          return { 
+            success: false, 
+            message: `Target user already has a task on ${data.selectedDay}. Only users without a task can accept day swaps.` 
+          };
+        }
       }
     }
 
@@ -121,93 +253,6 @@ static async createSwapRequest(
         success: false, 
         message: "A pending swap request already exists for this assignment" 
       };
-    } 
-          
-    // Check time constraints based on scope
-    const now = new Date();
-
-    // ===== FIXED: For WEEK swaps, check based on group's FIRST TASK creation date =====
-    if (data.scope === 'week') {
-      // Get the first task creation date for this group
-      const firstTask = assignment.task.group?.tasks?.[0];
-      if (!firstTask) {
-        return { 
-          success: false, 
-          message: "Cannot determine week start date - no tasks found" 
-        };
-      }
-
-      // Calculate week start based on first task date
-      const firstTaskDate = new Date(firstTask.createdAt);
-      const firstTaskDay = firstTaskDate.getDay(); // 0-6 (Sun-Sat)
-      
-      // Calculate days since start of current week
-      const today = now.getDay();
-      let daysSinceWeekStart = today - firstTaskDay;
-      if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
-      
-      // Set week start to the correct day (the day first task was created)
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - daysSinceWeekStart);
-      weekStart.setHours(0, 0, 0, 0);
-      
-      // Calculate hours since week started
-      const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
-      
-      // Get current week number
-      const daysSinceFirstTask = Math.floor(
-        (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24)
-      );
-      const currentWeekNumber = Math.floor(daysSinceFirstTask / 7) + 1;
-      
-      const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      
-      console.log(`📅 Week swap check:`, {
-        firstTaskDate: firstTaskDate.toISOString(),
-        firstTaskDay: weekDayNames[firstTaskDay],
-        weekStart: weekStart.toISOString(),
-        weekStartDay: weekDayNames[weekStart.getDay()],
-        hoursSinceWeekStart,
-        currentWeekNumber
-      });
-      
-      // Week swap available within first 24 hours of the week
-      if (hoursSinceWeekStart > 24) {
-        return { 
-          success: false, 
-          message: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})` 
-        };
-      }
-    } else {
-      // For DAY swaps, check if past due date
-      const dueDate = new Date(assignment.dueDate);
-      if (now > dueDate) {
-        return { 
-          success: false, 
-          message: "Cannot swap past due assignments" 
-        };
-      }
-    }
-          
-    // Validate scope selection
-    if (data.scope === 'day' && !data.selectedDay) {
-      return { 
-        success: false, 
-        message: "Please select a day to swap" 
-      };
-    }
-
-    // For daily tasks with time slots, validate if time slot exists
-    if (data.scope === 'day' && data.selectedTimeSlotId && assignment.task.timeSlots) {
-      const timeSlotExists = assignment.task.timeSlots.some(
-        slot => slot.id === data.selectedTimeSlotId
-      );
-      if (!timeSlotExists) {
-        return { 
-          success: false, 
-          message: "Selected time slot does not exist for this task" 
-        };
-      }
     }
 
     // Set default expiry if not provided (48 hours from now)
@@ -217,7 +262,7 @@ static async createSwapRequest(
       expiresAt.setHours(expiresAt.getHours() + 48);
     }
 
-    // Create swap request with scope fields
+    // Create swap request
     const swapRequest = await prisma.swapRequest.create({
       data: {
         assignmentId,
@@ -267,7 +312,6 @@ static async createSwapRequest(
       }
     });
 
-    // Get requester info separately
     const requester = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -277,7 +321,6 @@ static async createSwapRequest(
       }
     });
 
-    // Get swap description for notifications
     const getSwapDescription = () => {
       if (data.scope === 'day') {
         if (data.selectedTimeSlotId && assignment.task?.timeSlots) {
@@ -290,12 +333,10 @@ static async createSwapRequest(
     };
 
     // ========== CREATE NOTIFICATIONS ==========
-    
     let notifiedUsersCount = 0;
-    let activeMembersList: any[] = [];
     
-    // Create notification for target user if specified
     if (data.targetUserId) {
+      // Notify specific target user
       await UserNotificationService.createNotification({
         userId: data.targetUserId,
         type: "SWAP_REQUEST",
@@ -321,18 +362,43 @@ static async createSwapRequest(
       });
       notifiedUsersCount = 1;
     } else {
-      // ===== UPDATED: Only notify members in rotation =====
-      activeMembersList = await prisma.groupMember.findMany({
+      // Notify all eligible members (for DAY swaps: only those without a task that day)
+      const activeMembers = await prisma.groupMember.findMany({
         where: {
           groupId: assignment.task.groupId,
           isActive: true,
-          inRotation: true, // Only notify members who can accept swaps
+          inRotation: true,
           userId: { not: userId }
         },
         select: { userId: true }
       });
 
-      for (const member of activeMembersList) {
+      let eligibleMembers = activeMembers;
+      
+      // For DAY swaps, filter members who have no task that day
+      if (data.scope === 'day' && data.selectedDay) {
+        const eligibleList = [];
+        for (const member of activeMembers) {
+          const existingAssignment = await prisma.assignment.findFirst({
+            where: {
+              userId: member.userId,
+              taskId: assignment.taskId,
+              rotationWeek: assignment.rotationWeek,
+              assignmentDay: data.selectedDay as DayOfWeek
+            }
+          });
+          if (!existingAssignment) {
+            eligibleList.push(member);
+          }
+        }
+        eligibleMembers = eligibleList;
+        
+        if (eligibleMembers.length === 0) {
+          console.log(`⚠️ No eligible members to notify for day swap on ${data.selectedDay}`);
+        }
+      }
+
+      for (const member of eligibleMembers) {
         await UserNotificationService.createNotification({
           userId: member.userId,
           type: "SWAP_REQUEST",
@@ -357,10 +423,10 @@ static async createSwapRequest(
           }
         });
       }
-      notifiedUsersCount = activeMembersList.length;
+      notifiedUsersCount = eligibleMembers.length;
     }
 
-    // 🔴 EMIT SOCKET EVENT FOR SWAP REQUEST
+    // 🔴 EMIT SOCKET EVENT
     await SocketService.emitSwapRequested(
       swapRequest.id,
       assignmentId,
@@ -377,7 +443,7 @@ static async createSwapRequest(
       data.reason
     );
 
-    // Notify admins about the swap request
+    // Notify admins
     const admins = await prisma.groupMember.findMany({
       where: {
         groupId: assignment.task.groupId,
@@ -417,6 +483,7 @@ static async createSwapRequest(
       const firstTaskDate = new Date(firstTask.createdAt);
       const firstTaskDay = firstTaskDate.getDay();
       const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const now = new Date();
       
       weekInfo = {
         weekStartDay: weekDayNames[firstTaskDay],
@@ -439,7 +506,8 @@ static async createSwapRequest(
       notifications: {
         notifiedUsers: notifiedUsersCount,
         notifiedAdmins: admins.length
-      }
+      },
+      eligibleMembersCount: data.scope === 'day' && !data.targetUserId ? notifiedUsersCount : undefined
     };
 
   } catch (error: any) {
@@ -447,6 +515,7 @@ static async createSwapRequest(
     return { success: false, message: error.message || "Error creating swap request" };
   }
 }
+
   // GET: Get swap requests created by a user
   static async getUserSwapRequests(
     userId: string,

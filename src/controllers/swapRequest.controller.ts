@@ -57,7 +57,8 @@ static async createSwapRequest(req: UserAuthRequest, res: Response) {
         success: true,
         message: result.message,
         data: result.swapRequest,
-        notifications: result.notifications // Include notification info
+        notifications: result.notifications,
+          eligibleMembersCount: result.eligibleMembersCount 
       });
 
     } catch (error: any) {

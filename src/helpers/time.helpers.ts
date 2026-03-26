@@ -99,7 +99,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     // ON TIME: Within first 25 minutes after end time
     if (currentDate <= onTimeEnd) {
       const timeLeft = onTimeEnd.getTime() - currentDate.getTime();
-      return { 
+      return {  
         allowed: true, 
         timeLeft: Math.ceil(timeLeft / 1000),
         onTimeEnd,

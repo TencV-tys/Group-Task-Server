@@ -38,8 +38,8 @@ export class RotationHelpers {
         currentRotationWeek: true,
         createdAt: true
       }
-    });
-
+    }); 
+ 
     // ===== UPDATED: Get ALL active members with rotation status =====
     const allActiveMembers = await prisma.groupMember.findMany({
       where: { 
