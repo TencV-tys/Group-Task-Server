@@ -58,9 +58,9 @@ export class AssignmentController {
           success: false,
           message: result.message,
           validation: result.validation
-        });
-      }
-
+        }); 
+      } 
+ 
       return res.json({
         success: true,
         message: result.message,
@@ -77,9 +77,9 @@ export class AssignmentController {
       return res.status(500).json({
         success: false,
         message: "Internal server error"
-      });
+      }); 
     }
-  }
+  } 
  
   // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(req: UserAuthRequest, res: Response) {

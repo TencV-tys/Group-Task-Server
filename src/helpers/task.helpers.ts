@@ -13,26 +13,33 @@ export class TaskHelpers {
     }
   }
 
-  // Helper to calculate week boundaries
-  static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date, weekEnd: Date } {
-    const now = new Date();
-    const currentDay = now.getDay();
-    
-    const daysToMonday = currentDay === 0 ? 6 : currentDay - 1;
-    
-    const monday = new Date(now);
-    monday.setDate(monday.getDate() - daysToMonday + (weekOffset * 7));
-    monday.setHours(0, 0, 0, 0);
-    
-    const sunday = new Date(monday);
-    sunday.setDate(sunday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
-    
-    return { weekStart: monday, weekEnd: sunday };
-  }
-
 // helpers/task.helpers.ts
-static calculateDueDate(day: DayOfWeek, weekStart?: Date): Date {
+
+static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date; weekEnd: Date } {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - daysToMonday + (weekOffset * 7));
+  weekStart.setHours(0, 0, 0, 0);
+  
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+  
+  console.log(`📅 getWeekBoundaries:`);
+  console.log(`   Now: ${now.toLocaleDateString()} (day ${dayOfWeek})`);
+  console.log(`   Days to Monday: ${daysToMonday}`);
+  console.log(`   Week start: ${weekStart.toLocaleDateString()} (${weekStart.toLocaleDateString('en-US', { weekday: 'long' })})`);
+  console.log(`   Week end: ${weekEnd.toLocaleDateString()} (${weekEnd.toLocaleDateString('en-US', { weekday: 'long' })})`);
+  
+  return { weekStart, weekEnd };
+}
+// helpers/task.helpers.ts
+
+static calculateDueDate(day: DayOfWeek, referenceDate: Date = new Date()): Date {
   const daysMap: Record<DayOfWeek, number> = {
     'SUNDAY': 0,
     'MONDAY': 1,
@@ -44,17 +51,22 @@ static calculateDueDate(day: DayOfWeek, weekStart?: Date): Date {
   };
   
   const targetDay = daysMap[day];
-  const baseDate = weekStart || new Date();
-  const currentDay = baseDate.getDay();
+  const currentDay = referenceDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
   
   let daysToAdd = targetDay - currentDay;
   if (daysToAdd < 0) {
     daysToAdd += 7;
   }
   
-  const dueDate = new Date(baseDate);
-  dueDate.setDate(baseDate.getDate() + daysToAdd);
+  const dueDate = new Date(referenceDate);
+  dueDate.setDate(referenceDate.getDate() + daysToAdd);
   dueDate.setHours(0, 0, 0, 0);
+  
+  console.log(`📅 calculateDueDate:`);
+  console.log(`   Target day: ${day} (map value: ${targetDay})`);
+  console.log(`   Reference date: ${referenceDate.toLocaleDateString()} (day ${currentDay})`);
+  console.log(`   Days to add: ${daysToAdd}`);
+  console.log(`   Result: ${dueDate.toLocaleDateString()} (${dueDate.toLocaleDateString('en-US', { weekday: 'long' })})`);
   
   return dueDate;
 }

@@ -236,83 +236,105 @@ static async createTask(
       });
     }
 
-    // ========== CREATE ASSIGNMENTS WITH FIXED DATES ==========
-    if (initialAssignee) {
+        if (initialAssignee) {
       // Create map of slot points
       const slotPointsMap: Record<string, number> = {};
       createdSlots.forEach(slot => {
         slotPointsMap[slot.id] = slot.points || 0;
       });
       
-      // Calculate total points from all slots
       const totalSlotPoints = Object.values(slotPointsMap).reduce((sum, p) => sum + p, 0);
       
-      if (data.executionFrequency === 'DAILY') {
-        // ✅ FIX: Start from TODAY, not from week start
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        console.log(`📅 Creating daily assignments starting from today: ${today.toLocaleDateString()}`);
-        
-        for (let i = 0; i < 7; i++) {
-          const dueDate = new Date(today);
-          dueDate.setDate(today.getDate() + i);
-          
-          // ✅ Calculate the actual day name from the date
-          const actualDayName = dueDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase() as DayOfWeek;
-          
-          console.log(`   Day ${i}: ${actualDayName} - ${dueDate.toLocaleDateString()}`);
-          
-          for (const timeSlot of createdSlots) {
-            const timeParts = timeSlot.startTime.split(':');
-            const hours = Number(timeParts[0]) || 18;
-            const minutes = Number(timeParts[1]) || 0;
-            
-            const slotDueDate = new Date(dueDate);
-            slotDueDate.setHours(hours, minutes, 0, 0);
-            
-            const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
+      console.log(`🔵🔵🔵 [CREATE TASK] Creating assignments 🔵🔵🔵`);
+      console.log(`👤 User: ${initialAssignee.user?.fullName} (${initialAssignee.userId})`);
+      console.log(`📅 Execution Frequency: ${data.executionFrequency}`);
+      console.log(`📅 Group Current Rotation Week: ${group.currentRotationWeek}`);
+      console.log(`📅 Current Date/Time: ${new Date().toISOString()}`);
+      console.log(`📅 Current Day: ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}`);
+      
+      // In task.services.ts - Fix daily task assignment creation
 
-            await prisma.assignment.create({
-              data: {
-                taskId: task.id,
-                userId: initialAssignee.userId,
-                dueDate: slotDueDate,
-                points: assignmentPoints,
-                rotationWeek: group.currentRotationWeek,
-                weekStart: dueDate,
-                weekEnd: new Date(dueDate.getTime() + 24 * 60 * 60 * 1000),
-                assignmentDay: actualDayName,
-                completed: false,
-                timeSlotId: timeSlot.id,
-                originalTotalPoints: totalSlotPoints,
-                slotPoints: slotPointsMap,
-                missedTimeSlotIds: []
-              }
-            });
-          }
+if (data.executionFrequency === 'DAILY') {
+  // ✅ FIX: Start from TODAY, not from week start
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  console.log(`📅 Creating DAILY assignments starting from today: ${today.toLocaleDateString()}`);
+  console.log(`   Today is: ${today.toLocaleDateString('en-US', { weekday: 'long' })}`);
+  
+  for (let i = 0; i < 7; i++) {
+    const dueDate = new Date(today);
+    dueDate.setDate(today.getDate() + i);
+    
+    // ✅ Calculate the actual day name from the date
+    const actualDayName = dueDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase() as DayOfWeek;
+    
+    console.log(`   Day ${i}: ${actualDayName} - ${dueDate.toLocaleDateString()}`);
+    
+    for (const timeSlot of createdSlots) {
+      const timeParts = timeSlot.startTime.split(':');
+      const hours = Number(timeParts[0]) || 18;
+      const minutes = Number(timeParts[1]) || 0;
+      
+      const slotDueDate = new Date(dueDate);
+      slotDueDate.setHours(hours, minutes, 0, 0);
+      
+      const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
+
+      await prisma.assignment.create({
+        data: {
+          taskId: task.id,
+          userId: initialAssignee.userId,
+          dueDate: slotDueDate,
+          points: assignmentPoints,
+          rotationWeek: group.currentRotationWeek,
+          weekStart: dueDate,
+          weekEnd: new Date(dueDate.getTime() + 24 * 60 * 60 * 1000),
+          assignmentDay: actualDayName,
+          completed: false,
+          timeSlotId: timeSlot.id,
+          originalTotalPoints: totalSlotPoints,
+          slotPoints: slotPointsMap,
+          missedTimeSlotIds: []
         }
+      });
+      console.log(`      ✅ Created assignment for ${actualDayName} at ${timeSlot.startTime}-${timeSlot.endTime} (${assignmentPoints} pts)`);
+    }
+  }
+
       } else if (data.executionFrequency === 'WEEKLY') {
-        if (selectedDaysArray) {
-          // ✅ For weekly tasks, use the current week's Monday as base
+        let selectedDaysArray = data.selectedDays;
+        if (!selectedDaysArray && data.dayOfWeek) {
+          selectedDaysArray = [data.dayOfWeek];
+        }
+        
+        if (selectedDaysArray && selectedDaysArray.length > 0) {
+          // Get the current week's start (Monday)
           const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries();
           
-          console.log(`📅 Creating weekly assignments for week starting: ${weekStart.toLocaleDateString()}`);
+          console.log(`📅 Creating WEEKLY assignments`);
+          console.log(`   Week start: ${weekStart.toLocaleDateString()} (${weekStart.toLocaleDateString('en-US', { weekday: 'long' })})`);
+          console.log(`   Week end: ${weekEnd.toLocaleDateString()} (${weekEnd.toLocaleDateString('en-US', { weekday: 'long' })})`);
+          console.log(`   Selected days: ${selectedDaysArray.join(', ')}`);
+          console.log(`   Current date: ${new Date().toLocaleDateString()} (${new Date().toLocaleDateString('en-US', { weekday: 'long' })})`);
+          
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
           
           for (const day of selectedDaysArray) {
             // Calculate the due date for this day in the current week
-            const dueDate = TaskHelpers.calculateDueDate(day, weekStart);
+            const dueDate = TaskHelpers.calculateDueDate(day as DayOfWeek, weekStart);
             
-            // Skip if the due date is in the past (for this week)
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
+            const dueDateDayName = dueDate.toLocaleDateString('en-US', { weekday: 'long' });
+            const isInPast = dueDate < today;
             
-            if (dueDate < today) {
-              console.log(`   ⏭️ Skipping ${day} - already passed this week (${dueDate.toLocaleDateString()})`);
+            console.log(`   Day: ${day} → Calculated: ${dueDate.toLocaleDateString()} (${dueDateDayName})`);
+            console.log(`      In past? ${isInPast} (today: ${today.toLocaleDateString()})`);
+            
+            if (isInPast) {
+              console.log(`      ⏭️ SKIPPING - day already passed this week`);
               continue;
             }
-            
-            console.log(`   Creating assignment for ${day}: ${dueDate.toLocaleDateString()}`);
             
             for (const timeSlot of createdSlots) {
               const timeParts = timeSlot.startTime.split(':');
@@ -333,7 +355,7 @@ static async createTask(
                   rotationWeek: group.currentRotationWeek,
                   weekStart,
                   weekEnd,
-                  assignmentDay: day,
+                  assignmentDay: day as DayOfWeek,
                   completed: false,
                   timeSlotId: timeSlot.id,
                   originalTotalPoints: totalSlotPoints,
@@ -341,11 +363,17 @@ static async createTask(
                   missedTimeSlotIds: []
                 }
               });
+              console.log(`         ✅ Created: ${day} at ${timeSlot.startTime}-${timeSlot.endTime} (${assignmentPoints} pts)`);
             }
           }
+        } else {
+          console.log(`⚠️ WARNING: No selected days for weekly task!`);
         }
       }
+      
+      console.log(`🔵🔵🔵 [CREATE TASK] Completed assignments creation 🔵🔵🔵`);
     }
+    
 
     const completeTask = await prisma.task.findUnique({
       where: { id: task.id },

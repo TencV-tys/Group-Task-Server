@@ -38,12 +38,12 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     if (dueDate.toDateString() !== currentDate.toDateString()) {
       return { 
         allowed: false, 
-        reason: 'Not due date',
-        dueDate: dueDate,
+        reason: 'Not due date', 
+        dueDate: dueDate, 
         currentDate: currentDate
       };
     }
-    
+     
     // If no time slot, allow any time on due date
     if (!assignment.timeSlot) {
       return { 
@@ -82,7 +82,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       endTime: endTime.toLocaleTimeString()
     });
     
-    // BEFORE submission opens
+    // BEFORE submission opens 
     if (currentDate < submissionStart) {
       const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
       return { 
@@ -90,7 +90,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
         reason: 'Submission not open yet',
         opensIn: Math.ceil(timeUntilStart / 60000),
         submissionStart,
-        currentTime: currentDate,
+        currentTime: currentDate, 
         willBePenalized: false,
         activeSlot: null // ✅ Add activeSlot
       };

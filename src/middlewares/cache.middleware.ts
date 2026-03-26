@@ -1,4 +1,4 @@
-// middlewares/cache.middleware.ts - FIXED FOR AUTHENTICATED USERS
+// middlewares/cache.middleware.ts - FIXED VERSION
 import { Request, Response, NextFunction } from 'express';
 
 interface CacheEntry {
@@ -44,15 +44,37 @@ const generateETag = (data: any): string => {
   return hash.toString(16);
 };
 
+// ✅ List of routes that should NEVER be cached
+const NEVER_CACHE_PATTERNS = [
+  '/api/assignments',      // Assignment operations
+  '/api/swap-requests',    // Swap operations  
+  '/api/tasks',            // Task operations
+  '/api/group',            // Group operations
+  '/api/notifications',    // Notifications
+  '/api/feedback',         // Feedback
+  '/api/reports',          // Reports
+  '/api/uploads',          // Uploads
+  '/api/auth',             // Auth endpoints
+];
+
+const shouldNeverCache = (url: string): boolean => {
+  return NEVER_CACHE_PATTERNS.some(pattern => url.includes(pattern));
+};
+
 export const cacheMiddleware = (duration: number = DEFAULT_CACHE_TTL) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    // Only cache GET requests
+    // ✅ Only cache GET requests
     if (req.method !== 'GET') {
       return next();
     }
-
-    // ✅ FIX: Check if request is for authenticated user
-    // Check both query params and headers for auth token
+    
+    // ✅ Check if URL should never be cached
+    if (shouldNeverCache(req.originalUrl)) {
+      console.log(`🚫 Skipping cache for non-cacheable route: ${req.originalUrl}`);
+      return next();
+    }
+    
+    // Check if request is for authenticated user
     const hasAuthHeader = req.headers.authorization;
     const hasAuthCookie = req.cookies?.accessToken;
     const isAuthenticated = hasAuthHeader || hasAuthCookie;
@@ -60,6 +82,8 @@ export const cacheMiddleware = (duration: number = DEFAULT_CACHE_TTL) => {
     // ✅ DON'T CACHE authenticated requests (personalized data)
     if (isAuthenticated) {
       console.log(`🚫 Skipping cache for authenticated request: ${req.originalUrl}`);
+      // Set no-cache headers for authenticated requests
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       return next();
     }
 
@@ -98,10 +122,18 @@ export const cacheMiddleware = (duration: number = DEFAULT_CACHE_TTL) => {
     cacheMisses++;
     console.log(`❌ Cache miss: ${req.originalUrl}`);
     
+    // ✅ Store original json method
     const originalJson = res.json;
+    let responseSent = false;
     
+    // ✅ Override json method to capture response
     res.json = function(body) {
-      // ✅ Only cache public responses (not authenticated)
+      if (responseSent) {
+        return originalJson.call(this, body);
+      }
+      responseSent = true;
+      
+      // ✅ Only cache successful public responses
       if (body && body.success === true && !isAuthenticated) {
         const etag = generateETag(body);
         
@@ -116,7 +148,7 @@ export const cacheMiddleware = (duration: number = DEFAULT_CACHE_TTL) => {
         res.setHeader('ETag', etag);
         res.setHeader('X-Cache', 'MISS');
       } else {
-        // ✅ For authenticated requests, use no-store
+        // For authenticated or failed requests, don't cache
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       }
       
