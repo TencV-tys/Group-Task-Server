@@ -958,61 +958,71 @@ static async verifyAssignment(
     }
   }
   
-  // ========== GET ASSIGNMENT DETAILS ==========
-  static async getAssignmentDetails(assignmentId: string, userId: string) {
-    try {
-      const assignment = await prisma.assignment.findUnique({
-        where: { id: assignmentId },
-        include: {
-          user: { select: { id: true, fullName: true, avatarUrl: true } },
-          task: {
-            include: {
-              group: true,
-              creator: { select: { id: true, fullName: true, avatarUrl: true } }
-            }
-          },
-          timeSlot: true
+  // In assignment.services.ts - getAssignmentDetails
+static async getAssignmentDetails(assignmentId: string, userId: string) {
+  try {
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        task: {
+          include: {
+            group: true,
+            timeSlots: true
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            avatarUrl: true
+          }
+        },
+        timeSlot: true
+      }
+    });
+
+    if (!assignment) {
+      return { success: false, message: "Assignment not found" };
+    }
+
+    // ✅ Check if user is admin of the group
+    let isGroupAdmin = false;
+    if (assignment.task?.groupId) {
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId,
+          groupId: assignment.task.groupId,
+          groupRole: "ADMIN"
         }
       });
-
-      if (!assignment) {
-        return { success: false, message: "Assignment not found" };
-      }
-
-      if (!assignment.task) {
-        return { 
-          success: false, 
-          message: "The task associated with this assignment has been deleted" 
-        };
-      }
-
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId: assignment.task.groupId }
-      });
-
-      if (!membership) {
-        return { success: false, message: "You don't have permission to view this assignment" };
-      }
-
-      const isAssignee = assignment.userId === userId;
-      const isAdmin = membership.groupRole === "ADMIN";
-
-      if (!isAssignee && !isAdmin) {
-        return { success: false, message: "You don't have permission to view this assignment" };
-      }
-
-      return {
-        success: true,
-        message: "Assignment details retrieved",
-        assignment
-      };
-
-    } catch (error: any) {
-      console.error("AssignmentService.getAssignmentDetails error:", error);
-      return { success: false, message: error.message || "Error retrieving assignment details" };
+      isGroupAdmin = !!membership;
     }
-  }
 
+    const isAssignee = assignment.userId === userId;
+
+    // ✅ Allow if assignee OR admin
+    if (!isAssignee && !isGroupAdmin) {
+      return { 
+        success: false, 
+        message: "You don't have permission to view this assignment" 
+      };
+    }
+
+    return {
+      success: true,
+      assignment: {
+        ...assignment,
+        isAdmin: isGroupAdmin,  // ✅ Add this flag
+        isOwner: isAssignee     // ✅ Add this flag
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error fetching assignment details:", error);
+    return { success: false, message: error.message };
+  }
+}
   // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
 
 // ========== GET USER ASSIGNMENTS ==========

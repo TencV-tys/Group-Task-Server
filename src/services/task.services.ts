@@ -168,25 +168,29 @@ static async createTask(
     }));
 
     // Create the task
-    const taskData: Prisma.TaskCreateInput = {
-      title: data.title.trim(),
-      description: data.description?.trim() || undefined,
-      points: totalPoints,
-      executionFrequency: data.executionFrequency,
-      timeFormat: data.timeFormat || '12h',
-      dayOfWeek: data.dayOfWeek || undefined,
-      isRecurring: data.isRecurring !== false,
-      category: data.category?.trim() || undefined,
-      rotationOrder: finalRotationOrder,
-      rotationMembers: rotationMembersJson as any,
-      selectedDays: selectedDaysArray ? selectedDaysArray as any : undefined,
-      ...(initialAssignee ? {
-        currentAssignee: initialAssignee.userId,
-        lastAssignedAt: new Date()
-      } : {}),
-      group: { connect: { id: groupId } },
-      creator: { connect: { id: userId } }
-    };
+    // In createTask method, when building taskData
+const taskData: Prisma.TaskCreateInput = {
+  title: data.title.trim(),
+  description: data.description?.trim() || undefined,
+  points: totalPoints,
+  executionFrequency: data.executionFrequency,
+  timeFormat: data.timeFormat || '12h',
+  dayOfWeek: data.dayOfWeek || undefined,
+  isRecurring: data.isRecurring !== false,
+  category: data.category?.trim() || undefined,
+  rotationOrder: finalRotationOrder,
+  rotationMembers: rotationMembersJson as any,
+  // ✅ CRITICAL FIX: Only set selectedDays for WEEKLY tasks
+  selectedDays: data.executionFrequency === 'WEEKLY' && selectedDaysArray && selectedDaysArray.length > 0
+    ? selectedDaysArray as any 
+    : null,  // ← Use null, not undefined
+  ...(initialAssignee ? {
+    currentAssignee: initialAssignee.userId,
+    lastAssignedAt: new Date()
+  } : {}),
+  group: { connect: { id: groupId } },
+  creator: { connect: { id: userId } }
+};
 
     const task = await prisma.task.create({
       data: taskData
@@ -815,7 +819,7 @@ static async getTaskDetails(taskId: string, userId: string) {
         executionFrequency: task.executionFrequency,
         timeFormat: task.timeFormat,
         timeSlots: task.timeSlots || [],
-        selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
+          selectedDays: task.selectedDays ? TaskHelpers.safeJsonParse(task.selectedDays) : [],
         dayOfWeek: task.dayOfWeek,
         isRecurring: task.isRecurring,
         category: task.category,
@@ -951,8 +955,15 @@ static async getTaskDetails(taskId: string, userId: string) {
         } else if (data.dayOfWeek !== undefined) {
           selectedDaysArray = TaskHelpers.validateSelectedDays([data.dayOfWeek]);
         }
-        updateData.selectedDays = selectedDaysArray as Prisma.JsonArray;
-      }
+
+        // ✅ For DAILY tasks, set to null
+  if (data.executionFrequency === 'DAILY') {
+    updateData.selectedDays = Prisma.DbNull;
+  } else {
+    updateData.selectedDays = selectedDaysArray as Prisma.JsonArray;
+  }
+
+      } 
       
       // Handle dayOfWeek - FIXED: Use Prisma enum
       if (data.dayOfWeek !== undefined) {

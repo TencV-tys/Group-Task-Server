@@ -16,7 +16,8 @@ async function main() {
   ];
 
   const hashedPassword = await bcrypt.hash('password123', 10);
-
+  const groupCode = 'H916XL';
+  
   // Create users
   for (const userData of mockUsers) {
     const existingUser = await prisma.user.findUnique({
@@ -42,7 +43,7 @@ async function main() {
 
   // Check if group with invite code 016ESZ exists
   let existingGroup = await prisma.group.findUnique({
-    where: { inviteCode: 'A9HWZU' }
+    where: { inviteCode: groupCode }
   });
 
   // If group doesn't exist, create it
@@ -66,13 +67,13 @@ async function main() {
       data: {
         name: 'Development Team',
         description: 'A test group for development',
-        inviteCode: 'A9HWZU',
+        inviteCode: groupCode,
         createdById: firstUser.id,
       }
     });
     console.log(`✅ Created group: ${existingGroup.name} with invite code: ${existingGroup.inviteCode}`);
   } else {
-    console.log(`⏭️ Group with invite code 016ESZ already exists`);
+    console.log(`⏭️ Group with invite code ${groupCode} already exists`);
   }
 
   // Add all users to the group
@@ -110,7 +111,7 @@ async function main() {
   }
 
   console.log('✅ Seeding complete!');
-  console.log(`\n📋 Group Invite Code: A4RPNW`);
+  console.log(`\n📋 Group Invite Code: ${groupCode}`);
   console.log(`👥 Total users in group: ${allUsers.length}`);
   console.log(`\n🔑 Login credentials:`);
   mockUsers.forEach(user => {
