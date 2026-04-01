@@ -9,7 +9,7 @@ import {
   AssignmentPendingVerificationPayload,
   AssignmentVerifiedPayload,
   SwapRequestedPayload,
-  SwapRespondedPayload,
+  SwapRespondedPayload, 
   GroupMemberJoinedPayload,
   GroupMemberLeftPayload,
   GroupMemberRoleChangedPayload,
@@ -118,6 +118,29 @@ export class SocketService {
       console.error('SocketService.emitAssignmentCreated error:', error);
     }
   }
+  static async emitAssignmentUpdated(
+  assignmentId: string,
+  userId: string,
+  groupId: string,
+  updatedBy?: string
+) {
+  try {
+    const payload = {
+      assignmentId,
+      userId,
+      groupId,
+      updatedBy: updatedBy || userId, 
+      timestamp: new Date()
+    };
+    
+    emitToUser(userId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
+    emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
+    
+    console.log(`📢 Emitted assignment:updated to user ${userId} and group ${groupId}`);
+  } catch (error) {
+    console.error('SocketService.emitAssignmentUpdated error:', error);
+  }
+}
 
   static async emitAssignmentCompleted(
     assignmentId: string,

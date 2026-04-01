@@ -502,10 +502,10 @@ static async createSwapRequest(
         ...swapRequestWithDetails,
         requester
       },
-      weekInfo, 
-      notifications: {
+      weekInfo,  
+      notifications: { 
         notifiedUsers: notifiedUsersCount,
-        notifiedAdmins: admins.length
+        notifiedAdmins: admins.length 
       },
       eligibleMembersCount: data.scope === 'day' && !data.targetUserId ? notifiedUsersCount : undefined
     };
@@ -1095,8 +1095,8 @@ static async getGroupSwapRequests(
  
  
 // services/swapRequest.services.ts - FIXED WEEK SWAP (true exchange)
+// In swapRequest.services.ts - COMPLETE UPDATED acceptSwapRequest
 
-// ACCEPT: Accept a swap request - FIXED WEEK SWAP
 static async acceptSwapRequest(requestId: string, userId: string) {
   try {
     // Get swap request with all needed relations
@@ -1197,8 +1197,11 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     let acceptorNewAssignments: any[] = [];
 
     if (swapRequest.scope === 'day' && swapRequest.selectedDay) {
-      // ============= DAY SWAP (unchanged) =============
+      // ============= DAY SWAP =============
       console.log(`🔄 Processing DAY swap for ${swapRequest.selectedDay}`);
+      
+      let updatedRequesterAssignment;
+      let updatedAcceptorAssignment;
       
       const transactionResult = await prisma.$transaction(async (prisma) => {
         const updated = await prisma.swapRequest.update({
@@ -1241,20 +1244,20 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         }
 
         if (acceptorAssignment) {
-          // Swap: Update both assignments
-          await prisma.assignment.update({
+          // Both have tasks - EXCHANGE
+          const updatedReqAssign = await prisma.assignment.update({
             where: { id: requesterAssignment.id },
             data: {
               userId: userId,
-              notes: `[Swapped from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName} for ${swapRequest.selectedDay}]`
+              notes: `[SWAPPED: from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName} on ${swapRequest.selectedDay}]`
             }
           });
-
-          await prisma.assignment.update({
+          
+          const updatedAccAssign = await prisma.assignment.update({
             where: { id: acceptorAssignment.id },
             data: {
               userId: requesterId,
-              notes: `[Swapped from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName} for ${swapRequest.selectedDay}]`
+              notes: `[SWAPPED: from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName} on ${swapRequest.selectedDay}]`
             }
           });
 
@@ -1262,14 +1265,17 @@ static async acceptSwapRequest(requestId: string, userId: string) {
             updatedRequest: updated,
             swappedCount: 2,
             requesterNew: [acceptorAssignment],
-            acceptorNew: [requesterAssignment]
+            acceptorNew: [requesterAssignment],
+            requesterAssignment: updatedReqAssign,
+            acceptorAssignment: updatedAccAssign
           };
         } else {
-          await prisma.assignment.update({
+          // Acceptor has NO task - TRANSFER
+          const updatedReqAssign = await prisma.assignment.update({
             where: { id: requesterAssignment.id },
             data: {
               userId: userId,
-              notes: `[Swapped from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName} for ${swapRequest.selectedDay}]`
+              notes: `[TRANSFERRED: from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName} on ${swapRequest.selectedDay}]`
             }
           });
 
@@ -1277,7 +1283,9 @@ static async acceptSwapRequest(requestId: string, userId: string) {
             updatedRequest: updated,
             swappedCount: 1,
             requesterNew: [],
-            acceptorNew: [requesterAssignment]
+            acceptorNew: [requesterAssignment],
+            requesterAssignment: updatedReqAssign,
+            acceptorAssignment: null
           };
         }
       });
@@ -1286,6 +1294,30 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       transferredCount = transactionResult.swappedCount;
       acceptorNewAssignments = transactionResult.acceptorNew;
       requesterNewAssignments = transactionResult.requesterNew;
+      
+      // ✅ EMIT SOCKET EVENTS FOR UI REFRESH - DAY SWAP
+      // Notify the requester that their assignment is gone
+      await SocketService.emitAssignmentUpdated(
+        transactionResult.requesterAssignment.id,
+        requesterId,
+        task.groupId
+      );
+      
+      // Notify the acceptor about their new assignment
+      if (transactionResult.acceptorAssignment) {
+        await SocketService.emitAssignmentUpdated(
+          transactionResult.acceptorAssignment.id,
+          userId,
+          task.groupId
+        );
+      } else {
+        // For transfer-only, the acceptor now owns the requester's old assignment
+        await SocketService.emitAssignmentUpdated(
+          transactionResult.requesterAssignment.id,
+          userId,
+          task.groupId
+        );
+      }
 
     } else {
       // ============= WEEK SWAP - TRUE EXCHANGE =============
@@ -1323,9 +1355,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           throw new Error("No assignments found for requester this week");
         }
 
-        // ✅ IMPORTANT: For true exchange, we need to UPDATE both users' assignments
-        // NOT delete and create! We just swap the userId fields.
-        
         const updatedRequesterAssignments: any[] = [];
         const updatedAcceptorAssignments: any[] = [];
 
@@ -1376,7 +1405,9 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           acceptorCount: acceptorAssignments.length,
           requesterNew: updatedRequesterAssignments,
           acceptorNew: updatedAcceptorAssignments,
-          totalSwapped: requesterAssignments.length + acceptorAssignments.length
+          totalSwapped: requesterAssignments.length + acceptorAssignments.length,
+          requesterAssignments: updatedRequesterAssignments,
+          acceptorAssignments: updatedAcceptorAssignments
         };
       });
 
@@ -1386,6 +1417,25 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       acceptorNewAssignments = transactionResult.acceptorNew;
 
       console.log(`✅ WEEK SWAP completed: Swapped ${transactionResult.requesterCount} assignments from requester, ${transactionResult.acceptorCount} from acceptor`);
+      
+      // ✅ EMIT SOCKET EVENTS FOR UI REFRESH - WEEK SWAP
+      // Notify requester about all their assignments that were transferred to acceptor
+      for (const assignment of transactionResult.requesterAssignments) {
+        await SocketService.emitAssignmentUpdated(
+          assignment.id,
+          requesterId,
+          task.groupId
+        );
+      }
+      
+      // Notify acceptor about their new assignments (from requester)
+      for (const assignment of transactionResult.acceptorAssignments) {
+        await SocketService.emitAssignmentUpdated(
+          assignment.id,
+          userId,
+          task.groupId
+        );
+      }
     }
 
     // Create success message
@@ -1562,7 +1612,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       success: false, 
       message: error.message || "Error accepting swap request" 
     };
-  } 
+  }
 }
 
 

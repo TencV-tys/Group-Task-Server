@@ -29,7 +29,7 @@ export const SERVER_EVENTS = {
   // Task events
   TASK_CREATED: 'task:created',
   TASK_UPDATED: 'task:updated',
-  TASK_DELETED: 'task:deleted',
+  TASK_DELETED: 'task:deleted', 
   TASK_ASSIGNED: 'task:assigned',
   
   // Assignment events
@@ -38,6 +38,7 @@ export const SERVER_EVENTS = {
   ASSIGNMENT_PENDING_VERIFICATION: 'assignment:pending-verification',
   ASSIGNMENT_VERIFIED: 'assignment:verified',
   ASSIGNMENT_REJECTED: 'assignment:rejected',
+  ASSIGNMENT_UPDATED: 'assignment:updated',
   
   // Swap request events
   SWAP_REQUESTED: 'swap:requested',
@@ -150,6 +151,14 @@ export interface AssignmentVerifiedPayload {
   verifiedBy: string;
   verifiedByName: string;
   points: number;
+}
+
+export interface AssignmentUpdatedPayload {
+  assignmentId: string;
+  userId: string;
+  groupId: string;
+  updatedBy: string;
+  timestamp: Date;
 }
 
 // Swap request payloads
