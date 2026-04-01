@@ -20,7 +20,7 @@ export async function checkAndFixRotation() {
   // ========== 4. OLD NOTIFICATIONS ==========
   await cleanupOldNotifications(); 
 
-    await fixAssignmentDays();
+   // await fixAssignmentDays();
   
   console.log('✅ All time-based data updated to current time');
 }

@@ -1,4 +1,5 @@
-// helpers/task.helpers.ts
+// helpers/task.helpers.ts - UPDATED with UTC methods
+
 import { DayOfWeek } from '@prisma/client';
 
 export class TaskHelpers {
@@ -13,79 +14,87 @@ export class TaskHelpers {
     }
   }
 
-// helpers/task.helpers.ts
-
-static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date; weekEnd: Date } {
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
-  
-  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - daysToMonday + (weekOffset * 7));
-  weekStart.setHours(0, 0, 0, 0);
-  
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-  weekEnd.setHours(23, 59, 59, 999);
-  
-  console.log(`📅 getWeekBoundaries:`);
-  console.log(`   Now: ${now.toLocaleDateString()} (day ${dayOfWeek})`);
-  console.log(`   Days to Monday: ${daysToMonday}`);
-  console.log(`   Week start: ${weekStart.toLocaleDateString()} (${weekStart.toLocaleDateString('en-US', { weekday: 'long' })})`);
-  console.log(`   Week end: ${weekEnd.toLocaleDateString()} (${weekEnd.toLocaleDateString('en-US', { weekday: 'long' })})`);
-  
-  return { weekStart, weekEnd };
-}
-// helpers/task.helpers.ts
-
-static calculateDueDate(day: DayOfWeek, referenceDate: Date = new Date()): Date {
-  const daysMap: Record<DayOfWeek, number> = {
-    'SUNDAY': 0,
-    'MONDAY': 1,
-    'TUESDAY': 2,
-    'WEDNESDAY': 3,
-    'THURSDAY': 4,
-    'FRIDAY': 5,
-    'SATURDAY': 6
-  };
-  
-  const targetDay = daysMap[day];
-  const currentDay = referenceDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
-  
-  let daysToAdd = targetDay - currentDay;
-  if (daysToAdd < 0) {
-    daysToAdd += 7;
+  // ✅ FIXED: Use UTC methods
+  static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date; weekEnd: Date } {
+    const now = new Date();
+    const currentUTCDay = now.getUTCDay(); // 0 = Sunday, 1 = Monday, etc.
+    
+    // Days to Monday (Monday = 1 in UTC)
+    const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
+    
+    const weekStart = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - daysToMonday + (weekOffset * 7),
+      0, 0, 0, 0
+    ));
+    
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
+    
+    console.log(`📅 getWeekBoundaries (UTC):`);
+    console.log(`   Now UTC: ${now.toUTCString()}`);
+    console.log(`   Current UTC day index: ${currentUTCDay}`);
+    console.log(`   Days to Monday: ${daysToMonday}`);
+    console.log(`   Week start UTC: ${weekStart.toUTCString()}`);
+    console.log(`   Week end UTC: ${weekEnd.toUTCString()}`);
+    
+    return { weekStart, weekEnd };
   }
-  
-  const dueDate = new Date(referenceDate);
-  dueDate.setDate(referenceDate.getDate() + daysToAdd);
-  dueDate.setHours(0, 0, 0, 0);
-  
-  console.log(`📅 calculateDueDate:`);
-  console.log(`   Target day: ${day} (map value: ${targetDay})`);
-  console.log(`   Reference date: ${referenceDate.toLocaleDateString()} (day ${currentDay})`);
-  console.log(`   Days to add: ${daysToAdd}`);
-  console.log(`   Result: ${dueDate.toLocaleDateString()} (${dueDate.toLocaleDateString('en-US', { weekday: 'long' })})`);
-  
-  return dueDate;
-}
 
-// helpers/task.helpers.ts
-static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
-  const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
-  
-  if (weekStart) {
-    // Calculate actual day based on week start
-    const weekStartDay = weekStart.getDay();
-    const actualDayIndex = (weekStartDay + index) % 7;
-    return days[actualDayIndex] as DayOfWeek;
+  // ✅ FIXED: Use UTC methods
+  static calculateDueDate(day: DayOfWeek, referenceDate: Date = new Date()): Date {
+    const daysMap: Record<DayOfWeek, number> = {
+      'SUNDAY': 0,
+      'MONDAY': 1,
+      'TUESDAY': 2,
+      'WEDNESDAY': 3,
+      'THURSDAY': 4,
+      'FRIDAY': 5,
+      'SATURDAY': 6
+    };
+    
+    const targetDay = daysMap[day];
+    const currentUTCDay = referenceDate.getUTCDay();
+    
+    let daysToAdd = targetDay - currentUTCDay;
+    if (daysToAdd < 0) {
+      daysToAdd += 7;
+    }
+    
+    const dueDate = new Date(Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate() + daysToAdd,
+      0, 0, 0, 0
+    ));
+    
+    console.log(`📅 calculateDueDate (UTC):`);
+    console.log(`   Target day: ${day} (map value: ${targetDay})`);
+    console.log(`   Reference UTC date: ${referenceDate.toUTCString()}`);
+    console.log(`   Current UTC day index: ${currentUTCDay}`);
+    console.log(`   Days to add: ${daysToAdd}`);
+    console.log(`   Result UTC: ${dueDate.toUTCString()}`);
+    
+    return dueDate;
   }
-  
-  // Fallback to simple index (keeps compatibility)
-  const safeIndex = ((index % 7) + 7) % 7;
-  return days[safeIndex] as DayOfWeek;
-}
+
+  // ✅ FIXED: Use UTC methods
+  static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
+    const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const;
+    
+    if (weekStart) {
+      // Calculate actual day based on week start (UTC)
+      const weekStartUTCDay = weekStart.getUTCDay();
+      const actualDayIndex = (weekStartUTCDay + index) % 7;
+      return days[actualDayIndex] as DayOfWeek;
+    }
+    
+    // Fallback to simple index (keeps compatibility)
+    const safeIndex = ((index % 7) + 7) % 7;
+    return days[safeIndex] as DayOfWeek;
+  }
 
   // Helper to validate time slot points distribution
   static validateAndCalculateTimeSlotPoints(
@@ -104,7 +113,6 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
     
     for (const slot of timeSlots) {
-      // Validate time format
       if (!slot.startTime || !slot.endTime) {
         return { isValid: false, error: "Time slots must have both start and end times" };
       }
@@ -113,7 +121,6 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
         return { isValid: false, error: `Invalid time format for slot: ${slot.startTime}-${slot.endTime}. Use HH:MM` };
       }
 
-      // Validate start time is before end time
       const start = new Date(`2000-01-01T${slot.startTime}`);
       const end = new Date(`2000-01-01T${slot.endTime}`);
       if (start >= end) {
@@ -134,7 +141,6 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
         totalPointsUsed += points;
         hasCustomPoints = true;
       } else {
-        // Will calculate later
         calculatedSlots.push({
           startTime: slot.startTime,
           endTime: slot.endTime,
@@ -144,14 +150,10 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
       }
     }
 
-    // If no custom points specified, distribute equally with 0.5 increments
     if (!hasCustomPoints) {
       const equalPoints = totalTaskPoints / timeSlots.length;
-      
-      // Round to nearest 0.5
       const roundedPoints = Math.round(equalPoints * 2) / 2;
       
-      // Distribute points, adjusting for rounding
       let remainingPoints = totalTaskPoints;
       for (let i = 0; i < calculatedSlots.length; i++) {
         let points: number;
@@ -161,12 +163,11 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
           points = roundedPoints;
           remainingPoints -= points;
         }
-        calculatedSlots[i]!.points = Number(points.toFixed(1)); // Add non-null assertion
+        calculatedSlots[i]!.points = Number(points.toFixed(1));
       }
       
       totalPointsUsed = totalTaskPoints;
     } else {
-      // If custom points were specified, they must equal total task points
       if (Math.abs(totalPointsUsed - totalTaskPoints) > 0.01) {
         return { 
           isValid: false, 
@@ -213,4 +214,4 @@ static getDayOfWeekFromIndex(index: number, weekStart?: Date): DayOfWeek {
     const num = Number(value);
     return isNaN(num) ? defaultValue : num;
   }
-} 
+}
