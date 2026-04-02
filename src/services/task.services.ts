@@ -1940,7 +1940,7 @@ for (let i = 0; i < daysInOrder.length; i++) {
   }
 }
  
-}
+} 
  
     // Update task with new assignee
     await prisma.task.update({
