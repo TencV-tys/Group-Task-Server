@@ -267,7 +267,8 @@ export class GroupActivityController {
       }
 
       const result = await GroupActivityService.getMemberDashboard(groupId, userId);
-
+     
+      console.log('🔴 [getMemberDashboard] Stats being returned:', JSON.stringify(result.data?.stats, null, 2));
       if (!result.success) {
         return res.status(403).json({
           success: false,

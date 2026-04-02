@@ -752,10 +752,9 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
-// ===== MEMBER DASHBOARD DATA =====
+ // ===== MEMBER DASHBOARD DATA =====
 static async getMemberDashboard(groupId: string, userId: string) {
   try {
-    // Check if user is member
     const membership = await prisma.groupMember.findFirst({
       where: { userId, groupId }
     });
@@ -773,12 +772,11 @@ static async getMemberDashboard(groupId: string, userId: string) {
       }
     });
 
-    // Get total members count for the group
     const totalMembers = await prisma.groupMember.count({
       where: { groupId, isActive: true }
     });
 
-    // Get user's assignments
+    // Get user's assignments - ✅ include expired field
     const assignments = await prisma.assignment.findMany({
       where: {
         userId,
@@ -798,7 +796,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
       orderBy: { dueDate: 'asc' }
     });
 
-    // Get historical assignments (deleted tasks)
+    // Get historical assignments (deleted tasks) - ✅ include expired field
     const historicalAssignments = await prisma.assignment.findMany({
       where: {
         userId,
@@ -810,28 +808,49 @@ static async getMemberDashboard(groupId: string, userId: string) {
       }
     });
 
-    // Separate assignments with and without tasks
     const assignmentsWithTasks = assignments.filter(a => a.task !== null);
     const assignmentsWithoutTasks = assignments.filter(a => a.task === null);
-
-    // Combine all assignments for stats
     const allAssignments = [...assignmentsWithTasks, ...assignmentsWithoutTasks, ...historicalAssignments];
 
-    // Calculate stats
     const now = new Date();
     const pending = allAssignments.filter(a => !a.completed);
     const completed = allAssignments.filter(a => a.completed);
-    
-    // Calculate personal neglected tasks
-    const myNeglected = pending.filter(a => new Date(a.dueDate) < now);
-    const myNeglectedCount = myNeglected.length;
-    const myNeglectedPoints = myNeglected.reduce((sum, a) => {
-      const assignment = a as any;
-      const points = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
+
+    // ✅ FIXED: Query directly from DB - same filter as NeglectedTasks screen API
+    const neglectedFromDB = await prisma.assignment.findMany({
+      where: {
+        userId,
+        expired: true,
+        completed: false,
+        task: { groupId }
+      },
+      include: {
+        timeSlot: {
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true
+          }
+        }
+      }
+    });
+
+    const myNeglectedCount = neglectedFromDB.length;
+    const myNeglectedPoints = neglectedFromDB.reduce((sum, a) => {
+      const points = a.timeSlot?.points || a.points || 0;
       return sum + points;
     }, 0);
 
-    // Due today - only from assignments with tasks
+    // Due today
     const dueToday = assignmentsWithTasks.filter(a => {
       if (a.completed) return false;
       const today = new Date().toDateString();
@@ -839,9 +858,9 @@ static async getMemberDashboard(groupId: string, userId: string) {
       return today === dueDate;
     });
 
-    // ✅ FIXED: Only count VERIFIED assignments for points
+    // Points - only from VERIFIED assignments
     const verifiedCompleted = completed.filter(a => a.verified === true);
-    
+
     const pointsThisWeek = verifiedCompleted
       .filter(a => {
         const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -859,18 +878,11 @@ static async getMemberDashboard(groupId: string, userId: string) {
       return sum + points;
     }, 0);
 
-    // Get pending swap requests
     const pendingSwaps = await prisma.swapRequest.count({
       where: {
         OR: [
-          { 
-            assignment: { userId },
-            status: "PENDING"
-          },
-          {
-            targetUserId: userId,
-            status: "PENDING"
-          }
+          { assignment: { userId }, status: "PENDING" },
+          { targetUserId: userId, status: "PENDING" }
         ]
       }
     });
@@ -891,7 +903,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
       completed: t.completed
     }));
 
-    // Format upcoming tasks (only from assignments with tasks)
+    // Format upcoming tasks
     const upcomingFromTasks = assignmentsWithTasks
       .filter(t => !t.completed)
       .filter(t => !dueToday.some(d => d.id === t.id))
@@ -911,31 +923,28 @@ static async getMemberDashboard(groupId: string, userId: string) {
         isOverdue: new Date(t.dueDate) < now
       }));
 
-    // Format neglected tasks
-    const formattedNeglected = myNeglected
-      .map(t => {
-        const assignment = t as any;
-        const taskTitle = assignment.task?.title || assignment.taskTitle || 'Task';
-        const taskPoints = assignment.task?.points || assignment.taskPoints || assignment.points || 0;
-        const dueDate = new Date(assignment.dueDate);
+    // ✅ Format neglected from direct DB query
+    const formattedNeglected = neglectedFromDB
+      .slice(0, 3)
+      .map(a => {
+        const dueDate = new Date(a.dueDate);
         const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        
         return {
-          id: assignment.id,
-          taskId: assignment.taskId,
-          title: taskTitle,
-          points: taskPoints,
-          dueDate: assignment.dueDate,
+          id: a.id,
+          taskId: a.taskId,
+          title: a.task?.title || 'Task',
+          points: a.timeSlot?.points || a.points || 0,
+          dueDate: a.dueDate,
+          expiredAt: a.expiredAt,
           daysOverdue,
-          timeSlot: assignment.timeSlot ? {
-            id: assignment.timeSlot.id,
-            startTime: assignment.timeSlot.startTime,
-            endTime: assignment.timeSlot.endTime,
-            label: assignment.timeSlot.label
+          timeSlot: a.timeSlot ? {
+            id: a.timeSlot.id,
+            startTime: a.timeSlot.startTime,
+            endTime: a.timeSlot.endTime,
+            label: a.timeSlot.label
           } : null
         };
-      })
-      .slice(0, 3);
+      });
 
     // Format historical tasks
     const formattedHistorical = historicalAssignments
@@ -976,6 +985,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
           totalPoints,
           totalAssignments: allAssignments.length,
           historicalCount: historicalAssignments.length,
+          // ✅ Now matches NeglectedTasks screen exactly (expired: true, completed: false)
           myNeglectedCount,
           myNeglectedPoints
         },
@@ -997,6 +1007,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
     return { success: false, message: error.message };
   }
 }
+
 
 // ===== GET RECENT ACTIVITY =====
 static async getRecentActivity(groupId: string, userId: string, limit: number = 10) {
