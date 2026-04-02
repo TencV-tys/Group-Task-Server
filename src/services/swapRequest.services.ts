@@ -2298,7 +2298,7 @@ export class SwapRequestService {
         }
       });
 
-      const validExpiredRequests = expiredRequests.filter(r => r.assignment?.task !== null);
+      const validExpiredRequests = expiredRequests.filter((r:any) => r.assignment?.task !== null);
 
       const result = await prisma.swapRequest.updateMany({
         where: {
