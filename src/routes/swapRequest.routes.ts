@@ -1,3 +1,5 @@
+// routes/swapRequest.routes.ts - COMPLETE WITH ADMIN APPROVAL ROUTES
+
 import { Router } from "express";
 import { SwapRequestController } from "../controllers/swapRequest.controller";
 import { UserAuthMiddleware } from "../middlewares/user.auth.middleware";
@@ -21,19 +23,34 @@ router.get('/pending-for-me', SwapRequestController.getPendingForMe);
 // Check if assignment can be swapped
 router.get('/check/:assignmentId', SwapRequestController.checkCanSwap);
 
-// ✅ NEW: Check if user has assignment on a specific day
+// Check if user has assignment on a specific day
 router.get('/check-user-assignment', SwapRequestController.checkUserHasAssignmentOnDay);
+
+// ============= ADMIN APPROVAL ROUTES =============
+
+// Get pending swap requests for admin approval
+router.get('/admin/pending/:groupId', SwapRequestController.getPendingForAdminApproval);
+
+// Admin approve swap request
+router.post('/admin/:requestId/approve', SwapRequestController.adminApproveSwapRequest);
+
+// Admin reject swap request
+router.post('/admin/:requestId/reject', SwapRequestController.adminRejectSwapRequest);
+
+// ============= GROUP SWAP HISTORY (Admin view) =============
 
 // Get group swap requests with pagination and filters (admin only)
 router.get('/group/:groupId', SwapRequestController.getGroupSwapRequests);
 
+// ============= SINGLE REQUEST ACTIONS =============
+
 // Get single swap request details
 router.get('/:requestId', SwapRequestController.getSwapRequestDetails);
 
-// Accept a swap request
+// Accept a swap request (by member)
 router.post('/:requestId/accept', SwapRequestController.acceptSwapRequest);
 
-// Reject a swap request
+// Reject a swap request (by target user or admin)
 router.post('/:requestId/reject', SwapRequestController.rejectSwapRequest);
 
 // Cancel a swap request (only by requester)

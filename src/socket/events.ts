@@ -1,3 +1,5 @@
+// socket/events.ts - COMPLETE WITH SWAP ADMIN EVENTS
+
 // ========== SOCKET EVENT NAMES ==========
 // Client -> Server events
 export const CLIENT_EVENTS = {
@@ -49,12 +51,17 @@ export const SERVER_EVENTS = {
   SWAP_CANCELLED: 'swap:cancelled',
   SWAP_EXPIRED: 'swap:expired',
   
+  // ===== NEW SWAP ADMIN EVENTS =====
+  SWAP_PENDING_APPROVAL: 'swap:pending:approval',   // New swap awaiting admin approval
+  SWAP_ADMIN_ACTION: 'swap:admin:action',           // Admin approved/rejected
+  SWAP_READY_FOR_ACCEPTANCE: 'swap:ready:accept',   // Swap approved, ready for acceptance
+  
   // Group events
   GROUP_MEMBER_JOINED: 'group:member-joined',
   GROUP_MEMBER_LEFT: 'group:member-left',
   GROUP_MEMBER_ROLE_CHANGED: 'group:member-role-changed',
   GROUP_UPDATED: 'group:updated',
-    GROUP_CREATED: 'group:created',
+  GROUP_CREATED: 'group:created',
   
   // Rotation events
   ROTATION_COMPLETED: 'rotation:completed',
@@ -78,6 +85,7 @@ export interface TaskCreatedPayload {
   createdBy: string;
   groupId: string;
 }
+
 export interface GroupCreatedPayload {
   groupId: string;
   groupName: string;
@@ -86,6 +94,7 @@ export interface GroupCreatedPayload {
   userRole: string;
   createdAt: Date;
 }
+
 export interface TaskUpdatedPayload {
   task: any;
   updatedBy: string;
@@ -192,6 +201,52 @@ export interface SwapRespondedPayload {
   selectedDay?: string;
 }
 
+// ===== NEW SWAP ADMIN PAYLOADS =====
+
+export interface SwapPendingApprovalPayload {
+  swapRequestId: string;
+  assignmentId: string;
+  taskId: string;
+  taskTitle: string;
+  fromUserId: string;
+  fromUserName: string;
+  toUserId?: string;
+  groupId: string;
+  scope: 'week' | 'day';
+  selectedDay?: string;
+  selectedTimeSlotId?: string;
+  expiresAt: Date;
+  requiresApproval: boolean;
+}
+
+export interface SwapAdminActionPayload {
+  swapRequestId: string;
+  assignmentId: string;
+  taskId: string;
+  taskTitle: string;
+  requesterId: string;
+  adminId: string;
+  adminName: string;
+  groupId: string;
+  action: 'APPROVED' | 'REJECTED';
+  reason?: string;
+  timestamp: Date;
+}
+
+export interface SwapReadyForAcceptancePayload {
+  swapRequestId: string;
+  assignmentId: string;
+  taskId: string;
+  taskTitle: string;
+  requesterId: string;
+  requesterName: string;
+  groupId: string;
+  scope: 'week' | 'day';
+  selectedDay?: string;
+  selectedTimeSlotId?: string;
+  expiresAt: Date;
+}
+
 // Group event payloads
 export interface GroupMemberJoinedPayload {
   groupId: string;
@@ -214,6 +269,7 @@ export interface GroupMemberRoleChangedPayload {
   oldRole: string;
   newRole: string;
   changedBy: string;
+  changedByName?: string;
 }
 
 // Rotation event payloads

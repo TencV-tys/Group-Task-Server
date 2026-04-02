@@ -1,8 +1,15 @@
+// In socket/index.ts or wherever your socket setup is
+
 import { Server as SocketServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { UserJwtUtils } from '../utils/user.jwtutils';
 import { AdminJwtUtils } from '../utils/admin.jwtutils';
 import prisma from '../prisma';
+
+// Define the type for group membership
+interface GroupMembership {
+  groupId: string;
+}
 
 // Store connected users
 interface ConnectedUser {
@@ -80,7 +87,9 @@ export const setupSocketIO = (server: HttpServer) => {
           },
           select: { groupId: true }
         });
-        groups = memberships.map(m => m.groupId);
+        
+        // FIX: Explicitly type the parameter in map
+        groups = memberships.map((membership: GroupMembership) => membership.groupId);
       }
 
       // Store user connection
@@ -177,7 +186,6 @@ export const getIO = () => {
 
 // ========== EMIT HELPER FUNCTIONS ==========
 
-// Emit to a specific user
 export const emitToUser = (userId: string, event: string, data: any) => {
   try {
     const io = getIO();
@@ -191,7 +199,6 @@ export const emitToUser = (userId: string, event: string, data: any) => {
   }
 };
 
-// Emit to a group
 export const emitToGroup = (groupId: string, event: string, data: any) => {
   try {
     const io = getIO();
@@ -205,7 +212,6 @@ export const emitToGroup = (groupId: string, event: string, data: any) => {
   }
 };
 
-// Emit to multiple users
 export const emitToUsers = (userIds: string[], event: string, data: any) => {
   try {
     const io = getIO();
@@ -221,7 +227,6 @@ export const emitToUsers = (userIds: string[], event: string, data: any) => {
   }
 };
 
-// Emit to all members of a group except the sender
 export const emitToGroupExcept = (groupId: string, senderId: string, event: string, data: any) => {
   try {
     const io = getIO();

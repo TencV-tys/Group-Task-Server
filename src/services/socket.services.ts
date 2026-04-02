@@ -1,3 +1,6 @@
+
+// services/socket.services.ts - COMPLETE WITH SWAP ADMIN METHODS
+
 import { getIO, emitToUser, emitToGroup, emitToUsers, emitToGroupExcept } from '../socket';
 import { SERVER_EVENTS } from '../socket/events';
 import {
@@ -85,10 +88,8 @@ export class SocketService {
         dueDate
       };
       
-      // Notify the assigned user
       emitToUser(assignedTo, SERVER_EVENTS.TASK_ASSIGNED, payload);
       
-      // Notify the group
       emitToGroup(groupId, SERVER_EVENTS.TASK_ASSIGNED, {
         ...payload,
         assignedToName: await this.getUserName(assignedTo)
@@ -109,38 +110,36 @@ export class SocketService {
         taskTitle: assignment.task?.title || 'Task'
       };
       
-      // Notify the assigned user
       emitToUser(userId, SERVER_EVENTS.ASSIGNMENT_CREATED, payload);
-      
-      // Notify the group
       emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_CREATED, payload);
     } catch (error) {
       console.error('SocketService.emitAssignmentCreated error:', error);
     }
   }
+  
   static async emitAssignmentUpdated(
-  assignmentId: string,
-  userId: string,
-  groupId: string,
-  updatedBy?: string
-) {
-  try {
-    const payload = {
-      assignmentId,
-      userId,
-      groupId,
-      updatedBy: updatedBy || userId, 
-      timestamp: new Date()
-    };
-    
-    emitToUser(userId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
-    emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
-    
-    console.log(`📢 Emitted assignment:updated to user ${userId} and group ${groupId}`);
-  } catch (error) {
-    console.error('SocketService.emitAssignmentUpdated error:', error);
+    assignmentId: string,
+    userId: string,
+    groupId: string,
+    updatedBy?: string
+  ) {
+    try {
+      const payload = {
+        assignmentId,
+        userId,
+        groupId,
+        updatedBy: updatedBy || userId, 
+        timestamp: new Date()
+      };
+      
+      emitToUser(userId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
+      emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_UPDATED, payload);
+      
+      console.log(`📢 Emitted assignment:updated to user ${userId} and group ${groupId}`);
+    } catch (error) {
+      console.error('SocketService.emitAssignmentUpdated error:', error);
+    }
   }
-}
 
   static async emitAssignmentCompleted(
     assignmentId: string,
@@ -166,57 +165,59 @@ export class SocketService {
         photoUrl
       };
       
-      // Notify all group members
       emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_COMPLETED, payload);
     } catch (error) {
       console.error('SocketService.emitAssignmentCompleted error:', error);
     }
   }
 
-  static async emitAssignmentPendingVerification(
-    assignmentId: string,
-    taskId: string,
-    taskTitle: string,
-    userId: string,
-    userName: string,
-    groupId: string,
-    isLate: boolean,
-    photoUrl?: string
-  ) {
-    try {
-      const payload: AssignmentPendingVerificationPayload = {
-        assignmentId,
-        taskId,
-        taskTitle,
-        userId,
-        userName,
-        groupId,
-        photoUrl,
-        submittedAt: new Date(),
-        isLate
-      };
-      
-      // Get all admins in the group
-      const admins = await prisma.groupMember.findMany({
-        where: {
-          groupId,
-          groupRole: 'ADMIN',
-          isActive: true
-        },
-        select: { userId: true }
-      });
-      
-      // Notify all admins
-      admins.forEach(admin => {
-        emitToUser(admin.userId, SERVER_EVENTS.ASSIGNMENT_PENDING_VERIFICATION, payload);
-      });
-      
-      // Also notify the group
-      emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_PENDING_VERIFICATION, payload);
-    } catch (error) {
-      console.error('SocketService.emitAssignmentPendingVerification error:', error);
+static async emitAssignmentPendingVerification(
+  assignmentId: string,
+  taskId: string,
+  taskTitle: string,
+  userId: string,
+  userName: string,
+  groupId: string,
+  isLate: boolean,
+  photoUrl?: string
+) {
+  try {
+    const payload: AssignmentPendingVerificationPayload = {
+      assignmentId,
+      taskId,
+      taskTitle,
+      userId,
+      userName,
+      groupId,
+      photoUrl,
+      submittedAt: new Date(),
+      isLate
+    };
+    
+    // Define the type for admin members
+    interface AdminMember {
+      userId: string;
     }
+    
+    const admins = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        groupRole: 'ADMIN',
+        isActive: true
+      },
+      select: { userId: true }
+    });
+    
+    // Type the admin parameter explicitly
+    admins.forEach((admin: AdminMember) => {
+      emitToUser(admin.userId, SERVER_EVENTS.ASSIGNMENT_PENDING_VERIFICATION, payload);
+    });
+    
+    emitToGroup(groupId, SERVER_EVENTS.ASSIGNMENT_PENDING_VERIFICATION, payload);
+  } catch (error) {
+    console.error('SocketService.emitAssignmentPendingVerification error:', error);
   }
+}
 
   static async emitAssignmentVerified(
     assignmentId: string,
@@ -244,10 +245,7 @@ export class SocketService {
         points
       };
       
-      // Notify the user who submitted
       emitToUser(userId, verified ? SERVER_EVENTS.ASSIGNMENT_VERIFIED : SERVER_EVENTS.ASSIGNMENT_REJECTED, payload);
-      
-      // Notify the group
       emitToGroup(groupId, verified ? SERVER_EVENTS.ASSIGNMENT_VERIFIED : SERVER_EVENTS.ASSIGNMENT_REJECTED, payload);
     } catch (error) {
       console.error('SocketService.emitAssignmentVerified error:', error);
@@ -289,17 +287,109 @@ export class SocketService {
       };
       
       if (toUserId) {
-        // Notify specific user
         emitToUser(toUserId, SERVER_EVENTS.SWAP_REQUESTED, payload);
       } else {
-        // Notify all group members except the requester
         emitToGroupExcept(groupId, fromUserId, SERVER_EVENTS.SWAP_REQUESTED, payload);
       }
       
-      // Also notify the group about the new swap request
       emitToGroup(groupId, SERVER_EVENTS.SWAP_CREATED, payload);
     } catch (error) {
       console.error('SocketService.emitSwapRequested error:', error);
+    }
+  }
+
+  // NEW: Emit swap pending approval event (for admin approval workflow)
+  static async emitSwapPendingApproval(
+    swapRequestId: string,
+    assignmentId: string,
+    taskId: string,
+    taskTitle: string,
+    fromUserId: string,
+    fromUserName: string,
+    groupId: string,
+    scope: 'week' | 'day',
+    expiresAt: Date,
+    toUserId?: string,
+    selectedDay?: string,
+    selectedTimeSlotId?: string
+  ) {
+    try {
+      const payload = {
+        swapRequestId,
+        assignmentId,
+        taskId,
+        taskTitle,
+        fromUserId,
+        fromUserName,
+        toUserId,
+        groupId,
+        scope,
+        selectedDay,
+        selectedTimeSlotId,
+        expiresAt,
+        requiresApproval: true
+      };
+      
+      // Notify all admins in the group
+      const admins = await prisma.groupMember.findMany({
+        where: {
+          groupId,
+          groupRole: "ADMIN",
+          isActive: true
+        },
+        select: { userId: true }
+      }); 
+      
+      for (const admin of admins) {
+        emitToUser(admin.userId, SERVER_EVENTS.SWAP_PENDING_APPROVAL, payload);
+      }
+      
+      // Notify the group about pending approval
+      emitToGroup(groupId, SERVER_EVENTS.SWAP_PENDING_APPROVAL, payload);
+      
+      console.log(`📢 Emitted swap pending approval for request ${swapRequestId} to ${admins.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitSwapPendingApproval error:', error);
+    }
+  }
+
+  // NEW: Emit swap admin action (approved/rejected)
+  static async emitSwapAdminAction(
+    swapRequestId: string,
+    assignmentId: string,
+    taskId: string,
+    taskTitle: string,
+    requesterId: string,
+    adminId: string,
+    adminName: string,
+    groupId: string,
+    action: 'APPROVED' | 'REJECTED',
+    reason?: string
+  ) {
+    try {
+      const payload = {
+        swapRequestId,
+        assignmentId,
+        taskId,
+        taskTitle,
+        requesterId,
+        adminId,
+        adminName,
+        groupId,
+        action,
+        reason,
+        timestamp: new Date()
+      };
+      
+      // Notify the requester
+      emitToUser(requesterId, SERVER_EVENTS.SWAP_ADMIN_ACTION, payload);
+      
+      // Notify the group
+      emitToGroup(groupId, SERVER_EVENTS.SWAP_ADMIN_ACTION, payload);
+      
+      console.log(`📢 Admin ${adminName} ${action} swap request ${swapRequestId}`);
+    } catch (error) {
+      console.error('SocketService.emitSwapAdminAction error:', error);
     }
   }
 
@@ -331,15 +421,12 @@ export class SocketService {
         selectedDay
       };
       
-      // Notify the requester
       emitToUser(fromUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
       
-      // Notify the responder if it's not the same as requester
       if (toUserId !== fromUserId) {
         emitToUser(toUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
       }
       
-      // Notify the group
       emitToGroup(groupId, SERVER_EVENTS.SWAP_RESPONDED, payload);
     } catch (error) {
       console.error('SocketService.emitSwapResponded error:', error);
@@ -387,57 +474,56 @@ export class SocketService {
     }
   }
 
- static async emitGroupMemberRoleChanged(
-  groupId: string,
-  userId: string,
-  userName: string,
-  oldRole: string,
-  newRole: string,
-  changedBy: string,
-  changedByName?: string
-) {
-  try {
-    const payload = {
-      groupId,
-      userId,
-      userName,
-      oldRole,
-      newRole,
-      changedBy,
-      changedByName: changedByName || 'Admin'
-    };
-    
-    emitToGroup(groupId, SERVER_EVENTS.GROUP_MEMBER_ROLE_CHANGED, payload);
-  } catch (error) {
-    console.error('SocketService.emitGroupMemberRoleChanged error:', error);
+  static async emitGroupMemberRoleChanged(
+    groupId: string,
+    userId: string,
+    userName: string,
+    oldRole: string,
+    newRole: string,
+    changedBy: string,
+    changedByName?: string
+  ) {
+    try {
+      const payload = {
+        groupId,
+        userId,
+        userName,
+        oldRole,
+        newRole,
+        changedBy,
+        changedByName: changedByName || 'Admin'
+      };
+      
+      emitToGroup(groupId, SERVER_EVENTS.GROUP_MEMBER_ROLE_CHANGED, payload);
+    } catch (error) {
+      console.error('SocketService.emitGroupMemberRoleChanged error:', error);
+    }
   }
-}
 
   // ========== ROTATION EVENTS ==========
 
- // In socket.services.ts - This method already exists, but here it is for reference
-static async emitRotationCompleted(
-  groupId: string,
-  newWeek: number,
-  rotatedTasks: any[],
-  weekStart: Date,
-  weekEnd: Date
-) {
-  try {
-    const payload: RotationCompletedPayload = {
-      groupId,
-      newWeek,
-      rotatedTasks,
-      weekStart,
-      weekEnd
-    };
-    
-    emitToGroup(groupId, SERVER_EVENTS.ROTATION_COMPLETED, payload);
-    console.log(`📢 Emitted rotation completed for group ${groupId} to week ${newWeek}`);
-  } catch (error) {
-    console.error('SocketService.emitRotationCompleted error:', error);
+  static async emitRotationCompleted(
+    groupId: string,
+    newWeek: number,
+    rotatedTasks: any[],
+    weekStart: Date,
+    weekEnd: Date
+  ) {
+    try {
+      const payload: RotationCompletedPayload = {
+        groupId,
+        newWeek,
+        rotatedTasks,
+        weekStart,
+        weekEnd
+      };
+      
+      emitToGroup(groupId, SERVER_EVENTS.ROTATION_COMPLETED, payload);
+      console.log(`📢 Emitted rotation completed for group ${groupId} to week ${newWeek}`);
+    } catch (error) {
+      console.error('SocketService.emitRotationCompleted error:', error);
+    }
   }
-}
 
   // ========== NOTIFICATION EVENTS ==========
 
@@ -503,28 +589,27 @@ static async emitRotationCompleted(
     }
   }
 
-  // Add this method to SocketService class
-static async emitGroupCreated(
-  groupId: string,
-  groupName: string,
-  userId: string,
-  userName: string,
-  userRole: string
-) {
-  try {
-    const payload: GroupCreatedPayload = {
-      groupId,
-      groupName,
-      userId,
-      userName,
-      userRole,
-      createdAt: new Date()
-    };
-    
-    emitToUser(userId, SERVER_EVENTS.GROUP_CREATED, payload);
-    console.log(`📢 Emitted group created event to user ${userName}`);
-  } catch (error) {
-    console.error('SocketService.emitGroupCreated error:', error);
+  static async emitGroupCreated(
+    groupId: string,
+    groupName: string,
+    userId: string,
+    userName: string,
+    userRole: string
+  ) {
+    try {
+      const payload: GroupCreatedPayload = {
+        groupId,
+        groupName,
+        userId,
+        userName,
+        userRole,
+        createdAt: new Date()
+      };
+      
+      emitToUser(userId, SERVER_EVENTS.GROUP_CREATED, payload);
+      console.log(`📢 Emitted group created event to user ${userName}`);
+    } catch (error) {
+      console.error('SocketService.emitGroupCreated error:', error);
+    }
   }
-}
 }

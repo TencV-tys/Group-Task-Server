@@ -312,10 +312,10 @@ model Assignment {
   points Int @default(1)
 
   completed   Boolean?  @default(false)
-  completedAt DateTime?
+  completedAt DateTime?  
   verified    Boolean?
   photoUrl    String?
-
+ 
   // User notes when completing task
   notes String? @db.Text
 
@@ -383,7 +383,7 @@ model SwapRequest {
   reason       String?
   status       String  @default("PENDING")
 
-  // For tracking swaps
+  // For tracking swaps 
   requestedBy  String
   targetUserId String?
   expiresAt    DateTime?
@@ -393,7 +393,19 @@ model SwapRequest {
   selectedDay        String? // "MONDAY", "TUESDAY", etc. - only if scope is "day"
   selectedTimeSlotId String? // Specific time slot ID - optional
 
-  // ✅ FIXED: Changed to one-to-many relation
+  // ===== NEW ADMIN APPROVAL FIELDS =====
+  requiresAdminApproval Boolean  @default(true) // Whether this swap needs admin approval
+  adminApproved         Boolean? // null = pending, true = approved, false = rejected (NO DEFAULT)
+  adminApprovedBy       String?  // Admin who approved/rejected
+  adminApprovedAt       DateTime? // When admin approved/rejected
+  adminRejectionReason  String?  // Reason if rejected by admin
+  autoApproved          Boolean  @default(false) // Whether it was auto-approved (for "anyone" swaps)
+  
+  // For tracking who accepted (if accepted by member after admin approval)
+  acceptedBy   String?   // Member who accepted the swap
+  acceptedAt   DateTime? // When it was accepted
+
+  // Relationships
   assignment Assignment @relation("AssignmentSwapRequests", fields: [assignmentId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -401,6 +413,7 @@ model SwapRequest {
 
   @@map("swap_requests")
 }
+
 
 // ============= REPORT MODEL - GROUP ONLY =============
 model Report {
