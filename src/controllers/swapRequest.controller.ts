@@ -486,7 +486,7 @@ export class SwapRequestController {
     } catch (error: any) {
       console.error("SwapRequestController.acceptSwapRequest error:", error);
       return res.status(500).json({
-        success: false,
+        success: false, 
         message: "Internal server error"
       });
     }
@@ -888,4 +888,70 @@ export class SwapRequestController {
       });
     }
   }
+
+
+// CHECK: Check if a user has any assignments this week (for WEEK swap exchange)
+static async checkUserHasAnyAssignmentThisWeek(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { targetUserId, groupId, week } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    if (!targetUserId || !groupId || !week) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required parameters: targetUserId, groupId, week"
+      });
+    }
+
+    console.log(`🔍 [WEEK SWAP CHECK] Checking if user ${targetUserId} has ANY assignments in week ${week} in group ${groupId}`);
+
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        userId: targetUserId as string,
+        task: {
+          groupId: groupId as string
+        },
+        rotationWeek: parseInt(week as string, 10)
+      },
+      select: {  
+        id: true,
+        dueDate: true,
+        assignmentDay: true,
+        points: true,
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true
+          }
+        }
+      }
+    });
+
+    console.log(`📋 Result: ${assignments.length > 0 ? `YES - ${assignments.length} assignments found` : 'NO - no assignments'}`);
+
+    return res.json({
+      success: true,
+      hasAssignment: assignments.length > 0,
+      assignmentCount: assignments.length,
+      assignments: assignments
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.checkUserHasAnyAssignmentThisWeek error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      hasAssignment: false
+    });
+  }
+}
+
 }

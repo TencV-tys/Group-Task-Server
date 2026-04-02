@@ -1,4 +1,4 @@
-// routes/swapRequest.routes.ts - COMPLETE WITH ADMIN APPROVAL ROUTES
+// routes/swapRequest.routes.ts - COMPLETE WITH ALL ROUTES
 
 import { Router } from "express";
 import { SwapRequestController } from "../controllers/swapRequest.controller";
@@ -23,8 +23,11 @@ router.get('/pending-for-me', SwapRequestController.getPendingForMe);
 // Check if assignment can be swapped
 router.get('/check/:assignmentId', SwapRequestController.checkCanSwap);
 
-// Check if user has assignment on a specific day
+// Check if user has assignment on a specific day (for DAY swaps)
 router.get('/check-user-assignment', SwapRequestController.checkUserHasAssignmentOnDay);
+
+// ✅ ADD THIS: Check if user has ANY assignments this week (for WEEK swaps)
+router.get('/check-user-week-assignments', SwapRequestController.checkUserHasAnyAssignmentThisWeek);
 
 // ============= ADMIN APPROVAL ROUTES =============
 
