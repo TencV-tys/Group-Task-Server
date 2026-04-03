@@ -597,6 +597,9 @@ static async getTaskCompletionHistory(
   }
 }
 
+
+// services/group.activity.services.ts - COMPLETE FIXED getAdminDashboard METHOD
+
 // ===== ADMIN DASHBOARD DATA =====
 static async getAdminDashboard(groupId: string, userId: string) {
   try {
@@ -658,10 +661,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
       }
     });
 
-    const completedThisWeek = currentWeekAssignments.filter(a => a.completed).length;
+    // Calculate weekly completion stats
     const totalThisWeek = currentWeekAssignments.length;
+    const completedThisWeek = currentWeekAssignments.filter(a => a.completed).length;
+    const pendingThisWeek = totalThisWeek - completedThisWeek; // ✅ FIXED: Calculate pending
     
-    // Calculate neglected tasks
+    // Calculate neglected tasks (expired and not completed)
     const now = new Date();
     const neglectedAssignments = currentWeekAssignments.filter(a => 
       !a.completed && new Date(a.dueDate) < now
@@ -683,19 +688,33 @@ static async getAdminDashboard(groupId: string, userId: string) {
       neglectedByMember[userId].points += assignment.points || 0;
     });
 
-    // ✅ FIXED: Calculate points from VERIFIED assignments only
+    // Calculate points correctly based on verification status
     const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
-    const completedPoints = currentWeekAssignments
+    
+    // Earned points = ONLY from VERIFIED assignments (completed AND verified === true)
+    const earnedPoints = currentWeekAssignments
       .filter(a => a.completed && a.verified === true)
       .reduce((sum, a) => sum + a.points, 0);
     
+    // Pending Verification = completed but not yet verified (verified === null)
     const pendingVerificationPoints = currentWeekAssignments
       .filter(a => a.completed && a.verified === null)
       .reduce((sum, a) => sum + a.points, 0);
     
+    // Rejected points = verified === false
     const rejectedPoints = currentWeekAssignments
       .filter(a => a.verified === false)
       .reduce((sum, a) => sum + a.points, 0);
+
+    console.log('📊 [AdminDashboard] Weekly Stats:', {
+      totalThisWeek,
+      completedThisWeek,
+      pendingThisWeek,
+      neglectedCount,
+      earnedPoints,
+      pendingVerificationPoints,
+      rejectedPoints
+    });
 
     return {
       success: true,
@@ -718,11 +737,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
           weeklyCompletion: {
             total: totalThisWeek,
             completed: completedThisWeek,
+            pending: pendingThisWeek,  // ✅ FIXED: Added pending field
             percentage: totalThisWeek > 0 ? (completedThisWeek / totalThisWeek) * 100 : 0
           },
           points: {
             total: totalPoints,
-            earned: completedPoints,
+            earned: earnedPoints,
             pendingVerification: pendingVerificationPoints,
             rejected: rejectedPoints
           },
