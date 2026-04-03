@@ -1025,8 +1025,7 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
 }
   // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
 
-// ========== GET USER ASSIGNMENTS ==========
-static async getUserAssignments(
+static async getUserAssignments( 
   userId: string,
   filters: {
     status?: string;
@@ -1040,7 +1039,11 @@ static async getUserAssignments(
     console.log(`👤 User ID: ${userId}`);
     console.log(`📋 Filters:`, filters);
     
-    const where: any = { userId };
+    // ✅ ALWAYS exclude null-taskId records from the main query
+    const where: any = { 
+      userId,
+      taskId: { not: null }  // ← ADD THIS: prevents overlap with historical query
+    };
     
     console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
 
@@ -1106,6 +1109,7 @@ static async getUserAssignments(
 
     console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
 
+    // This warning should now never fire since we filter taskId: { not: null }
     const validAssignments = assignments.filter(a => a.task !== null);
     console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
     
@@ -1137,17 +1141,21 @@ static async getUserAssignments(
         timeUntilDue,
         timeSlot: assignment.timeSlot,
         rotationWeek: assignment.rotationWeek,
-        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
+        isHistorical: false  // ✅ Explicitly mark as non-historical
       };
     });
 
+    // Historical query is now clean — no overlap possible
+    const historicalWhere: any = {
+      userId,
+      taskId: null,
+      taskTitle: { not: null },
+      ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
+    };
+
     const historicalAssignments = await prisma.assignment.findMany({
-      where: {
-        userId,
-        taskId: null,
-        taskTitle: { not: null },
-        ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
-      },
+      where: historicalWhere,
       include: {
         timeSlot: true
       },
@@ -1174,11 +1182,11 @@ static async getUserAssignments(
       timeSlot: assignment.timeSlot,
       rotationWeek: assignment.rotationWeek,
       isDueToday: false,
-      isHistorical: true
+      isHistorical: true  // ✅ Explicitly mark as historical
     }));
 
     const allAssignments = [...formattedAssignments, ...formattedHistorical];
-    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
+    console.log(`📊 Total assignments returned: ${allAssignments.length} (${formattedAssignments.length} active + ${formattedHistorical.length} historical)`);
     console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
 
     return {
