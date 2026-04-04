@@ -958,9 +958,12 @@ static async verifyAssignment(
     }
   }
   
-  // In assignment.services.ts - getAssignmentDetails
+  // In assignment.services.ts - FIXED getAssignmentDetails with swap info
+
 static async getAssignmentDetails(assignmentId: string, userId: string) {
   try {
+    console.log('🔍 [getAssignmentDetails] Fetching assignment:', assignmentId);
+    
     const assignment = await prisma.assignment.findUnique({
       where: { id: assignmentId },
       include: {
@@ -1009,12 +1012,68 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
       };
     }
 
+    // ✅ ADD SWAP INFORMATION for the assignee
+    let swapInfo = null;
+    
+    if (isAssignee) {
+      // Check if this assignment was acquired via swap (user accepted a swap)
+      const swapRequest = await prisma.swapRequest.findFirst({
+        where: {
+          OR: [
+            { acceptedBy: userId, assignmentId: assignment.id },
+            { targetUserId: userId, assignmentId: assignment.id, status: 'ACCEPTED' }
+          ],
+          status: 'ACCEPTED'
+        },
+        select: {
+          id: true,
+          requestedBy: true,
+          scope: true,
+          selectedDay: true,
+          createdAt: true
+        }
+      });
+      
+      if (swapRequest) {
+        let swappedFromName = 'another member';
+        if (swapRequest.requestedBy) {
+          const requester = await prisma.user.findUnique({
+            where: { id: swapRequest.requestedBy },
+            select: { fullName: true }
+          });
+          if (requester?.fullName) {
+            swappedFromName = requester.fullName;
+          }
+        }
+        
+        swapInfo = {
+          acquiredViaSwap: true,
+          swapRequestId: swapRequest.id,
+          swappedFromId: swapRequest.requestedBy,
+          swappedFromName: swappedFromName,
+          swapScope: swapRequest.scope,
+          swapDay: swapRequest.selectedDay,
+          swapCreatedAt: swapRequest.createdAt
+        };
+      }
+    }
+
+    console.log('✅ [getAssignmentDetails] Success, returning assignment with swap info:', swapInfo);
+
     return {
       success: true,
       assignment: {
         ...assignment,
-        isAdmin: isGroupAdmin,  // ✅ Add this flag
-        isOwner: isAssignee     // ✅ Add this flag
+        isAdmin: isGroupAdmin,
+        isOwner: isAssignee,
+        // ✅ ADD SWAP INFO to the assignment
+        acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
+        swapRequestId: swapInfo?.swapRequestId || null,
+        swappedFromId: swapInfo?.swappedFromId || null,
+        swappedFromName: swapInfo?.swappedFromName || null,
+        swapScope: swapInfo?.swapScope || null,
+        swapDay: swapInfo?.swapDay || null,
+        swapCreatedAt: swapInfo?.swapCreatedAt || null
       }
     };
 
@@ -1023,6 +1082,7 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
     return { success: false, message: error.message };
   }
 }
+
   // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
 
 static async getUserAssignments( 
