@@ -3,7 +3,9 @@
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { SwapRequestService } from "../services/swapRequest.services";
+import { DayOfWeek } from "@prisma/client";
 import prisma from "../prisma";
+
 
 export class SwapRequestController {
   
@@ -12,7 +14,7 @@ export class SwapRequestController {
     try {
       const userId = req.user?.id;
       const { 
-        assignmentId, 
+        assignmentId,  
         reason, 
         targetUserId, 
         expiresAt,
@@ -954,4 +956,100 @@ static async checkUserHasAnyAssignmentThisWeek(req: UserAuthRequest, res: Respon
   }
 }
 
+// BATCH: Check multiple users' assignments on a specific day
+static async batchCheckUserAssignments(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { userIds, groupId, day, week } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+
+    if (!userIds || !groupId || !day || !week) {
+      return res.status(400).json({ success: false, message: "Missing required parameters" });
+    }
+
+    const results = [];
+
+    for (const targetUserId of userIds) {
+      const [hasAnyAssignment, hasAssignmentOnDay] = await Promise.all([
+        prisma.assignment.findFirst({
+          where: {
+            userId: targetUserId,
+            task: { groupId },
+            rotationWeek: parseInt(week as string, 10)
+          }
+        }),
+        prisma.assignment.findFirst({
+          where: {
+            userId: targetUserId,
+            task: { groupId },
+            rotationWeek: parseInt(week as string, 10),
+            assignmentDay: day as DayOfWeek
+          }
+        })
+      ]);
+
+      results.push({
+        userId: targetUserId,
+        hasAnyAssignmentThisWeek: !!hasAnyAssignment,
+        hasAssignmentOnDay: !!hasAssignmentOnDay
+      });
+    }
+
+    return res.json({
+      success: true,
+      results
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.batchCheckUserAssignments error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
 }
+
+// BATCH: Check multiple users' week assignments
+static async batchCheckUserWeekAssignments(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { userIds, groupId, week } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+
+    if (!userIds || !groupId || !week) {
+      return res.status(400).json({ success: false, message: "Missing required parameters" });
+    }
+
+    const results = [];
+
+    for (const targetUserId of userIds) {
+      const assignments = await prisma.assignment.findMany({
+        where: {
+          userId: targetUserId,
+          task: { groupId },
+          rotationWeek: parseInt(week as string, 10)
+        }
+      });
+
+      results.push({
+        userId: targetUserId,
+        hasAnyAssignmentThisWeek: assignments.length > 0,
+        assignmentCount: assignments.length
+      });
+    }
+
+    return res.json({
+      success: true,
+      results
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.batchCheckUserWeekAssignments error:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+} 
+
+} 

@@ -1,4 +1,4 @@
-// routes/swapRequest.routes.ts - COMPLETE WITH ALL ROUTES
+// routes/swapRequest.routes.ts - COMPLETE WITH BATCH ENDPOINTS
 
 import { Router } from "express";
 import { SwapRequestController } from "../controllers/swapRequest.controller";
@@ -26,8 +26,16 @@ router.get('/check/:assignmentId', SwapRequestController.checkCanSwap);
 // Check if user has assignment on a specific day (for DAY swaps)
 router.get('/check-user-assignment', SwapRequestController.checkUserHasAssignmentOnDay);
 
-// ✅ ADD THIS: Check if user has ANY assignments this week (for WEEK swaps)
+// Check if user has ANY assignments this week (for WEEK swaps)
 router.get('/check-user-week-assignments', SwapRequestController.checkUserHasAnyAssignmentThisWeek);
+
+// ============= BATCH ENDPOINTS (to prevent 429 rate limiting) =============
+
+// Batch check multiple users' assignments on a specific day
+router.post('/batch-check-assignments', SwapRequestController.batchCheckUserAssignments);
+
+// Batch check multiple users' week assignments
+router.post('/batch-check-week-assignments', SwapRequestController.batchCheckUserWeekAssignments);
 
 // ============= ADMIN APPROVAL ROUTES =============
 
@@ -59,4 +67,4 @@ router.post('/:requestId/reject', SwapRequestController.rejectSwapRequest);
 // Cancel a swap request (only by requester)
 router.post('/:requestId/cancel', SwapRequestController.cancelSwapRequest);
 
-export default router;
+export default router; 
