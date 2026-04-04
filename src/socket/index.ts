@@ -267,24 +267,29 @@ export const setupSocketIO = (server: HttpServer) => {
 
       console.log(`✅ User ${socket.data.userId} registered with ${groups.length} groups. Total connections: ${connectedUsers.size}`);
 
-      // Handle joining a specific group with debouncing
-      let joinGroupTimeout: NodeJS.Timeout | null = null;
-      socket.on('join-group', (groupId: string) => {
-        if (joinGroupTimeout) clearTimeout(joinGroupTimeout);
-        
-        joinGroupTimeout = setTimeout(() => {
-          socket.join(`group:${groupId}`);
-          
-          const user = connectedUsers.get(socket.id);
-          if (user && !user.groups.includes(groupId)) {
-            user.groups.push(groupId);
-            user.lastActivity = new Date();
-          }
-          
-          console.log(`👥 Socket ${socket.id} joined group ${groupId}`);
-          joinGroupTimeout = null;
-        }, 100);
-      });
+      const pendingJoins = new Map<string, NodeJS.Timeout>();
+
+socket.on('join-group', (groupId: string) => {
+  // Clear existing timeout for this group
+  if (pendingJoins.has(groupId)) {
+    clearTimeout(pendingJoins.get(groupId)!);
+  }
+  
+  const timeout = setTimeout(() => {
+    socket.join(`group:${groupId}`);
+    
+    const user = connectedUsers.get(socket.id);
+    if (user && !user.groups.includes(groupId)) {
+      user.groups.push(groupId);
+      user.lastActivity = new Date();
+    }
+    
+    console.log(`👥 Socket ${socket.id} joined group ${groupId}`);
+    pendingJoins.delete(groupId);
+  }, 100);
+  
+  pendingJoins.set(groupId, timeout);
+});
 
       // Handle leaving a group with debouncing
       let leaveGroupTimeout: NodeJS.Timeout | null = null;
