@@ -8,7 +8,6 @@ import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService { 
   
 // In task.services.ts - COMPLETE FIXED createTask method
-
 static async createTask(
   userId: string,
   groupId: string,
@@ -56,6 +55,36 @@ static async createTask(
     if (!data.title?.trim()) {
       return { success: false, message: "Task title is required" };
     }
+
+    // ===== CREATION DAY LOCK =====
+    // The day the first task was created is the locked creation day.
+    // All future tasks must be created on that same day of the week.
+    const existingTasks = await prisma.task.findMany({
+      where: { groupId, isRecurring: true },
+      orderBy: { createdAt: 'asc' },
+      take: 1,
+      select: { createdAt: true }
+    });
+
+    if (existingTasks.length > 0) {
+      const firstTask = existingTasks[0]!;
+      const lockedDayIndex = firstTask.createdAt.getUTCDay();
+      const todayIndex = new Date().getUTCDay();
+
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+      if (todayIndex !== lockedDayIndex) {
+        return {
+          success: false,
+          message: `Tasks can only be created on ${dayNames[lockedDayIndex]}s to maintain rotation consistency. Today is ${dayNames[todayIndex]}.`
+        };
+      }
+
+      console.log(`✅ Creation day check passed: Today is ${dayNames[todayIndex]}, locked day is ${dayNames[lockedDayIndex]}`);
+    } else {
+      console.log(`✅ First task for this group — locking creation day to today (${new Date().toLocaleDateString('en-US', { weekday: 'long' })})`);
+    }
+    // ===== END CREATION DAY LOCK =====
 
     // Total task points (to be distributed)
     const totalPoints = data.points !== undefined ? Math.max(1, Number(data.points)) : 1;
@@ -167,30 +196,27 @@ static async createTask(
       groupRole: member.groupRole
     }));
 
-    // Create the task
-    // In createTask method, when building taskData
-const taskData: Prisma.TaskCreateInput = {
-  title: data.title.trim(),
-  description: data.description?.trim() || undefined,
-  points: totalPoints,
-  executionFrequency: data.executionFrequency,
-  timeFormat: data.timeFormat || '12h',
-  dayOfWeek: data.dayOfWeek || undefined,
-  isRecurring: data.isRecurring !== false,
-  category: data.category?.trim() || undefined,
-  rotationOrder: finalRotationOrder,
-  rotationMembers: rotationMembersJson as any,
-  // ✅ CRITICAL FIX: Only set selectedDays for WEEKLY tasks
-  selectedDays: data.executionFrequency === 'WEEKLY' && selectedDaysArray && selectedDaysArray.length > 0
-    ? selectedDaysArray as any 
-    : null,  // ← Use null, not undefined
-  ...(initialAssignee ? {
-    currentAssignee: initialAssignee.userId,
-    lastAssignedAt: new Date()
-  } : {}),
-  group: { connect: { id: groupId } },
-  creator: { connect: { id: userId } }
-};
+    const taskData: Prisma.TaskCreateInput = {
+      title: data.title.trim(),
+      description: data.description?.trim() || undefined,
+      points: totalPoints,
+      executionFrequency: data.executionFrequency,
+      timeFormat: data.timeFormat || '12h',
+      dayOfWeek: data.dayOfWeek || undefined,
+      isRecurring: data.isRecurring !== false,
+      category: data.category?.trim() || undefined,
+      rotationOrder: finalRotationOrder,
+      rotationMembers: rotationMembersJson as any,
+      selectedDays: data.executionFrequency === 'WEEKLY' && selectedDaysArray && selectedDaysArray.length > 0
+        ? selectedDaysArray as any 
+        : null,
+      ...(initialAssignee ? {
+        currentAssignee: initialAssignee.userId,
+        lastAssignedAt: new Date()
+      } : {}),
+      group: { connect: { id: groupId } },
+      creator: { connect: { id: userId } }
+    };
 
     const task = await prisma.task.create({
       data: taskData
@@ -240,8 +266,7 @@ const taskData: Prisma.TaskCreateInput = {
       });
     }
 
-        if (initialAssignee) {
-      // Create map of slot points
+    if (initialAssignee) {
       const slotPointsMap: Record<string, number> = {};
       createdSlots.forEach(slot => {
         slotPointsMap[slot.id] = slot.points || 0;
@@ -255,12 +280,20 @@ const taskData: Prisma.TaskCreateInput = {
       console.log(`📅 Group Current Rotation Week: ${group.currentRotationWeek}`);
       console.log(`📅 Current Date/Time: ${new Date().toISOString()}`);
       console.log(`📅 Current Day: ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}`);
-      
-      // In task.services.ts - Fix daily task assignment creation
-          if (data.executionFrequency === 'DAILY') {
+
+      const dayNames: Record<number, DayOfWeek> = {
+        0: 'SUNDAY',
+        1: 'MONDAY',
+        2: 'TUESDAY',
+        3: 'WEDNESDAY',
+        4: 'THURSDAY',
+        5: 'FRIDAY',
+        6: 'SATURDAY'
+      };
+
+      if (data.executionFrequency === 'DAILY') {
         console.log(`\n📅 Creating DAILY assignments`);
         
-        // Create UTC date for today at midnight
         const now = new Date();
         const todayUTC = new Date(Date.UTC(
           now.getUTCFullYear(),
@@ -271,27 +304,12 @@ const taskData: Prisma.TaskCreateInput = {
         
         console.log(`   Today UTC (midnight): ${todayUTC.toISOString()}`);
         console.log(`   Today UTC day index: ${todayUTC.getUTCDay()}`);
-        console.log(`   Today UTC day name: ${todayUTC.toUTCString().slice(0, 3).toUpperCase()}`);
-        
-        // Map UTC day index to day name
-        const dayNames: Record<number, DayOfWeek> = {
-          0: 'SUNDAY',
-          1: 'MONDAY',
-          2: 'TUESDAY',
-          3: 'WEDNESDAY',
-          4: 'THURSDAY',
-          5: 'FRIDAY',
-          6: 'SATURDAY'
-        };
-        
         console.log(`\n   Creating assignments for next 7 days:`);
         
         for (let i = 0; i < 7; i++) {
-          // Create due date in UTC
           const dueDateUTC = new Date(todayUTC);
           dueDateUTC.setUTCDate(todayUTC.getUTCDate() + i);
           
-          // Get the actual UTC day name
           const utcDayIndex = dueDateUTC.getUTCDay();
           const actualDayName = dayNames[utcDayIndex];
           
@@ -300,26 +318,17 @@ const taskData: Prisma.TaskCreateInput = {
           console.log(`   │   UTC Date: ${dueDateUTC.toISOString()}`);
           console.log(`   │   UTC Day Index: ${utcDayIndex}`);
           console.log(`   │   Assignment Day: ${actualDayName}`);
-          console.log(`   │   Local Date: ${dueDateUTC.toLocaleDateString()}`);
-          console.log(`   │   Local Day: ${dueDateUTC.toLocaleDateString('en-US', { weekday: 'long' })}`);
           console.log(`   └─────────────────────────────────────────`);
           
           for (const timeSlot of createdSlots) {
-            // Parse time slot
             const timeParts = timeSlot.startTime.split(':');
             const hours = Number(timeParts[0]) || 18;
             const minutes = Number(timeParts[1]) || 0;
             
-            // Create the exact due date in UTC
             const slotDueDateUTC = new Date(dueDateUTC);
             slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
             
             const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
-
-            console.log(`      ⏰ ${timeSlot.startTime}-${timeSlot.endTime}:`);
-            console.log(`         Due UTC: ${slotDueDateUTC.toISOString()}`);
-            console.log(`         Points: ${assignmentPoints}`);
-            console.log(`         assignmentDay: ${actualDayName}`);
 
             await prisma.assignment.create({
               data: {
@@ -338,149 +347,114 @@ const taskData: Prisma.TaskCreateInput = {
                 missedTimeSlotIds: []
               }
             });
-            console.log(`         ✅ Created`);
+            console.log(`         ✅ Created: ${actualDayName} at ${timeSlot.startTime}-${timeSlot.endTime} (${assignmentPoints} pts)`);
           }
         }
         
         console.log(`\n✅ DAILY assignments creation completed`);
-      } 
-     if (data.executionFrequency === 'WEEKLY') {
-  let selectedDaysArray = data.selectedDays;
-  if (!selectedDaysArray && data.dayOfWeek) {
-    selectedDaysArray = [data.dayOfWeek];
-  } 
-  
-  if (selectedDaysArray && selectedDaysArray.length > 0) {
-    // ========== ADD THESE CONSOLE LOGS ==========
-    console.log(`\n🔍🔍🔍 [DEBUG] WEEKLY TASK CREATION 🔍🔍🔍`);
-    console.log(`📅 RAW selectedDaysArray:`, JSON.stringify(selectedDaysArray));
-    console.log(`📅 After TaskHelpers.validateSelectedDays:`, TaskHelpers.validateSelectedDays(data.selectedDays));
-    console.log(`📅 dayOfWeek from data:`, data.dayOfWeek);
-    console.log(`📅 Execution Frequency: ${data.executionFrequency}`);
-    console.log(`=====================================\n`);
-    // ============================================
-    
-    console.log(`📅 Creating WEEKLY assignments based on creation date rotation`);
-    console.log(`   Selected days: ${selectedDaysArray.join(', ')}`);
-    
-    // Get UTC creation date (today)
-    const now = new Date();
-    const creationDateUTC = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0, 0, 0, 0
-    ));
-    
-    // Map day names to UTC day indices
-    const dayToIndex: Record<string, number> = {
-      'SUNDAY': 0,
-      'MONDAY': 1,
-      'TUESDAY': 2,
-      'WEDNESDAY': 3,
-      'THURSDAY': 4,
-      'FRIDAY': 5,
-      'SATURDAY': 6
-    };
-    
-    // Get creation day index (today's day of week)
-    const creationDayIndex = creationDateUTC.getUTCDay();
-    
-    // ========== ADD THIS LOG ==========
-    console.log(`📅 creationDayIndex: ${creationDayIndex}`);
-    console.log(`📅 creationDayName: ${Object.keys(dayToIndex).find(key => dayToIndex[key] === creationDayIndex)}`);
-    // ==================================
-    
-    // ✅ Filter valid days and sort starting from creation day
-    const validDays = selectedDaysArray.filter((day: string) => dayToIndex[day] !== undefined);
-    
-    // ========== ADD THIS LOG ==========
-    console.log(`📅 validDays after filter:`, validDays);
-    // ==================================
-    
-    const daysInOrder = [...validDays].sort((a, b) => {
-      const indexA = dayToIndex[a];
-      const indexB = dayToIndex[b];
-      
-      if (indexA === undefined || indexB === undefined) return 0;
-      
-      // Adjust indices to be relative to creation day
-      let relativeA = indexA < creationDayIndex ? indexA + 7 : indexA;
-      let relativeB = indexB < creationDayIndex ? indexB + 7 : indexB;
-      
-      return relativeA - relativeB;
-    });
-    
-    // ========== ADD THESE LOGS ==========
-    console.log(`📅 daysInOrder length: ${daysInOrder.length}`);
-    console.log(`📅 daysInOrder:`, daysInOrder);
-    console.log(`=====================================\n`);
-    // ==================================
-    
-    console.log(`   Creation day index: ${creationDayIndex} (${Object.keys(dayToIndex).find(key => dayToIndex[key] === creationDayIndex)})`);
-    console.log(`   Days in rotation order: ${daysInOrder.join(' → ')}`);
-    
-    for (let i = 0; i < daysInOrder.length; i++) {
-      const day = daysInOrder[i];
-      const targetDayIndex = dayToIndex[day];
-      
-      if (targetDayIndex === undefined) {
-        console.warn(`⚠️ Unknown day: ${day}, skipping`);
-        continue;
       }
-      
-      // Calculate days to add from creation date
-      let daysToAdd = targetDayIndex - creationDayIndex;
-      if (daysToAdd < 0) daysToAdd += 7;
-      
-      const dueDateUTC = new Date(creationDateUTC);
-      dueDateUTC.setUTCDate(creationDateUTC.getUTCDate() + daysToAdd);
-      dueDateUTC.setUTCHours(0, 0, 0, 0);
-      
-      const isInPast = dueDateUTC < creationDateUTC;
-      
-      console.log(`   Day ${i+1}: ${day} → ${dueDateUTC.toISOString()} (days to add: ${daysToAdd})`);
-      
-      for (const timeSlot of createdSlots) {
-        const timeParts = timeSlot.startTime.split(':');
-        const hours = Number(timeParts[0]) || 18;
-        const minutes = Number(timeParts[1]) || 0;
-        
-        const slotDueDateUTC = new Date(dueDateUTC);
-        slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
-        
-        const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
-        await prisma.assignment.create({
-          data: {
-            taskId: task.id,
-            userId: initialAssignee.userId,
-            dueDate: slotDueDateUTC,
-            points: assignmentPoints,
-            rotationWeek: group.currentRotationWeek,
-            weekStart: dueDateUTC,
-            weekEnd: new Date(dueDateUTC.getTime() + 24 * 60 * 60 * 1000),
-            assignmentDay: day as DayOfWeek,
-            completed: false,
-            expired: false,
-            timeSlotId: timeSlot.id, 
-            originalTotalPoints: totalSlotPoints,
-            slotPoints: slotPointsMap,
-            missedTimeSlotIds: []
+      if (data.executionFrequency === 'WEEKLY') {
+        let selectedDaysArray = data.selectedDays;
+        if (!selectedDaysArray && data.dayOfWeek) {
+          selectedDaysArray = [data.dayOfWeek];
+        }
+        
+        if (selectedDaysArray && selectedDaysArray.length > 0) {
+          console.log(`\n🔍🔍🔍 [DEBUG] WEEKLY TASK CREATION 🔍🔍🔍`);
+          console.log(`📅 RAW selectedDaysArray:`, JSON.stringify(selectedDaysArray));
+          console.log(`📅 Execution Frequency: ${data.executionFrequency}`);
+          
+          const now = new Date();
+          const creationDateUTC = new Date(Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            0, 0, 0, 0
+          ));
+          
+          const dayToIndex: Record<string, number> = {
+            'SUNDAY': 0, 'MONDAY': 1, 'TUESDAY': 2, 'WEDNESDAY': 3,
+            'THURSDAY': 4, 'FRIDAY': 5, 'SATURDAY': 6
+          };
+          
+          const creationDayIndex = creationDateUTC.getUTCDay();
+          
+          console.log(`📅 creationDayIndex: ${creationDayIndex}`);
+          console.log(`📅 creationDayName: ${Object.keys(dayToIndex).find(key => dayToIndex[key] === creationDayIndex)}`);
+          
+          const validDays = selectedDaysArray.filter((day: string) => dayToIndex[day] !== undefined);
+          
+          const daysInOrder = [...validDays].sort((a, b) => {
+            const indexA = dayToIndex[a];
+            const indexB = dayToIndex[b];
+            if (indexA === undefined || indexB === undefined) return 0;
+            let relativeA = indexA < creationDayIndex ? indexA + 7 : indexA;
+            let relativeB = indexB < creationDayIndex ? indexB + 7 : indexB;
+            return relativeA - relativeB;
+          });
+          
+          console.log(`📅 daysInOrder:`, daysInOrder);
+          console.log(`📅 Creation day index: ${creationDayIndex}`);
+          
+          for (let i = 0; i < daysInOrder.length; i++) {
+            const day = daysInOrder[i];
+            const targetDayIndex = dayToIndex[day];
+            
+            if (targetDayIndex === undefined) {
+              console.warn(`⚠️ Unknown day: ${day}, skipping`);
+              continue;
+            }
+            
+            let daysToAdd = targetDayIndex - creationDayIndex;
+            if (daysToAdd < 0) daysToAdd += 7;
+            
+            const dueDateUTC = new Date(creationDateUTC);
+            dueDateUTC.setUTCDate(creationDateUTC.getUTCDate() + daysToAdd);
+            dueDateUTC.setUTCHours(0, 0, 0, 0);
+            
+            console.log(`   Day ${i+1}: ${day} → ${dueDateUTC.toISOString()} (days to add: ${daysToAdd})`);
+            
+            for (const timeSlot of createdSlots) {
+              const timeParts = timeSlot.startTime.split(':');
+              const hours = Number(timeParts[0]) || 18;
+              const minutes = Number(timeParts[1]) || 0;
+              
+              const slotDueDateUTC = new Date(dueDateUTC);
+              slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+              
+              const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
+
+              await prisma.assignment.create({
+                data: {
+                  taskId: task.id,
+                  userId: initialAssignee.userId,
+                  dueDate: slotDueDateUTC,
+                  points: assignmentPoints,
+                  rotationWeek: group.currentRotationWeek,
+                  weekStart: dueDateUTC,
+                  weekEnd: new Date(dueDateUTC.getTime() + 24 * 60 * 60 * 1000),
+                  assignmentDay: day as DayOfWeek,
+                  completed: false,
+                  expired: false,
+                  timeSlotId: timeSlot.id,
+                  originalTotalPoints: totalSlotPoints,
+                  slotPoints: slotPointsMap,
+                  missedTimeSlotIds: []
+                }
+              });
+              console.log(`         ✅ Created: ${day} at ${timeSlot.startTime}-${timeSlot.endTime} (${assignmentPoints} pts)`);
+            }
           }
-        });
-        console.log(`         ✅ Created: ${day} at ${timeSlot.startTime}-${timeSlot.endTime} (${assignmentPoints} pts)`);
+          
+          console.log(`\n✅ WEEKLY assignments creation completed. Created ${daysInOrder.length} day assignments`);
+        } else {
+          console.log(`⚠️ WARNING: No selected days for weekly task!`);
+        }
       }
-    }
-    
-    console.log(`\n✅ WEEKLY assignments creation completed. Created ${daysInOrder.length} assignments`);
-  } else {
-    console.log(`⚠️ WARNING: No selected days for weekly task!`);
-  }
-}
+
       console.log(`🔵🔵🔵 [CREATE TASK] Completed assignments creation 🔵🔵🔵`);
     }
-    
 
     const completeTask = await prisma.task.findUnique({
       where: { id: task.id },
@@ -520,7 +494,6 @@ const taskData: Prisma.TaskCreateInput = {
     return { success: false, message: error.message || "Error creating task" };
   }
 }
-
 
  // In task.services.ts - Update getGroupTasks method
 static async getGroupTasks(groupId: string, userId: string, week?: number) {
@@ -2395,5 +2368,5 @@ static async getCurrentTimeSlotInfo(taskId: string, userId: string) {
     return { success: false, message: error.message || "Error retrieving time slot info" };
   }
 }
-
+ 
 } 
