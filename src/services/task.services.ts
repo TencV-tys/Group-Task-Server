@@ -550,7 +550,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
                 points: true 
               }
             }
-          },
+          }, 
           orderBy: { dueDate: 'asc' }
         }
       },
@@ -614,7 +614,9 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     return { success: false, message: error.message || "Error retrieving tasks" };
   }
 }
- // In task.services.ts - Update getUserTasks method
+
+// In task.services.ts - FIXED version without type issues
+
 static async getUserTasks(groupId: string, userId: string, week?: number) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -641,11 +643,11 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // ✅ FIXED: Get CURRENT assignments (tasks still exist)
+    // Get CURRENT assignments (tasks still exist)
     const currentAssignments = await prisma.assignment.findMany({
       where: { 
         userId, 
-        task: { groupId }, // This automatically filters out assignments with taskId = null
+        task: { groupId },
         rotationWeek: targetWeek 
       },
       include: {
@@ -677,12 +679,12 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
       orderBy: { dueDate: 'asc' }
     });
 
-    // ✅ NEW: Get HISTORICAL assignments (tasks that were deleted)
+    // Get HISTORICAL assignments (tasks that were deleted)
     const historicalAssignments = await prisma.assignment.findMany({
       where: { 
         userId, 
-        taskId: null, // Tasks that were deleted
-        taskTitle: { not: null } // Only ones with preserved data
+        taskId: null,
+        taskTitle: { not: null }
       },
       include: {
         timeSlot: { 
@@ -698,48 +700,100 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
       orderBy: { dueDate: 'asc' }
     });
 
-    // Format current assignments
-const currentTasks = currentAssignments
-  .filter(assignment => assignment.task !== null) // Filter out null tasks
-  .map(assignment => {
-    const task = assignment.task!; // Now safe to use ! assertion
-    return {
-      id: task.id,
-      title: task.title,
-      description: task.description,
-      points: task.points,
-      executionFrequency: task.executionFrequency,
-      timeFormat: task.timeFormat,
-      timeSlots: task.timeSlots || [],
-      selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
-      dayOfWeek: task.dayOfWeek,
-      isRecurring: task.isRecurring,
-      category: task.category,
-      rotationOrder: task.rotationOrder,
-      createdAt: task.createdAt,
-      creator: task.creator,
-      assignment: {
-        id: assignment.id,
-        dueDate: assignment.dueDate,
-        assignmentDay: assignment.assignmentDay,
-        completed: assignment.completed,
-        completedAt: assignment.completedAt,
-        verified: assignment.verified,
-        photoUrl: assignment.photoUrl,
-        points: assignment.points,
-        weekStart: assignment.weekStart,
-        weekEnd: assignment.weekEnd,
-        rotationWeek: assignment.rotationWeek,
-        timeSlot: assignment.timeSlot,
-        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
-        isHistorical: false
+    // ✅ FIXED: Get swap information using a separate query without the relation
+    // First get the swap requests
+    const userSwapRequests = await prisma.swapRequest.findMany({
+      where: {
+        OR: [
+          { acceptedBy: userId },
+          { targetUserId: userId, status: 'ACCEPTED' }
+        ],
+        status: 'ACCEPTED'
+      },
+      select: {
+        id: true,
+        assignmentId: true,
+        requestedBy: true,
+        scope: true,
+        selectedDay: true
       }
-    };
-  });
+    });
+
+    // ✅ Then separately get the requester names for each swap request
+    const swapInfoMap = new Map();
+    for (const swap of userSwapRequests) {
+      let swappedFromName = 'another member';
+      
+      if (swap.requestedBy) {
+        const requester = await prisma.user.findUnique({
+          where: { id: swap.requestedBy },
+          select: { fullName: true }
+        });
+        if (requester?.fullName) {
+          swappedFromName = requester.fullName;
+        }
+      }
+      
+      swapInfoMap.set(swap.assignmentId, {
+        acquiredViaSwap: true,
+        swapRequestId: swap.id,
+        swappedFromId: swap.requestedBy,
+        swappedFromName: swappedFromName,
+        swapScope: swap.scope,
+        swapDay: swap.selectedDay
+      });
+    }
+
+    // Format current assignments with swap info
+    const currentTasks = currentAssignments
+      .filter(assignment => assignment.task !== null)
+      .map(assignment => {
+        const task = assignment.task!;
+        const swapInfo = swapInfoMap.get(assignment.id);
+        
+        return {
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          points: task.points,
+          executionFrequency: task.executionFrequency,
+          timeFormat: task.timeFormat,
+          timeSlots: task.timeSlots || [],
+          selectedDays: TaskHelpers.safeJsonParse(task.selectedDays),
+          dayOfWeek: task.dayOfWeek,
+          isRecurring: task.isRecurring,
+          category: task.category,
+          rotationOrder: task.rotationOrder,
+          createdAt: task.createdAt,
+          creator: task.creator,
+          assignment: {
+            id: assignment.id,
+            dueDate: assignment.dueDate,
+            assignmentDay: assignment.assignmentDay,
+            completed: assignment.completed,
+            completedAt: assignment.completedAt,
+            verified: assignment.verified,
+            photoUrl: assignment.photoUrl,
+            points: assignment.points,
+            weekStart: assignment.weekStart,
+            weekEnd: assignment.weekEnd,
+            rotationWeek: assignment.rotationWeek,
+            timeSlot: assignment.timeSlot,
+            isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
+            isHistorical: false,
+            acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
+            swapRequestId: swapInfo?.swapRequestId || null,
+            swappedFromId: swapInfo?.swappedFromId || null,
+            swappedFromName: swapInfo?.swappedFromName || null,
+            swapScope: swapInfo?.swapScope || null,
+            swapDay: swapInfo?.swapDay || null
+          }
+        };
+      });
 
     // Format historical assignments
     const historicalTasks = historicalAssignments.map(assignment => ({
-      id: `historical-${assignment.id}`, // Unique ID for historical tasks
+      id: `historical-${assignment.id}`,
       title: assignment.taskTitle || "Deleted Task",
       description: null,
       points: assignment.taskPoints || assignment.points,
@@ -766,9 +820,15 @@ const currentTasks = currentAssignments
         weekEnd: assignment.weekEnd,
         rotationWeek: assignment.rotationWeek,
         timeSlot: assignment.timeSlot,
-        isDueToday: false, // Never due today
+        isDueToday: false,
         isHistorical: true,
-        deletedTaskName: assignment.taskTitle
+        deletedTaskName: assignment.taskTitle,
+        acquiredViaSwap: false,
+        swapRequestId: null,
+        swappedFromId: null,
+        swappedFromName: null,
+        swapScope: null,
+        swapDay: null
       }
     }));
 
@@ -789,7 +849,8 @@ const currentTasks = currentAssignments
       stats: {
         total: allTasks.length,
         current: currentTasks.length,
-        historical: historicalTasks.length
+        historical: historicalTasks.length,
+        swapped: currentTasks.filter(t => t.assignment?.acquiredViaSwap === true).length
       }
     };  
 
@@ -798,7 +859,10 @@ const currentTasks = currentAssignments
     return { success: false, message: error.message || "Error retrieving your tasks" };
   }
 }
-// In task.services.ts - Update getTaskDetails method
+
+
+// In task.services.ts - FIXED getTaskDetails method
+
 static async getTaskDetails(taskId: string, userId: string) {
   try {
     const task = await prisma.task.findUnique({
@@ -871,28 +935,65 @@ static async getTaskDetails(taskId: string, userId: string) {
 
     const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
 
-    // ADD THIS: Calculate today's date info
-    const today = new Date();
+    // Calculate today's date info
+    const today = new Date(); 
     today.setHours(0, 0, 0, 0);
     
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-   const assignmentsWithDueInfo = task.assignments.map(assignment => {
-  console.log(`📋 Assignment: ${assignment.id}`);
-  console.log(`   Due date: ${assignment.dueDate}`); 
-  console.log(`   assignmentDay: ${assignment.assignmentDay}`);
-  console.log(`   User: ${assignment.user?.fullName}`);
-   
-  return {
-    ...assignment,
-    isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
-  };
+    // ✅ FIXED: Get swap information for the user's assignment
+    let swapInfo = null;
+    if (userAssignment) {
+      // First get the swap request without the relation
+      const swapRequest = await prisma.swapRequest.findFirst({
+        where: {
+          OR: [
+            { acceptedBy: userId, assignmentId: userAssignment.id },
+            { targetUserId: userId, assignmentId: userAssignment.id, status: 'ACCEPTED' }
+          ],
+          status: 'ACCEPTED'
+        },
+        select: {
+          id: true,
+          requestedBy: true,
+          scope: true,
+          selectedDay: true,
+          createdAt: true
+        }
+      });
+      
+      if (swapRequest) {
+        // Then get the requester's name separately
+        let swappedFromName = 'another member';
+        if (swapRequest.requestedBy) {
+          const requester = await prisma.user.findUnique({
+            where: { id: swapRequest.requestedBy },
+            select: { fullName: true }
+          });
+          if (requester?.fullName) {
+            swappedFromName = requester.fullName;
+          }
+        }
+        
+        swapInfo = {
+          acquiredViaSwap: true,
+          swapRequestId: swapRequest.id,
+          swappedFromId: swapRequest.requestedBy,
+          swappedFromName: swappedFromName,
+          swapScope: swapRequest.scope,
+          swapDay: swapRequest.selectedDay,
+          swapCreatedAt: swapRequest.createdAt
+        };
+      }
+    }
 
-});
+    const assignmentsWithDueInfo = task.assignments.map(assignment => ({
+      ...assignment,
+      isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
+    }));
 
-
-    return {
+    return { 
       success: true,
       message: "Task details retrieved",
       task: {
@@ -903,7 +1004,7 @@ static async getTaskDetails(taskId: string, userId: string) {
         executionFrequency: task.executionFrequency,
         timeFormat: task.timeFormat,
         timeSlots: task.timeSlots || [],
-          selectedDays: task.selectedDays ? TaskHelpers.safeJsonParse(task.selectedDays) : [],
+        selectedDays: task.selectedDays ? TaskHelpers.safeJsonParse(task.selectedDays) : [],
         dayOfWeek: task.dayOfWeek,
         isRecurring: task.isRecurring,
         category: task.category,
@@ -913,11 +1014,19 @@ static async getTaskDetails(taskId: string, userId: string) {
         createdAt: task.createdAt,
         group: task.group,
         creator: task.creator,
-        assignments: assignmentsWithDueInfo, // Use updated assignments
-        userAssignment: userAssignment || null,
+        assignments: assignmentsWithDueInfo,
+        userAssignment: userAssignment ? {
+          ...userAssignment,
+          acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
+          swapRequestId: swapInfo?.swapRequestId || null,
+          swappedFromId: swapInfo?.swappedFromId || null,
+          swappedFromName: swapInfo?.swappedFromName || null,
+          swapScope: swapInfo?.swapScope || null,
+          swapDay: swapInfo?.swapDay || null,
+          swapCreatedAt: swapInfo?.swapCreatedAt || null
+        } : null,
         totalAssignments: task.assignments.length,
         rotationMembers: rotationMembers,
-        // ADD THIS: Current date info
         currentDate: {
           today: today,
           tomorrow: tomorrow,
@@ -931,7 +1040,8 @@ static async getTaskDetails(taskId: string, userId: string) {
     return { success: false, message: error.message || "Error retrieving task details" };
   }
 }
-  
+
+
 // Update task with time slots points distribution
   static async updateTask(
     userId: string, 

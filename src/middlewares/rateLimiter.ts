@@ -8,7 +8,7 @@ const THREE_HOURS = 60 * 60 * 3000; // 10,800,000 ms = 3 hours
 export const authLimiter = rateLimit({
   windowMs: THREE_HOURS,
   max: 50,
-  message: {
+  message: { 
     success: false,
     message: 'Too many authentication attempts, please try again after 3 hours'
   },
@@ -56,15 +56,15 @@ export const passwordResetLimiter = rateLimit({
 // Swap request limiter
 export const swapRequestLimiter = rateLimit({
   windowMs: THREE_HOURS,
-  max: 100,
+  max: 300, // bump from 100 to 300
   message: {
     success: false,
     message: 'Too many swap requests, please try again after 3 hours'
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true, // ← add this, only count failures
 });
-
 // Group activity limiter
 export const groupActivityLimiter = rateLimit({
   windowMs: THREE_HOURS,

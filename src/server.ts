@@ -159,16 +159,14 @@ svr.use('/api/group', lightThrottle);
 svr.use('/api/home', lightThrottle);
 svr.use('/api/assignments', lightThrottle);
 svr.use('/api/group-activity', lightThrottle);
-
-// ⚠️ IMPORTANT: Skip throttle for swap requests to allow batch endpoints to work
-// svr.use('/api/swap-requests', lightThrottle); // ← COMMENTED OUT to fix batch endpoints
+ svr.use('/api/swap-requests', lightThrottle); // ← COMMENTED OUT to fix batch endpoints
 
 // Admin throttles
 svr.use('/api/auth/admins/login', loginThrottle);
 svr.use('/api/auth/admins/refresh-token', strictThrottle);
 svr.use('/api/admin/audit', throttleMiddleware(10 * 1000, 50));
 svr.use('/api/admin/audit/export', throttleMiddleware(60 * 1000, 30));
-svr.use('/api/admin/users', throttleMiddleware(10 * 1000, 100));
+svr.use('/api/admin/users', throttleMiddleware(10 * 1000, 100)); 
 svr.use('/api/admin/groups', throttleMiddleware(10 * 1000, 100));
 svr.use('/api/admin/feedback', throttleMiddleware(10 * 1000, 100));
 svr.use('/api/admin/reports', throttleMiddleware(10 * 1000, 100));
@@ -450,8 +448,8 @@ const gracefulShutdown = async (signal: string) => {
   setTimeout(() => {
     console.error('⚠️ Forced shutdown after timeout');
     process.exit(1);
-  }, 30000);
+  }, 30000); 
 };
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT')); 
