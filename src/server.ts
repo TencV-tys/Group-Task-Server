@@ -1,4 +1,4 @@
-// server.ts - COMPLETE FIXED VERSION (without morgan)
+// server.ts - COMPLETE FIXED VERSION (with correct middleware order)
 import express from "express";
 import dotenv from "dotenv";
 import cookieParser from 'cookie-parser';
@@ -87,27 +87,26 @@ svr.use(cors({
         'Authorization', 
         'Accept', 
         'X-Requested-With',
-        'cache-control',      // ✅ Add this
-        'Cache-Control',      // ✅ Add this (capitalized)
+        'cache-control',
+        'Cache-Control',
         'x-access-token',
         'X-Access-Token'
     ],
     exposedHeaders: ['Content-Length', 'X-Total-Count', 'X-Request-Id'],
-    maxAge: 86400 // 24 hours - cache preflight requests
+    maxAge: 86400
 }));
-// ============================================================================
-// 2. BASIC MIDDLEWARE - Parsing, Logging
-// ============================================================================
-console.log('📝 Configuring basic middleware...');
 
-// Body parsing (must be before routes)
+// ============================================================================
+// 2. BODY PARSING - MUST COME BEFORE ANY ROUTE-SPECIFIC MIDDLEWARE
+// ============================================================================
+console.log('📝 Configuring body parsing middleware...');
 svr.use(express.json({ limit: '10mb' })); 
 svr.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Cookie parsing
 svr.use(cookieParser());
 
-// Simple request logging (instead of morgan)
+// ============================================================================
+// 3. SIMPLE REQUEST LOGGING (instead of morgan)
+// ============================================================================
 if (process.env.NODE_ENV !== 'production') {
   svr.use((req, res, next) => {
     console.log(`📡 ${req.method} ${req.originalUrl}`);
@@ -116,19 +115,17 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ============================================================================
-// 3. STATIC FILES - Must be before routes
+// 4. STATIC FILES
 // ============================================================================
 console.log('📁 Configuring static files...');
 svr.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 svr.use(express.static(path.join(__dirname, '../public')));
 
 // ============================================================================
-// 4. RATE LIMITERS - Apply early to prevent abuse
+// 5. RATE LIMITERS - Applied AFTER body parsing
 // ============================================================================
 console.log('🛡️ Applying rate limiters...');
 
-// ===== USER ROUTES (Mobile App) =====
-console.log('👤 Configuring user rate limits...');
 svr.use('/api/auth/users', authLimiter);
 svr.use('/api/auth/users/reset-password', passwordResetLimiter);
 svr.use('/api/uploads', uploadLimiter);
@@ -141,45 +138,20 @@ svr.use('/api/feedback', userFeedbackLimiter);
 svr.use('/api/reports', userReportsLimiter);
 svr.use('/api/assignments', assignmentLimiter);
 svr.use('/api/home', homeLimiter);
-
-// ===== ADMIN ROUTES (Web Dashboard) =====
-console.log('👑 Configuring admin rate limits...');
 svr.use('/api/admin', adminLimiter);
 
 // ============================================================================
-// 5. CACHE MIDDLEWARE - Apply to specific GET endpoints only
-// ============================================================================
-console.log('💾 Applying cache middleware (GET only)...');
-
-// PUBLIC GET endpoints that are safe to cache
-svr.get('/api/home', cacheMiddleware(30 * 1000));
-svr.get('/api/group', cacheMiddleware(30 * 1000));
-svr.get('/api/tasks', cacheMiddleware(20 * 1000));
-svr.get('/api/group-activity', cacheMiddleware(30 * 1000));
-
-// Admin cache endpoints
-svr.get('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000));
-svr.get('/api/admin/groups', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/reports', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/users', cacheMiddleware(2 * 60 * 1000));
-
-// ============================================================================
-// 6. THROTTLE MIDDLEWARE - Apply after rate limiting
+// 6. THROTTLE MIDDLEWARE - Applied AFTER rate limiters
 // ============================================================================
 console.log('⏱️ Applying throttle middleware...');
 
-// ===== USER THROTTLE (Mobile App) =====
-console.log('   👤 User throttles:');
-
+// User throttles
 svr.use('/api/auth/users/login', loginThrottle);
 svr.use('/api/auth/users/signup', loginThrottle);
 svr.use('/api/auth/users/refresh-token', strictThrottle);
 svr.use('/api/auth/users/logout', lightThrottle);
 svr.use('/api/uploads', uploadThrottle); 
 svr.use('/api/tasks', lightThrottle);
-svr.use('/api/swap-requests', lightThrottle);
 svr.use('/api/feedback', lightThrottle);
 svr.use('/api/notifications', lightThrottle);
 svr.use('/api/reports', lightThrottle);
@@ -188,9 +160,10 @@ svr.use('/api/home', lightThrottle);
 svr.use('/api/assignments', lightThrottle);
 svr.use('/api/group-activity', lightThrottle);
 
-// ===== ADMIN THROTTLE (Web Dashboard) =====
-console.log('   👑 Admin throttles:'); 
+// ⚠️ IMPORTANT: Skip throttle for swap requests to allow batch endpoints to work
+// svr.use('/api/swap-requests', lightThrottle); // ← COMMENTED OUT to fix batch endpoints
 
+// Admin throttles
 svr.use('/api/auth/admins/login', loginThrottle);
 svr.use('/api/auth/admins/refresh-token', strictThrottle);
 svr.use('/api/admin/audit', throttleMiddleware(10 * 1000, 50));
@@ -225,7 +198,23 @@ const createUploadsDirectories = () => {
 createUploadsDirectories();
 
 // ============================================================================
-// 8. ROUTES - All routes registered here
+// 8. CACHE MIDDLEWARE - Apply to specific GET endpoints
+// ============================================================================
+console.log('💾 Applying cache middleware...');
+
+svr.get('/api/home', cacheMiddleware(30 * 1000));
+svr.get('/api/group', cacheMiddleware(30 * 1000));
+svr.get('/api/tasks', cacheMiddleware(20 * 1000));
+svr.get('/api/group-activity', cacheMiddleware(30 * 1000));
+svr.get('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
+svr.get('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000));
+svr.get('/api/admin/groups', cacheMiddleware(2 * 60 * 1000));
+svr.get('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000));
+svr.get('/api/admin/reports', cacheMiddleware(2 * 60 * 1000));
+svr.get('/api/admin/users', cacheMiddleware(2 * 60 * 1000));
+
+// ============================================================================
+// 9. ROUTES - All routes registered here
 // ============================================================================
 console.log('📡 Registering routes...');
 
@@ -271,7 +260,7 @@ svr.get('/forgot-password', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/forgot-password.html'));
 });
 
-// Health check endpoint (no auth required)
+// Health check endpoint
 svr.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
@@ -293,7 +282,6 @@ svr.use((req, res) => {
 svr.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('❌ Global error handler:', err);
   
-  // Handle specific error types
   if (err.name === 'MulterError') {
     return res.status(400).json({
       success: false,
@@ -317,12 +305,12 @@ svr.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // ============================================================================
-// 9. CREATE HTTP SERVER
+// 10. CREATE HTTP SERVER
 // ============================================================================
 const server = http.createServer(svr);
 
 // ============================================================================
-// 10. INITIALIZE SOCKET.IO
+// 11. INITIALIZE SOCKET.IO
 // ============================================================================
 console.log('🔌 Initializing Socket.IO...');
 const io = setupSocketIO(server);
@@ -330,7 +318,7 @@ setIO(io);
 console.log('✅ Socket.IO initialized');
 
 // ============================================================================
-// 11. SERVER START
+// 12. SERVER START
 // ============================================================================
 const MY_IP = process.env.MY_IP || '10.205.101.2'; 
 const Wifi = process.env.WIFI_IP || '192.168.1.29';
@@ -356,7 +344,7 @@ server.listen(PORT, async () => {
    ├─ ${path.join(__dirname, '../uploads/task-photos')}
    └─ ${path.join(__dirname, '../uploads/group-avatars')}
    
-🛡️ RATE LIMITING ENABLED (3-HOUR WINDOW):
+🛡️ RATE LIMITING ENABLED:
    ├─ Auth routes:          50 requests/3 hours
    ├─ Upload routes:        50 requests/3 hours
    ├─ Task routes:          200 requests/3 hours
@@ -371,37 +359,29 @@ server.listen(PORT, async () => {
    ├─ Home page:            300 requests/3 hours
    ├─ Admin routes:         500 requests/3 hours
 
-💾 CACHE CONFIGURATION (GET only):
-   👤 USER (Mobile App):
-      ├─ Home data:       30 seconds
-      ├─ Group data:      30 seconds  
-      ├─ Tasks:           20 seconds
-      └─ Activity:        30 seconds
-   
-   👑 ADMIN (Web Dashboard):
-      ├─ Dashboard:       3 minutes
-      ├─ Statistics:      2 minutes
-      ├─ Users/Groups:    2 minutes
-      └─ Reports:         2 minutes
-
 ⏱️ THROTTLE CONFIGURATION:
    👤 USER (Mobile App):
-      ├─ Login:           5 attempts/15m
-      ├─ Upload:          3 per minute
-      ├─ General API:     15 requests/10s
-      └─ Auth refresh:    3 requests/10s
+      ├─ Login:             5 attempts/15m
+      ├─ Upload:            3 per minute
+      ├─ General API:       15 requests/10s
+      └─ Auth refresh:      3 requests/10s
+      └─ Swap requests:     DISABLED (to allow batch endpoints)
    
    👑 ADMIN (Web Dashboard):
-      ├─ Login:           5 attempts/15m
-      ├─ Audit:           50 requests/10s
-      ├─ Admin API:       100 requests/10s
-      ├─ Export:          30 per minute
-      └─ Bulk ops:        30 requests/30s
+      ├─ Login:             5 attempts/15m
+      ├─ Audit:             50 requests/10s
+      ├─ Admin API:         100 requests/10s
+      ├─ Export:            30 per minute
+      └─ Bulk ops:          30 requests/30s
 
-✅ Server is ready to handle requests from both mobile users and admin dashboard!
+💾 CACHE CONFIGURATION:
+   👤 USER:    30-20 seconds
+   👑 ADMIN:   2-3 minutes
+
+✅ Server is ready to handle requests!
     `);
 
-    // ===== DEVELOPMENT AUTO-ROTATION CHECK =====
+    // Development auto-rotation check
     if (process.env.NODE_ENV !== 'production') {
         console.log('🧪 Development mode: Checking rotation status...');
         try {
@@ -412,7 +392,7 @@ server.listen(PORT, async () => {
         }
     }
 
-    // ========== CRON JOBS ==========
+    // Cron jobs
     console.log('⏰ Initializing cron jobs...');
     initSwapRequestCron();
     initReminderCron();
@@ -443,7 +423,7 @@ server.listen(PORT, async () => {
 });
 
 // ============================================================================
-// 12. GRACEFUL SHUTDOWN
+// 13. GRACEFUL SHUTDOWN
 // ============================================================================
 const gracefulShutdown = async (signal: string) => {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
@@ -456,7 +436,6 @@ const gracefulShutdown = async (signal: string) => {
       console.log('🔌 Socket.IO closed');
     }
     
-    // Close database connections - use the imported prisma directly
     try {
       await prisma.$disconnect();
       console.log('🗄️ Database disconnected');
@@ -473,3 +452,6 @@ const gracefulShutdown = async (signal: string) => {
     process.exit(1);
   }, 30000);
 };
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

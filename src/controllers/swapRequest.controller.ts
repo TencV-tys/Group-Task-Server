@@ -956,47 +956,97 @@ static async checkUserHasAnyAssignmentThisWeek(req: UserAuthRequest, res: Respon
   }
 }
 
+// controllers/swapRequest.controller.ts - ADD THESE BATCH METHODS WITH FULL CONSOLE LOGS
+
 // BATCH: Check multiple users' assignments on a specific day
 static async batchCheckUserAssignments(req: UserAuthRequest, res: Response) {
+  console.log('🚀🚀🚀 [BATCH DAY] STARTING batchCheckUserAssignments 🚀🚀🚀');
+  
   try {
     const userId = req.user?.id;
-    const { userIds, groupId, day, week } = req.body;
+    const { userIds, groupId, day, week } = req.body || {};
+
+    console.log('📦 [BATCH DAY] Request body:', JSON.stringify({ userIds, groupId, day, week }, null, 2));
+    console.log('📦 [BATCH DAY] userId from token:', userId);
+    console.log('📦 [BATCH DAY] userIds length:', userIds?.length);
 
     if (!userId) {
+      console.log('❌ [BATCH DAY] No user ID in token');
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
 
-    if (!userIds || !groupId || !day || !week) {
-      return res.status(400).json({ success: false, message: "Missing required parameters" });
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      console.log('❌ [BATCH DAY] Invalid userIds array');
+      return res.status(400).json({ success: false, message: "userIds array is required" });
     }
+
+    if (!groupId || !day || !week) {
+      console.log('❌ [BATCH DAY] Missing parameters:', { groupId, day, week });
+      return res.status(400).json({ success: false, message: "Missing required parameters: groupId, day, week" });
+    }
+
+    console.log(`🔍 [BATCH DAY] Batch checking ${userIds.length} users for day ${day} (week ${week})`);
 
     const results = [];
+    const weekNum = parseInt(week as string, 10);
+    console.log(`📅 [BATCH DAY] Parsed week number: ${weekNum}`);
 
-    for (const targetUserId of userIds) {
-      const [hasAnyAssignment, hasAssignmentOnDay] = await Promise.all([
-        prisma.assignment.findFirst({
+    for (let i = 0; i < userIds.length; i++) {
+      const targetUserId = userIds[i];
+      console.log(`\n--- [BATCH DAY] Processing user ${i + 1}/${userIds.length}: ${targetUserId} ---`);
+      
+      try {
+        // Check if user has ANY assignment this week
+        console.log(`🔍 [BATCH DAY] Checking ANY assignment for user ${targetUserId}, week ${weekNum}, group ${groupId}`);
+        
+        const anyAssignment = await prisma.assignment.findFirst({
           where: {
             userId: targetUserId,
             task: { groupId },
-            rotationWeek: parseInt(week as string, 10)
+            rotationWeek: weekNum
           }
-        }),
-        prisma.assignment.findFirst({
+        });
+        
+        console.log(`📊 [BATCH DAY] anyAssignment result: ${anyAssignment ? `FOUND (id: ${anyAssignment.id})` : 'NOT FOUND'}`);
+
+        // Check if user has assignment on specific day
+        const dayValue = day.toUpperCase() as any;
+        console.log(`🔍 [BATCH DAY] Checking DAY assignment for user ${targetUserId}, day ${dayValue}, week ${weekNum}`);
+        
+        const dayAssignment = await prisma.assignment.findFirst({
           where: {
             userId: targetUserId,
             task: { groupId },
-            rotationWeek: parseInt(week as string, 10),
-            assignmentDay: day as DayOfWeek
+            rotationWeek: weekNum,
+            assignmentDay: dayValue
           }
-        })
-      ]);
+        });
+        
+        console.log(`📊 [BATCH DAY] dayAssignment result: ${dayAssignment ? `FOUND (id: ${dayAssignment.id})` : 'NOT FOUND'}`);
 
-      results.push({
-        userId: targetUserId,
-        hasAnyAssignmentThisWeek: !!hasAnyAssignment,
-        hasAssignmentOnDay: !!hasAssignmentOnDay
-      });
+        results.push({
+          userId: targetUserId,
+          hasAnyAssignmentThisWeek: !!anyAssignment,
+          hasAssignmentOnDay: !!dayAssignment
+        });
+        
+        console.log(`✅ [BATCH DAY] Result for ${targetUserId}: hasAny=${!!anyAssignment}, hasDay=${!!dayAssignment}`);
+        
+      } catch (err) {
+        console.error(`❌ [BATCH DAY] Error checking user ${targetUserId}:`, err);
+        results.push({
+          userId: targetUserId,
+          hasAnyAssignmentThisWeek: false,
+          hasAssignmentOnDay: false
+        });
+      }
     }
+
+    console.log(`\n✅ [BATCH DAY] Batch check complete:`);
+    console.log(`   Total users: ${results.length}`);
+    console.log(`   Have ANY assignments: ${results.filter(r => r.hasAnyAssignmentThisWeek).length}`);
+    console.log(`   Have DAY assignments: ${results.filter(r => r.hasAssignmentOnDay).length}`);
+    console.log(`📊 [BATCH DAY] Full results:`, JSON.stringify(results, null, 2));
 
     return res.json({
       success: true,
@@ -1004,42 +1054,131 @@ static async batchCheckUserAssignments(req: UserAuthRequest, res: Response) {
     });
 
   } catch (error: any) {
-    console.error("SwapRequestController.batchCheckUserAssignments error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    console.error('💥💥💥 [BATCH DAY] CATASTROPHIC ERROR 💥💥💥');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Internal server error",
+      error: error.toString(),
+      stack: error.stack
+    });
   }
 }
 
 // BATCH: Check multiple users' week assignments
+// controllers/swapRequest.controller.ts - DEBUG VERSION
+
 static async batchCheckUserWeekAssignments(req: UserAuthRequest, res: Response) {
+  console.log('🚀🚀🚀 [BATCH WEEK] STARTING batchCheckUserWeekAssignments 🚀🚀🚀');
+  
+  // 🔍 DEBUG: Log everything about the request
+  console.log('🔍 req.method:', req.method);
+  console.log('🔍 req.url:', req.url);
+  console.log('🔍 req.headers["content-type"]:', req.headers['content-type']);
+  console.log('🔍 req.headers["content-length"]:', req.headers['content-length']);
+  console.log('🔍 req.body:', req.body);
+  console.log('🔍 typeof req.body:', typeof req.body);
+  console.log('🔍 req.body keys:', req.body ? Object.keys(req.body) : 'null/undefined');
+  
+  // 🔧 Try to get raw body if express.json failed
+  let bodyData = req.body;
+  
+  if (!bodyData || Object.keys(bodyData).length === 0) {
+    console.log('⚠️ req.body is empty, attempting to read raw body...');
+    
+    // Read raw body
+    const rawBody = await new Promise<string>((resolve) => {
+      let data = '';
+      req.on('data', (chunk) => {
+        data += chunk;
+      });
+      req.on('end', () => {
+        resolve(data);
+      });
+    });
+    
+    console.log('📦 Raw body received:', rawBody);
+    
+    if (rawBody) {
+      try {
+        bodyData = JSON.parse(rawBody);
+        console.log('✅ Successfully parsed raw body:', bodyData);
+      } catch (e) {
+        console.error('❌ Failed to parse raw body:', e);
+      }
+    }
+  }
+  
+  // Now try to get the parameters
+  const { userIds, groupId, week } = bodyData || {};
+  
+  console.log('📦 Extracted params:', { userIds, groupId, week });
+  
   try {
     const userId = req.user?.id;
-    const { userIds, groupId, week } = req.body;
 
     if (!userId) {
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
 
-    if (!userIds || !groupId || !week) {
-      return res.status(400).json({ success: false, message: "Missing required parameters" });
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      console.log('❌ Invalid userIds:', userIds);
+      return res.status(400).json({ success: false, message: "userIds array is required" });
     }
 
-    const results = [];
+    if (!groupId || !week) {
+      console.log('❌ Missing parameters:', { groupId, week });
+      return res.status(400).json({ success: false, message: "Missing required parameters: groupId, week" });
+    }
 
-    for (const targetUserId of userIds) {
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          userId: targetUserId,
-          task: { groupId },
-          rotationWeek: parseInt(week as string, 10)
+    const weekNum = parseInt(week as string, 10);
+    console.log(`📅 Parsed week number: ${weekNum}`);
+    console.log(`🔍 Batch checking ${userIds.length} users for week ${weekNum}`);
+
+    // Use Promise.all for parallel execution
+    const results = await Promise.all(
+      userIds.map(async (targetUserId) => {
+        try {
+          const assignments = await prisma.assignment.findMany({
+            where: {
+              userId: targetUserId,
+              task: { groupId },
+              rotationWeek: weekNum
+            },
+            select: {
+              id: true,
+              assignmentDay: true,
+              points: true
+            }
+          });
+
+          return {
+            userId: targetUserId,
+            hasAnyAssignmentThisWeek: assignments.length > 0,
+            assignmentCount: assignments.length,
+            assignments: assignments.map(a => ({
+              id: a.id,
+              day: a.assignmentDay,
+              points: a.points
+            }))
+          };
+        } catch (err) {
+          console.error(`Error checking user ${targetUserId}:`, err);
+          return {
+            userId: targetUserId,
+            hasAnyAssignmentThisWeek: false,
+            assignmentCount: 0,
+            assignments: []
+          };
         }
-      });
+      })
+    );
 
-      results.push({
-        userId: targetUserId,
-        hasAnyAssignmentThisWeek: assignments.length > 0,
-        assignmentCount: assignments.length
-      });
-    }
+    console.log(`✅ Batch week check complete: ${results.filter(r => r.hasAnyAssignmentThisWeek).length} users have assignments`);
 
     return res.json({
       success: true,
@@ -1047,9 +1186,17 @@ static async batchCheckUserWeekAssignments(req: UserAuthRequest, res: Response) 
     });
 
   } catch (error: any) {
-    console.error("SwapRequestController.batchCheckUserWeekAssignments error:", error);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    console.error('💥💥💥 [BATCH WEEK] CATASTROPHIC ERROR 💥💥💥');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Internal server error",
+      error: error.toString()
+    });
   }
-} 
+}
 
 } 
