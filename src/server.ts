@@ -6,6 +6,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
+import prisma from './prisma';  
 import { 
   authLimiter, 
   uploadLimiter, 
@@ -24,6 +25,7 @@ import {
 
 // ========== ADD CACHE AND THROTTLE IMPORTS ==========
 import { cacheMiddleware } from './middlewares/cache.middleware';
+import { dbMonitorMiddleware, getDbStats } from './middlewares/db.monitor';
 import { 
   throttleMiddleware, 
   strictThrottle, 
@@ -187,7 +189,7 @@ svr.use('/api/assignments', lightThrottle);
 svr.use('/api/group-activity', lightThrottle);
 
 // ===== ADMIN THROTTLE (Web Dashboard) =====
-console.log('   👑 Admin throttles:');
+console.log('   👑 Admin throttles:'); 
 
 svr.use('/api/auth/admins/login', loginThrottle);
 svr.use('/api/auth/admins/refresh-token', strictThrottle);
@@ -251,6 +253,14 @@ svr.use('/api/admin/reports', AdminReportRoutes);
 svr.use('/api/admin/audit', AdminAuditRoutes);
 svr.use('/api/admin/dashboard', AdminDashboardRoutes);
 svr.use('/api/admin/groups', AdminGroupsRoutes); 
+svr.use(dbMonitorMiddleware);
+
+svr.get('/api/admin/db-stats', (req, res) => {
+  res.json({
+    success: true,
+    data: getDbStats()
+  });
+});
 
 // HTML Pages for password reset
 svr.get('/reset-password-form', (req, res) => {
@@ -438,49 +448,28 @@ server.listen(PORT, async () => {
 const gracefulShutdown = async (signal: string) => {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
   
-  // Stop accepting new connections
   server.close(async () => {
     console.log('📦 HTTP server closed');
     
-    // Close Socket.IO connections
     if (io) {
       await io.close();
       console.log('🔌 Socket.IO closed');
     }
     
-    // Process remaining audit logs
-    const { getAuditQueueStats, AdminAuditService } = require('./services/admin.audit.services');
-    const stats = getAuditQueueStats();
-    
-    if (stats.queueSize > 0) {
-      console.log(`📊 Processing ${stats.queueSize} remaining audit logs...`);
-      await AdminAuditService.forceProcessQueue();
+    // Close database connections - use the imported prisma directly
+    try {
+      await prisma.$disconnect();
+      console.log('🗄️ Database disconnected');
+    } catch (error) {
+      console.error('❌ Error disconnecting database:', error);
     }
-    
-    // Close database connections
-    const { prisma } = require('./prisma');
-    await prisma.$disconnect();
-    console.log('🗄️ Database disconnected');
     
     console.log('✅ Graceful shutdown complete');
     process.exit(0);
   });
   
-  // Force shutdown after 30 seconds
   setTimeout(() => {
     console.error('⚠️ Forced shutdown after timeout');
     process.exit(1);
   }, 30000);
 };
-
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
-  // Don't exit immediately, let graceful shutdown handle
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-}); 
