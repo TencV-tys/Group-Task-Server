@@ -2279,106 +2279,140 @@ static async deleteTask(taskId: string, userId: string) {
     };
   }
 }
-  // Get task statistics
-  static async getTaskStatistics(groupId: string, userId: string) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
+ 
+// In task.services.ts - FIXED getTaskStatistics method
 
-      if (!membership) {
-        return { success: false, message: "You are not a member in this group" };
-      }
+static async getTaskStatistics(groupId: string, userId: string) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
 
-      const group = await prisma.group.findUnique({ where: { id: groupId } });
-      if (!group) {
-        return { success: false, message: "Group not found" };
-      }
-
-      // Get total tasks in group
-      const totalTasks = await prisma.task.count({
-        where: { groupId }
-      });
-
-      // Get recurring tasks count
-      const recurringTasks = await prisma.task.count({
-        where: { groupId, isRecurring: true }
-      });
-
-      // Get tasks with time slots
-      const tasksWithTimeSlots = await prisma.task.count({
-        where: { 
-          groupId,
-          timeSlots: { some: {} }
-        }
-      });
-
-      // Get tasks by frequency
-      const dailyTasks = await prisma.task.count({
-        where: { groupId, executionFrequency: 'DAILY' }
-      });
-
-      const weeklyTasks = await prisma.task.count({
-        where: { groupId, executionFrequency: 'WEEKLY' }
-      });
-
-      // Get assignments statistics for current week
-      const currentWeekAssignments = await prisma.assignment.findMany({
-        where: { 
-          task: { groupId },
-          rotationWeek: group.currentRotationWeek 
-        },
-        include: {
-          task: true,
-          user: { select: { fullName: true } }
-        }
-      });
-
-      const completedAssignments = currentWeekAssignments.filter(a => a.completed);
-      const pendingAssignments = currentWeekAssignments.filter(a => !a.completed);
-
-      // Calculate total points
-      const totalPoints = currentWeekAssignments.reduce((sum, a) => sum + a.points, 0);
-      const completedPoints = completedAssignments.reduce((sum, a) => sum + a.points, 0);
-      const pendingPoints = pendingAssignments.reduce((sum, a) => sum + a.points, 0);
-
-      // Get user's assignments for current week
-      const userAssignments = currentWeekAssignments.filter(a => a.userId === userId);
-      const userCompleted = userAssignments.filter(a => a.completed);
-      const userPending = userAssignments.filter(a => !a.completed);
-
-      return {
-        success: true,
-        message: "Task statistics retrieved",
-        statistics: {
-          totalTasks,
-          recurringTasks,
-          tasksWithTimeSlots,
-          dailyTasks,
-          weeklyTasks,
-          currentWeek: {
-            weekNumber: group.currentRotationWeek,
-            totalAssignments: currentWeekAssignments.length,
-            completedAssignments: completedAssignments.length,
-            pendingAssignments: pendingAssignments.length,
-            totalPoints,
-            completedPoints,
-            pendingPoints
-          },
-          userStats: {
-            totalAssignments: userAssignments.length,
-            completed: userCompleted.length,
-            pending: userPending.length,
-            userPoints: userCompleted.reduce((sum, a) => sum + a.points, 0)
-          }
-        }
-      };
-
-    } catch (error: any) {
-      console.error("TaskService.getTaskStatistics error:", error);
-      return { success: false, message: error.message || "Error retrieving task statistics" };
+    if (!membership) {
+      return { success: false, message: "You are not a member in this group" };
     }
+
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
+
+    // Get total tasks in group
+    const totalTasks = await prisma.task.count({
+      where: { groupId, isDeleted: false }
+    });
+
+    // Get recurring tasks count
+    const recurringTasks = await prisma.task.count({
+      where: { groupId, isRecurring: true, isDeleted: false }
+    });
+
+    // Get tasks with time slots
+    const tasksWithTimeSlots = await prisma.task.count({
+      where: { 
+        groupId,
+        timeSlots: { some: {} }
+      }
+    });
+
+    // Get tasks by frequency
+    const dailyTasks = await prisma.task.count({
+      where: { groupId, executionFrequency: 'DAILY', isDeleted: false }
+    });
+
+    const weeklyTasks = await prisma.task.count({
+      where: { groupId, executionFrequency: 'WEEKLY', isDeleted: false }
+    });
+
+    // Get assignments statistics for current week
+    const currentWeekAssignments = await prisma.assignment.findMany({
+      where: { 
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek 
+      },
+      include: {
+        task: true,
+        user: { select: { fullName: true } }
+      }
+    });
+
+    // Filter out assignments with null tasks
+    const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
+    const now = new Date();
+
+    // ✅ FIXED: Calculate completed, pending, and neglected correctly
+    const completedAssignments = validAssignments.filter(a => a.completed === true);
+    const neglectedAssignments = validAssignments.filter(a => 
+      !a.completed && (a.expired === true || new Date(a.dueDate) < now)
+    );
+    
+    // ✅ Pending = not completed AND not neglected
+    const pendingAssignments = validAssignments.filter(a => 
+      !a.completed && !neglectedAssignments.includes(a)
+    );
+
+    // Calculate total points
+    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    const completedPoints = completedAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    const pendingPoints = pendingAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    const neglectedPoints = neglectedAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+
+    // Get user's assignments for current week
+    const userAssignments = validAssignments.filter(a => a.userId === userId);
+    const userCompleted = userAssignments.filter(a => a.completed === true);
+    const userNeglected = userAssignments.filter(a => 
+      !a.completed && (a.expired === true || new Date(a.dueDate) < now)
+    );
+    const userPending = userAssignments.filter(a => 
+      !a.completed && !userNeglected.includes(a)
+    );
+
+    console.log('📊 [TaskStatistics] Weekly Stats:', {
+      total: validAssignments.length,
+      completed: completedAssignments.length,
+      pending: pendingAssignments.length,
+      neglected: neglectedAssignments.length,
+      totalPoints,
+      completedPoints,
+      pendingPoints,
+      neglectedPoints
+    });
+
+    return {
+      success: true,
+      message: "Task statistics retrieved",
+      statistics: {
+        totalTasks,
+        recurringTasks,
+        tasksWithTimeSlots,
+        dailyTasks,
+        weeklyTasks,
+        currentWeek: {
+          weekNumber: group.currentRotationWeek,
+          totalAssignments: validAssignments.length,
+          completedAssignments: completedAssignments.length,
+          pendingAssignments: pendingAssignments.length,
+          neglectedAssignments: neglectedAssignments.length,
+          totalPoints,
+          completedPoints,
+          pendingPoints,
+          neglectedPoints
+        },
+        userStats: {
+          totalAssignments: userAssignments.length,
+          completed: userCompleted.length,
+          pending: userPending.length,
+          neglected: userNeglected.length,
+          userPoints: userCompleted.reduce((sum, a) => sum + (a.points || 0), 0)
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.getTaskStatistics error:", error);
+    return { success: false, message: error.message || "Error retrieving task statistics" };
   }
+}
   
   // services/task.services.ts - ADD this method to your TaskService class
 static async getCurrentTimeSlotInfo(taskId: string, userId: string) {

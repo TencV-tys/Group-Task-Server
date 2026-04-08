@@ -318,9 +318,9 @@ console.log('✅ Socket.IO initialized');
 // ============================================================================
 // 12. SERVER START
 // ============================================================================
-const MY_IP = process.env.MY_IP || '10.205.101.2'; 
-const Wifi = process.env.WIFI_IP || '192.168.1.29';
-const PORT = process.env.PORT || 5000;
+const MY_IP = process.env.MY_IP;
+const Wifi = process.env.WIFI_IP;
+const PORT = process.env.PORT;
 
 server.listen(PORT, async () => {
     console.log(`

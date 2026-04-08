@@ -1061,8 +1061,8 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
     console.log('✅ [getAssignmentDetails] Success, returning assignment with swap info:', swapInfo);
 
     return {
-      success: true,
-      assignment: {
+      success: true, 
+      assignment: { 
         ...assignment,
         isAdmin: isGroupAdmin,
         isOwner: isAssignee,
@@ -1070,7 +1070,7 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
         acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
         swapRequestId: swapInfo?.swapRequestId || null,
         swappedFromId: swapInfo?.swappedFromId || null,
-        swappedFromName: swapInfo?.swappedFromName || null,
+        swappedFromName: swapInfo?.swappedFromName || null, 
         swapScope: swapInfo?.swapScope || null,
         swapDay: swapInfo?.swapDay || null,
         swapCreatedAt: swapInfo?.swapCreatedAt || null
@@ -1084,6 +1084,8 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
 }
 
   // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
+
+  // In assignment.services.ts - FIXED getUserAssignments with proper fields
 
 static async getUserAssignments( 
   userId: string,
@@ -1099,19 +1101,25 @@ static async getUserAssignments(
     console.log(`👤 User ID: ${userId}`);
     console.log(`📋 Filters:`, filters);
     
-    // ✅ ALWAYS exclude null-taskId records from the main query
     const where: any = { 
       userId,
-      taskId: { not: null }  // ← ADD THIS: prevents overlap with historical query
+      taskId: { not: null }
     };
     
     console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
 
+    // FIXED: For 'pending' status, exclude expired and partially expired tasks
     if (filters.status) {
       switch (filters.status) {
         case 'pending':
           where.completed = false;
-          console.log(`   ✅ Filter: pending (completed = false)`);
+          where.expired = false;  // EXCLUDE fully expired
+          // For pending, show only active tasks (not expired, not partially expired with no future)
+          where.OR = [
+            { partiallyExpired: false },
+            { partiallyExpired: null }
+          ];
+          console.log(`   ✅ Filter: pending (completed = false, expired = false, partiallyExpired = false/null)`);
           break;
         case 'completed':
           where.completed = true;
@@ -1155,6 +1163,15 @@ static async getUserAssignments(
               title: true,
               points: true,
               executionFrequency: true,
+              timeSlots: {
+                select: {
+                  id: true,
+                  startTime: true,
+                  endTime: true,
+                  label: true,
+                  points: true
+                }
+              },
               group: { select: { id: true, name: true } }
             }
           },
@@ -1169,20 +1186,16 @@ static async getUserAssignments(
 
     console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
 
-    // This warning should now never fire since we filter taskId: { not: null }
     const validAssignments = assignments.filter(a => a.task !== null);
     console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
-    
-    if (assignments.length > 0 && validAssignments.length === 0) {
-      console.log(`⚠️ WARNING: ${assignments.length} assignments found but all have null tasks!`);
-      assignments.forEach((a, i) => {
-        console.log(`   Assignment ${i+1}: id=${a.id}, taskId=${a.taskId}, hasTask=${!!a.task}`);
-      });
-    }
     
     const formattedAssignments = validAssignments.map(assignment => {
       const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
       const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
+      
+      // Safely get the arrays (they might be null or undefined)
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
       
       return {
         id: assignment.id,
@@ -1202,11 +1215,15 @@ static async getUserAssignments(
         timeSlot: assignment.timeSlot,
         rotationWeek: assignment.rotationWeek,
         isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
-        isHistorical: false  // ✅ Explicitly mark as non-historical
+        isHistorical: false,
+        expired: assignment.expired || false,
+        partiallyExpired: assignment.partiallyExpired || false,
+        missedTimeSlotIds: missedSlotIds,
+        completedTimeSlotIds: completedSlotIds,
+        timeSlots: assignment.task!.timeSlots || []
       };
     });
 
-    // Historical query is now clean — no overlap possible
     const historicalWhere: any = {
       userId,
       taskId: null,
@@ -1242,11 +1259,16 @@ static async getUserAssignments(
       timeSlot: assignment.timeSlot,
       rotationWeek: assignment.rotationWeek,
       isDueToday: false,
-      isHistorical: true  // ✅ Explicitly mark as historical
-    }));
+      isHistorical: true,
+      expired: false,
+      partiallyExpired: false,
+      missedTimeSlotIds: [],
+      completedTimeSlotIds: [],
+      timeSlots: []
+    })); 
 
     const allAssignments = [...formattedAssignments, ...formattedHistorical];
-    console.log(`📊 Total assignments returned: ${allAssignments.length} (${formattedAssignments.length} active + ${formattedHistorical.length} historical)`);
+    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
     console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
 
     return {
@@ -1264,6 +1286,7 @@ static async getUserAssignments(
     return { success: false, message: error.message || "Error retrieving assignments" };
   }
 }
+
 
 // ========== GET TODAY'S ASSIGNMENTS ==========
 static async getTodayAssignments(
@@ -1592,73 +1615,130 @@ static async getTodayAssignments(
   }
 
   // ========== GET UPCOMING ASSIGNMENTS ==========
-  static async getUpcomingAssignments(
-    userId: string,
-    filters?: {
-      groupId?: string;
-      limit?: number;
-    }
-  ) {
-    try {
-      const where: any = {
-        userId: userId,
-        completed: false
+ // In assignment.services.ts - FIXED getUpcomingAssignments with proper fields
+
+static async getUpcomingAssignments(
+  userId: string,
+  filters?: {
+    groupId?: string;
+    limit?: number;
+  }
+) {
+  try {
+    const where: any = {
+      userId: userId,
+      completed: false,
+      expired: false,  // EXCLUDE fully expired tasks
+      OR: [
+        { partiallyExpired: false },
+        { partiallyExpired: null }
+      ]
+    };
+
+    if (filters?.groupId) {
+      where.task = {
+        groupId: filters.groupId
       };
+    }
 
-      if (filters?.groupId) {
-        where.task = {
-          groupId: filters.groupId
-        };
-      }
-
-      const assignments = await prisma.assignment.findMany({
-        where,
-        include: {
-          timeSlot: true,
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
+    const assignments = await prisma.assignment.findMany({
+      where,
+      include: {
+        timeSlot: true,
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            executionFrequency: true,
+            timeSlots: {
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                label: true,
+                points: true
+              }
+            },
+            group: {
+              select: {
+                id: true,
+                name: true
               }
             }
           }
-        },
-        orderBy: { dueDate: 'asc' },
-        take: filters?.limit || 10
-      });
-
-      const validAssignments = assignments.filter(a => a.task !== null);
-
-      return {
-        success: true,
-        message: "Upcoming assignments retrieved",
-        data: {
-          assignments: validAssignments || [],
-          currentTime: new Date(),
-          total: validAssignments.length
         }
-      };
+      },
+      orderBy: { dueDate: 'asc' },
+      take: filters?.limit || 10
+    });
 
-    } catch (error: any) {
-      console.error("AssignmentService.getUpcomingAssignments error:", error);
-      return {
-        success: false,
-        message: error.message,
-        data: {
-          assignments: [],
-          currentTime: new Date(),
-          total: 0
+    const validAssignments = assignments.filter(a => a.task !== null);
+
+    const formattedAssignments = validAssignments.map(assignment => {
+      // Safely get the arrays (they might be null or undefined)
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
+      
+      // Check if this is a multi-slot daily task with future slots
+      let isStillActive = true;
+      
+      if (assignment.task?.executionFrequency === 'DAILY' && assignment.task?.timeSlots?.length > 1) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const dueDate = new Date(assignment.dueDate);
+        
+        // If due date is in the past, check if there are remaining slots
+        if (dueDate < today) {
+          const remainingSlots = assignment.task.timeSlots.filter((slot: any) => 
+            !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
+          );
+          isStillActive = remainingSlots.length > 0;
         }
+      }
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
+        taskPoints: assignment.points,
+        group: assignment.task!.group,
+        dueDate: assignment.dueDate,
+        timeSlot: assignment.timeSlot,
+        rotationWeek: assignment.rotationWeek,
+        completed: assignment.completed,
+        expired: assignment.expired,
+        partiallyExpired: assignment.partiallyExpired,
+        isStillActive,
+        missedTimeSlotIds: missedSlotIds,
+        completedTimeSlotIds: completedSlotIds,
+        timeSlots: assignment.task!.timeSlots || []
       };
-    }
+    });
+
+    return {
+      success: true,
+      message: "Upcoming assignments retrieved",
+      data: {
+        assignments: formattedAssignments,
+        currentTime: new Date(),
+        total: formattedAssignments.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("AssignmentService.getUpcomingAssignments error:", error);
+    return {
+      success: false,
+      message: error.message,
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }
+    };
   }
-
+}
 
   // ========== GET NEGLECTED TASKS FOR USER ==========
   static async getUserNeglectedTasks(userId: string, filters?: {
