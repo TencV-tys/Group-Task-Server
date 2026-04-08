@@ -1000,7 +1000,7 @@ static async getTaskDetails(taskId: string, userId: string) {
             }
           },
           orderBy: { rotationWeek: 'desc' },
-          take: 10
+        
         }
       }
     });

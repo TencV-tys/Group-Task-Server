@@ -1768,7 +1768,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     return { 
       success: false, 
       message: error.message || "Error accepting swap request" 
-    };
+    }; 
   }
 }
 

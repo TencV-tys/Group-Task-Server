@@ -438,204 +438,201 @@ static async getTodayAssignments(req: UserAuthRequest, res: Response) {
     }
   }
 
+static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { assignmentId } = req.params as {assignmentId:string};
 
-  static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { assignmentId } = req.params as {assignmentId:string};
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "User not authenticated" 
+      });
+    }
 
-      if (!userId) {
-        return res.status(401).json({ 
-          success: false, 
-          message: "User not authenticated" 
-        });
-      }
+    console.log(`⏰ ========== [checkSubmissionTime] ==========`);
+    console.log(`   📝 Assignment ID: ${assignmentId}`);
+    console.log(`   👤 User ID: ${userId}`);
 
-      console.log(`⏰ ========== [checkSubmissionTime] ==========`);
-      console.log(`   📝 Assignment ID: ${assignmentId}`);
-      console.log(`   👤 User ID: ${userId}`);
-
-      // Get assignment with task and time slot
-      const assignment = await prisma.assignment.findUnique({
-        where: { id: assignmentId },
-        include: {
-          task: {
-            include: {
-              group: {
-                select: {
-                  id: true,
-                  name: true
-                }
-              },
-              timeSlots: {
-                orderBy: { sortOrder: 'asc' }
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        task: {
+          include: {
+            group: {
+              select: {
+                id: true,
+                name: true
               }
+            },
+            timeSlots: {
+              orderBy: { sortOrder: 'asc' }
             }
-          },
-          timeSlot: true,
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true
-            }
+          }
+        },
+        timeSlot: true,
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true
           }
         }
+      }
+    });
+
+    if (!assignment) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Assignment not found" 
       });
+    }
 
-      if (!assignment) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Assignment not found" 
-        });
-      }
-
-      // Check if user is the assignee OR an admin of the group
-      const isAssignee = assignment.userId === userId;
-      
-      let isGroupAdmin = false;
-      if (assignment.task?.groupId) {
-        const membership = await prisma.groupMember.findFirst({
-          where: {
-            userId,
-            groupId: assignment.task.groupId,
-            groupRole: "ADMIN"
-          }
-        });
-        isGroupAdmin = !!membership;
-      }
-
-      console.log(`   👑 Is Admin: ${isGroupAdmin}`);
-      console.log(`   👤 Is Assignee: ${isAssignee}`);
-      console.log(`   📋 Assignment belongs to: ${assignment.user?.fullName} (${assignment.userId})`);
-
-      // Allow if assignee OR admin
-      if (!isAssignee && !isGroupAdmin) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "You don't have permission to check this assignment",
-          isAssignee: false,
-          isAdmin: false
-        });
-      }
-
-      const now = new Date();
-      const dueDate = new Date(assignment.dueDate);
-      const isDueToday = now.toDateString() === dueDate.toDateString();
-
-      console.log(`   📅 Due date: ${dueDate.toLocaleDateString()}`);
-      console.log(`   📅 Today: ${now.toLocaleDateString()}`);
-      console.log(`   📅 Is due today: ${isDueToday}`);
-
-      // If not due today, return early (but allow admins to see info)
-      if (!isDueToday) {
-        return res.json({
-          success: true,
-          canSubmit: false,
-          isDueToday: false,
-          isAdmin: isGroupAdmin,
-          isAssignee: isAssignee,
-          dueDate: dueDate.toISOString(),
-          reason: `Not due today (due on ${dueDate.toLocaleDateString()})`,
-          assignment: {
-            id: assignment.id,
-            dueDate: assignment.dueDate,
-            userId: assignment.userId,
-            userName: assignment.user?.fullName
-          }
-        });
-      }
-
-      // Check if assignment is completed
-      if (assignment.completed) {
-        return res.json({
-          success: true,
-          canSubmit: false,
-          isDueToday: true,
-          isAdmin: isGroupAdmin,
-          isAssignee: isAssignee,
-          reason: "Assignment already completed",
-          completedAt: assignment.completedAt
-        });
-      }
-
-      // Get time slot info
-      const timeSlot = assignment.timeSlot;
-      
-      if (!timeSlot) {
-        // No time slot - can submit anytime on due date
-        return res.json({
-          success: true,
-          canSubmit: true,
-          isDueToday: true,
-          isAdmin: isGroupAdmin,
-          isAssignee: isAssignee,
-          willBePenalized: false,
-          finalPoints: assignment.points,
-          originalPoints: assignment.points,
-          reason: "Available anytime today"
-        });
-      }
-
-      // Validate submission time
-      const validation = TimeHelpers.canSubmitAssignment(assignment, now);
-      
-      console.log(`⏰ Time validation:`, {
-        now: now.toLocaleTimeString(),
-        endTime: timeSlot.endTime,
-        canSubmit: validation.allowed,
-        reason: validation.reason,
-        willBePenalized: validation.willBePenalized,
-        timeLeft: validation.timeLeft
+    const isAssignee = assignment.userId === userId;
+    
+    let isGroupAdmin = false;
+    if (assignment.task?.groupId) {
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId,
+          groupId: assignment.task.groupId,
+          groupRole: "ADMIN"
+        }
       });
+      isGroupAdmin = !!membership;
+    }
 
+    console.log(`   👑 Is Admin: ${isGroupAdmin}`);
+    console.log(`   👤 Is Assignee: ${isAssignee}`);
+    console.log(`   📋 Assignment belongs to: ${assignment.user?.fullName} (${assignment.userId})`);
+
+    if (!isAssignee && !isGroupAdmin) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You don't have permission to check this assignment",
+        isAssignee: false,
+        isAdmin: false
+      });
+    }
+
+    const now = new Date();
+    const dueDate = new Date(assignment.dueDate);
+    
+    // ✅ FIXED: Use UTC for date comparison
+    const isDueToday = 
+      dueDate.getUTCFullYear() === now.getUTCFullYear() &&
+      dueDate.getUTCMonth() === now.getUTCMonth() &&
+      dueDate.getUTCDate() === now.getUTCDate();
+
+    // ✅ FIXED: Log using UTC dates
+    console.log(`   📅 Due date (UTC): ${dueDate.toISOString()}`);
+    console.log(`   📅 Today (UTC): ${now.toISOString()}`);
+    console.log(`   📅 Is due today: ${isDueToday}`);
+
+    if (!isDueToday) {
       return res.json({
         success: true,
-        canSubmit: validation.allowed,
-        isDueToday: true,
+        canSubmit: false,
+        isDueToday: false,
         isAdmin: isGroupAdmin,
         isAssignee: isAssignee,
-        reason: validation.reason,
-        timeLeft: validation.timeLeft,
-        timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-        willBePenalized: validation.willBePenalized || false,
-        finalPoints: validation.finalPoints || assignment.points,
-        originalPoints: validation.originalPoints || assignment.points,
-        submissionStart: validation.submissionStart,
-        onTimeEnd: validation.onTimeEnd,
-        lateWindowEnd: validation.lateWindowEnd,
-        gracePeriodEnd: validation.gracePeriodEnd,
-        opensIn: validation.opensIn,
-        activeSlot: validation.activeSlot ? {
-          id: timeSlot.id,
-          startTime: timeSlot.startTime,
-          endTime: timeSlot.endTime,
-          points: timeSlot.points
-        } : null,
-        timeSlot: {
-          id: timeSlot.id,
-          startTime: timeSlot.startTime,
-          endTime: timeSlot.endTime,
-          points: timeSlot.points,
-          label: timeSlot.label
-        },
+        dueDate: dueDate.toISOString(),  // ✅ Return ISO string
+        reason: `Not due today (due on ${dueDate.toISOString().split('T')[0]})`,
         assignment: {
           id: assignment.id,
-          dueDate: assignment.dueDate,
+          dueDate: assignment.dueDate.toISOString(),
           userId: assignment.userId,
           userName: assignment.user?.fullName
         }
       });
+    }
 
-    } catch (error: any) {
-      console.error("❌ Error in checkSubmissionTime:", error);
-      return res.status(500).json({ 
-        success: false, 
-        message: "Internal server error",
-        error: error.message 
+    if (assignment.completed) {
+      return res.json({
+        success: true,
+        canSubmit: false,
+        isDueToday: true,
+        isAdmin: isGroupAdmin,
+        isAssignee: isAssignee,
+        reason: "Assignment already completed",
+        completedAt: assignment.completedAt?.toISOString()
       });
     }
+
+    const timeSlot = assignment.timeSlot;
+    
+    if (!timeSlot) {
+      return res.json({
+        success: true,
+        canSubmit: true,
+        isDueToday: true,
+        isAdmin: isGroupAdmin,
+        isAssignee: isAssignee,
+        willBePenalized: false,
+        finalPoints: assignment.points,
+        originalPoints: assignment.points,
+        reason: "Available anytime today"
+      });
+    }
+
+    const validation = TimeHelpers.canSubmitAssignment(assignment, now);
+    
+    console.log(`⏰ Time validation:`, {
+      now: now.toISOString(),
+      endTime: timeSlot.endTime,
+      canSubmit: validation.allowed,
+      reason: validation.reason,
+      willBePenalized: validation.willBePenalized,
+      timeLeft: validation.timeLeft
+    });
+
+    return res.json({
+      success: true,
+      canSubmit: validation.allowed,
+      isDueToday: true,
+      isAdmin: isGroupAdmin,
+      isAssignee: isAssignee,
+      reason: validation.reason,
+      timeLeft: validation.timeLeft,
+      timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+      willBePenalized: validation.willBePenalized || false,
+      finalPoints: validation.finalPoints || assignment.points,
+      originalPoints: validation.originalPoints || assignment.points,
+      submissionStart: validation.submissionStart,
+      onTimeEnd: validation.onTimeEnd,
+      lateWindowEnd: validation.lateWindowEnd,
+      gracePeriodEnd: validation.gracePeriodEnd,
+      opensIn: validation.opensIn,
+      activeSlot: validation.activeSlot ? {
+        id: timeSlot.id,
+        startTime: timeSlot.startTime,
+        endTime: timeSlot.endTime,
+        points: timeSlot.points
+      } : null,
+      timeSlot: {
+        id: timeSlot.id,
+        startTime: timeSlot.startTime,
+        endTime: timeSlot.endTime,
+        points: timeSlot.points,
+        label: timeSlot.label
+      },
+      assignment: {
+        id: assignment.id,
+        dueDate: assignment.dueDate.toISOString(),
+        userId: assignment.userId,
+        userName: assignment.user?.fullName
+      }
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error in checkSubmissionTime:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Internal server error",
+      error: error.message 
+    });
   }
+}
 
 
   // ========== GET GROUP ASSIGNMENTS ==========

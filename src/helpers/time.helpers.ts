@@ -1,7 +1,7 @@
-// helpers/time.helpers.ts - COMPLETE FIXED VERSION WITH PROPER TYPES
+// helpers/time.helpers.ts - COMPLETE FIXED VERSION WITH UTC
+
 import { DayOfWeek } from '@prisma/client';
 
-// Define return type for canSubmitAssignment
 export interface CanSubmitResult {
   allowed: boolean;
   reason?: string;
@@ -17,7 +17,7 @@ export interface CanSubmitResult {
   gracePeriodEnd?: Date;
   opensIn?: number; 
   opensAt?: Date;
-   onTimeEnd?: Date;       
+  onTimeEnd?: Date;       
   lateWindowEnd?: Date; 
   activeSlot?: any;
   slotIndex?: number;
@@ -28,14 +28,19 @@ export class TimeHelpers {
   static readonly GRACE_PERIOD_MINUTES = 30;
   static readonly LATE_SUBMISSION_PENALTY = 0.5;
 
- // helpers/time.helpers.ts - CORRECTED timing
+  // ========== UTC-BASED METHODS ==========
 
-static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
+  static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
     const dueDate = new Date(assignment.dueDate);
     const currentDate = currentTime;
     
-    // Check if it's the due date
-    if (dueDate.toDateString() !== currentDate.toDateString()) {
+    // ✅ Check if it's the due date using UTC
+    const isDueTodayUTC = 
+      dueDate.getUTCFullYear() === currentDate.getUTCFullYear() &&
+      dueDate.getUTCMonth() === currentDate.getUTCMonth() &&
+      dueDate.getUTCDate() === currentDate.getUTCDate();
+    
+    if (!isDueTodayUTC) {
       return { 
         allowed: false, 
         reason: 'Not due date', 
@@ -44,7 +49,6 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       };
     }
      
-    // If no time slot, allow any time on due date
     if (!assignment.timeSlot) {
       return { 
         allowed: true,
@@ -54,82 +58,80 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       };
     }
     
-    // Parse time slot end time
     const endParts = assignment.timeSlot.endTime.split(':');
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    const endTime = new Date(dueDate);
-    endTime.setHours(endHour, endMinute, 0, 0);
+    // ✅ Use UTC for time calculations
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour, endMinute, 0, 0
+    ));
     
-    // ✅ Submission opens AT end time
     const submissionStart = endTime;
-    
-    // ✅ On-time window: 0 to 25 minutes after end time
     const onTimeEnd = new Date(endTime.getTime() + 25 * 60000);
-    
-    // ✅ Late window: 25 to 30 minutes after end time (5 minutes)
     const lateWindowEnd = new Date(endTime.getTime() + 30 * 60000);
-    
-    // ✅ Grace period end (window closes)
     const gracePeriodEnd = lateWindowEnd;
     
-    console.log(`⏰ Time check:`, {
-      now: currentDate.toLocaleTimeString(),
-      submissionStart: submissionStart.toLocaleTimeString(),
-      onTimeEnd: onTimeEnd.toLocaleTimeString(),
-      lateWindowEnd: lateWindowEnd.toLocaleTimeString(),
-      endTime: endTime.toLocaleTimeString()
+    const currentTimeMs = currentDate.getTime();
+    
+    console.log(`⏰ Time check (UTC):`, {
+      now: currentDate.toISOString(),
+      submissionStart: submissionStart.toISOString(),
+      onTimeEnd: onTimeEnd.toISOString(),
+      lateWindowEnd: lateWindowEnd.toISOString(),
+      endTime: endTime.toISOString()
     });
     
-    // BEFORE submission opens 
-    if (currentDate < submissionStart) {
-      const timeUntilStart = submissionStart.getTime() - currentDate.getTime();
+    if (currentTimeMs < submissionStart.getTime()) {
+      const timeUntilStart = submissionStart.getTime() - currentTimeMs;
       return { 
         allowed: false, 
         reason: 'Submission not open yet',
         opensIn: Math.ceil(timeUntilStart / 60000),
+        opensAt: submissionStart,
         submissionStart,
         currentTime: currentDate, 
         willBePenalized: false,
-        activeSlot: null // ✅ Add activeSlot
+        activeSlot: null
       };
     }
     
-    // ON TIME: Within first 25 minutes after end time
-    if (currentDate <= onTimeEnd) {
-      const timeLeft = onTimeEnd.getTime() - currentDate.getTime();
+    if (currentTimeMs <= onTimeEnd.getTime()) {
+      const timeLeft = onTimeEnd.getTime() - currentTimeMs;
       return {  
         allowed: true, 
         timeLeft: Math.ceil(timeLeft / 1000),
+        timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
         onTimeEnd,
         currentTime: currentDate,
         willBePenalized: false,
         finalPoints: assignment.points,
         originalPoints: assignment.points,
         submissionStatus: 'on_time',
-        activeSlot: assignment.timeSlot // ✅ Add activeSlot
+        activeSlot: assignment.timeSlot
       };
     }
     
-    // LATE: Within next 5 minutes (25-30 minutes after end time)
-    if (currentDate <= lateWindowEnd) {
-      const timeLeft = lateWindowEnd.getTime() - currentDate.getTime();
+    if (currentTimeMs <= lateWindowEnd.getTime()) {
+      const timeLeft = lateWindowEnd.getTime() - currentTimeMs;
       return { 
         allowed: true, 
         timeLeft: Math.ceil(timeLeft / 1000),
+        timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
         onTimeEnd,
         lateWindowEnd,
         currentTime: currentDate,
         willBePenalized: true,
-        finalPoints: Math.floor(assignment.points * (1 - this.LATE_SUBMISSION_PENALTY)),
+        finalPoints: Math.floor(assignment.points * (1 - TimeHelpers.LATE_SUBMISSION_PENALTY)),
         originalPoints: assignment.points,
         submissionStatus: 'late',
-        activeSlot: assignment.timeSlot // ✅ Add activeSlot
+        activeSlot: assignment.timeSlot
       };
     }
     
-    // After 30 minutes - closed
     return { 
       allowed: false, 
       reason: 'Submission window closed',
@@ -137,17 +139,19 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       currentTime: currentDate,
       willBePenalized: true,
       originalPoints: assignment.points,
-      activeSlot: null // ✅ Add activeSlot
+      activeSlot: null
     };
   }
-  
 
   static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): boolean {
     if (assignment.completed) return false;
     
     const dueDate = new Date(assignment.dueDate);
     
-    if (currentTime < dueDate) return false;
+    const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+    const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
+    
+    if (currentUTC < dueDateUTC) return false;
     
     let timeSlotsToCheck: any[] = [];
     
@@ -158,7 +162,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     }
     
     if (timeSlotsToCheck.length === 0) {
-      return currentTime > dueDate;
+      return currentUTC > dueDateUTC;
     }
     
     const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
@@ -176,9 +180,13 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      const endTime = new Date(Date.UTC(
+        dueDate.getUTCFullYear(),
+        dueDate.getUTCMonth(),
+        dueDate.getUTCDate(),
+        endHour, endMinute, 0, 0
+      ));
+      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
       
       if (currentTime <= gracePeriodEnd) {
         return false;
@@ -192,9 +200,10 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     if (assignment.completed) return [];
     
     const dueDate = new Date(assignment.dueDate);
-    const neglectedSlots: any[] = [];
+    const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+    const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
     
-    if (currentTime < dueDate) return [];
+    if (currentUTC < dueDateUTC) return [];
     
     let timeSlotsToCheck: any[] = [];
     
@@ -208,6 +217,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     
     const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
     const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+    const neglectedSlots: any[] = [];
     
     for (const slot of timeSlotsToCheck) {
       if (completedSlotIds.includes(slot.id) || missedSlotIds.includes(slot.id)) continue;
@@ -216,9 +226,13 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      const endTime = new Date(Date.UTC(
+        dueDate.getUTCFullYear(),
+        dueDate.getUTCMonth(),
+        dueDate.getUTCDate(),
+        endHour, endMinute, 0, 0
+      ));
+      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
       
       if (currentTime > gracePeriodEnd) {
         neglectedSlots.push({
@@ -234,11 +248,13 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
   
   static hasAvailableTimeSlot(assignment: any, currentTime: Date = new Date()): boolean {
     const dueDate = new Date(assignment.dueDate);
-    const currentDate = currentTime;
     
-    if (dueDate.toDateString() !== currentDate.toDateString()) {
-      return false;
-    }
+    const isDueToday = 
+      dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
+      dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
+      dueDate.getUTCDate() === currentTime.getUTCDate();
+    
+    if (!isDueToday) return false;
     
     let timeSlotsToCheck: any[] = [];
     
@@ -262,11 +278,15 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      const endTime = new Date(Date.UTC(
+        dueDate.getUTCFullYear(),
+        dueDate.getUTCMonth(),
+        dueDate.getUTCDate(),
+        endHour, endMinute, 0, 0
+      ));
+      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
       
-      if (currentDate <= gracePeriodEnd) {
+      if (currentTime <= gracePeriodEnd) {
         return true;
       }
     }
@@ -276,11 +296,13 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
   
   static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
     const dueDate = new Date(assignment.dueDate);
-    const currentDate = currentTime;
     
-    if (dueDate.toDateString() !== currentDate.toDateString()) {
-      return null;
-    }
+    const isDueToday = 
+      dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
+      dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
+      dueDate.getUTCDate() === currentTime.getUTCDate();
+    
+    if (!isDueToday) return null;
     
     let timeSlotsToCheck: any[] = [];
     
@@ -302,13 +324,17 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
+      const endTime = new Date(Date.UTC(
+        dueDate.getUTCFullYear(),
+        dueDate.getUTCMonth(),
+        dueDate.getUTCDate(),
+        endHour, endMinute, 0, 0
+      ));
       
       const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
       
-      if (currentDate >= submissionStart && currentDate <= gracePeriodEnd) {
+      if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
         return slot;
       }
     }
@@ -318,11 +344,13 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
   
   static getNextTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
     const dueDate = new Date(assignment.dueDate);
-    const currentDate = currentTime;
     
-    if (dueDate.toDateString() !== currentDate.toDateString()) {
-      return null;
-    }
+    const isDueToday = 
+      dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
+      dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
+      dueDate.getUTCDate() === currentTime.getUTCDate();
+    
+    if (!isDueToday) return null;
     
     let timeSlotsToCheck: any[] = [];
     
@@ -350,7 +378,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       return aStart - bStart;
     });
     
-    const currentMinutes = currentDate.getHours() * 60 + currentDate.getMinutes();
+    const currentMinutes = currentTime.getUTCHours() * 60 + currentTime.getUTCMinutes();
     
     for (const slot of sortedSlots) {
       const startParts = slot.startTime.split(':');
@@ -445,8 +473,12 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
       const endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      const endTime = new Date(dueDate);
-      endTime.setHours(endHour, endMinute, 0, 0);
+      const endTime = new Date(Date.UTC(
+        dueDate.getUTCFullYear(),
+        dueDate.getUTCMonth(),
+        dueDate.getUTCDate(),
+        endHour, endMinute, 0, 0
+      ));
       
       const submissionStart = new Date(endTime.getTime() - 30 * 60000);
       const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
@@ -489,7 +521,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     });
   }
   
-  static getTimeLeftText(timeLeftSeconds: number) {
+  static getTimeLeftText(timeLeftSeconds: number): string {
     if (timeLeftSeconds <= 0) return 'Expired';
     
     const hours = Math.floor(timeLeftSeconds / 3600);
@@ -505,10 +537,10 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     }
   }
   
-  static isWithinAnyTimeSlot(timeSlots: any[], currentTime: Date = new Date()) {
+  static isWithinAnyTimeSlot(timeSlots: any[], currentTime: Date = new Date()): any | null {
     if (!timeSlots || timeSlots.length === 0) return null;
     
-    const currentInMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+    const currentInMinutes = currentTime.getUTCHours() * 60 + currentTime.getUTCMinutes();
     
     for (const slot of timeSlots) {
       const startParts = slot.startTime.split(':');
@@ -536,7 +568,7 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    const currentInMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+    const currentInMinutes = currentTime.getUTCHours() * 60 + currentTime.getUTCMinutes();
     const endInMinutes = endHour * 60 + endMinute;
     const submissionStartInMinutes = endInMinutes - 30;
     const graceEndInMinutes = endInMinutes + 30;
@@ -550,8 +582,12 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    const endTime = new Date(dueDate);
-    endTime.setHours(endHour, endMinute, 0, 0);
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour, endMinute, 0, 0
+    ));
     
     const submissionStart = new Date(endTime.getTime() - 30 * 60000);
     const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
@@ -572,21 +608,24 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
   }
   
   static formatTime(date: Date): string {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
   }
   
   static getWeekBoundaries(weekOffset: number = 0): { weekStart: Date; weekEnd: Date } {
     const now = new Date();
-    const dayOfWeek = now.getDay();
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const currentUTCDay = now.getUTCDay();
+    const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
     
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - daysToMonday + (weekOffset * 7));
-    weekStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - daysToMonday + (weekOffset * 7),
+      0, 0, 0, 0
+    ));
     
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
     
     return { weekStart, weekEnd };
   }
@@ -609,16 +648,19 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
     };
     
     const targetDay = daysMap[day];
-    const currentDay = referenceDate.getDay();
+    const currentUTCDay = referenceDate.getUTCDay();
     
-    let daysToAdd = targetDay - currentDay;
+    let daysToAdd = targetDay - currentUTCDay;
     if (daysToAdd < 0) {
       daysToAdd += 7;
     }
     
-    const dueDate = new Date(referenceDate);
-    dueDate.setDate(referenceDate.getDate() + daysToAdd);
-    dueDate.setHours(0, 0, 0, 0);
+    const dueDate = new Date(Date.UTC(
+      referenceDate.getUTCFullYear(),
+      referenceDate.getUTCMonth(),
+      referenceDate.getUTCDate() + daysToAdd,
+      0, 0, 0, 0
+    ));
     
     return dueDate;
   }

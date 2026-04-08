@@ -13,7 +13,7 @@ static async completeAssignment(
   assignmentId: string,
   userId: string,
   data: { 
-    photoUrl?: string;  
+    photoUrl?: string;   
     notes?: string;
     timeSlotId?: string;
   }
@@ -958,7 +958,7 @@ static async verifyAssignment(
     }
   }
   
-  // In assignment.services.ts - FIXED getAssignmentDetails with swap info
+// In assignment.services.ts - FIXED getAssignmentDetails with UTC date conversion
 
 static async getAssignmentDetails(assignmentId: string, userId: string) {
   try {
@@ -989,7 +989,6 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
       return { success: false, message: "Assignment not found" };
     }
 
-    // ✅ Check if user is admin of the group
     let isGroupAdmin = false;
     if (assignment.task?.groupId) {
       const membership = await prisma.groupMember.findFirst({
@@ -1004,7 +1003,6 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
 
     const isAssignee = assignment.userId === userId;
 
-    // ✅ Allow if assignee OR admin
     if (!isAssignee && !isGroupAdmin) {
       return { 
         success: false, 
@@ -1012,11 +1010,9 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
       };
     }
 
-    // ✅ ADD SWAP INFORMATION for the assignee
     let swapInfo = null;
     
     if (isAssignee) {
-      // Check if this assignment was acquired via swap (user accepted a swap)
       const swapRequest = await prisma.swapRequest.findFirst({
         where: {
           OR: [
@@ -1058,23 +1054,31 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
       }
     }
 
-    console.log('✅ [getAssignmentDetails] Success, returning assignment with swap info:', swapInfo);
+    // ✅ CONVERT ALL DATES TO ISO STRINGS (UTC)
+    const formattedAssignment = {
+      ...assignment,
+      dueDate: assignment.dueDate instanceof Date ? assignment.dueDate.toISOString() : assignment.dueDate,
+      weekStart: assignment.weekStart instanceof Date ? assignment.weekStart.toISOString() : assignment.weekStart,
+      weekEnd: assignment.weekEnd instanceof Date ? assignment.weekEnd.toISOString() : assignment.weekEnd,
+      completedAt: assignment.completedAt instanceof Date ? assignment.completedAt.toISOString() : assignment.completedAt,
+      createdAt: assignment.createdAt instanceof Date ? assignment.createdAt.toISOString() : assignment.createdAt,
+      updatedAt: assignment.updatedAt instanceof Date ? assignment.updatedAt.toISOString() : assignment.updatedAt,
+      isAdmin: isGroupAdmin,
+      isOwner: isAssignee,
+      acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
+      swapRequestId: swapInfo?.swapRequestId || null,
+      swappedFromId: swapInfo?.swappedFromId || null,
+      swappedFromName: swapInfo?.swappedFromName || null, 
+      swapScope: swapInfo?.swapScope || null,
+      swapDay: swapInfo?.swapDay || null,
+      swapCreatedAt: swapInfo?.swapCreatedAt ? (swapInfo.swapCreatedAt instanceof Date ? swapInfo.swapCreatedAt.toISOString() : swapInfo.swapCreatedAt) : null
+    };
+
+    console.log('✅ [getAssignmentDetails] Success, returning assignment with UTC dates');
 
     return {
       success: true, 
-      assignment: { 
-        ...assignment,
-        isAdmin: isGroupAdmin,
-        isOwner: isAssignee,
-        // ✅ ADD SWAP INFO to the assignment
-        acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
-        swapRequestId: swapInfo?.swapRequestId || null,
-        swappedFromId: swapInfo?.swappedFromId || null,
-        swappedFromName: swapInfo?.swappedFromName || null, 
-        swapScope: swapInfo?.swapScope || null,
-        swapDay: swapInfo?.swapDay || null,
-        swapCreatedAt: swapInfo?.swapCreatedAt || null
-      }
+      assignment: formattedAssignment
     };
 
   } catch (error: any) {
@@ -1082,9 +1086,7 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
     return { success: false, message: error.message };
   }
 }
-
-  // services/assignment.services.ts - ADDED DETAILED LOGS to getUserAssignments and getTodayAssignments
-
+  
   // In assignment.services.ts - FIXED getUserAssignments with proper fields
 
 static async getUserAssignments( 
