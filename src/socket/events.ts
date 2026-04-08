@@ -197,7 +197,7 @@ export interface SwapRespondedPayload {
   toUserName: string;
   groupId: string;
   status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
-  scope: 'week' | 'day';
+   scope: 'week' | 'day' | 'cross';
   selectedDay?: string;
 }
 

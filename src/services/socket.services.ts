@@ -393,45 +393,47 @@ static async emitAssignmentPendingVerification(
     }
   }
 
-  static async emitSwapResponded(
-    swapRequestId: string,
-    assignmentId: string,
-    taskId: string,
-    taskTitle: string,
-    fromUserId: string,
-    toUserId: string,
-    toUserName: string,
-    groupId: string,
-    status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED',
-    scope: 'week' | 'day',
-    selectedDay?: string
-  ) {
-    try {
-      const payload: SwapRespondedPayload = {
-        swapRequestId,
-        assignmentId,
-        taskId,
-        taskTitle,
-        fromUserId,
-        toUserId,
-        toUserName,
-        groupId,
-        status,
-        scope,
-        selectedDay
-      };
-      
-      emitToUser(fromUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
-      
-      if (toUserId !== fromUserId) {
-        emitToUser(toUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
-      }
-      
-      emitToGroup(groupId, SERVER_EVENTS.SWAP_RESPONDED, payload);
-    } catch (error) {
-      console.error('SocketService.emitSwapResponded error:', error);
+// In socket.services.ts - Update the emitSwapResponded method
+
+static async emitSwapResponded(
+  swapRequestId: string,
+  assignmentId: string,
+  taskId: string,
+  taskTitle: string,
+  fromUserId: string,
+  toUserId: string,
+  toUserName: string,
+  groupId: string,
+  status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED',
+  scope: 'week' | 'day' | 'cross',  // ✅ ADD 'cross' here
+  selectedDay?: string
+) {
+  try {
+    const payload: SwapRespondedPayload = {
+      swapRequestId,
+      assignmentId,
+      taskId,
+      taskTitle,
+      fromUserId,
+      toUserId,
+      toUserName,
+      groupId,
+      status,
+      scope,
+      selectedDay
+    };
+    
+    emitToUser(fromUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+    
+    if (toUserId !== fromUserId) {
+      emitToUser(toUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
     }
+    
+    emitToGroup(groupId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+  } catch (error) {
+    console.error('SocketService.emitSwapResponded error:', error);
   }
+}
 
   // ========== GROUP EVENTS ==========
 

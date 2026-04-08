@@ -59,6 +59,7 @@ interface AssignmentWithTask {
   } | null;
 }
 
+
 interface SwapRequestWithAssignment {
   id: string;
   assignmentId: string;
@@ -67,6 +68,7 @@ interface SwapRequestWithAssignment {
   scope: string | null;
   selectedDay: string | null;
   selectedTimeSlotId: string | null;
+  targetTaskId: string | null;  // ✅ ADD THIS
   status: string;
   reason: string | null;
   expiresAt: Date | null;
@@ -125,7 +127,7 @@ export class SwapRequestService {
   static async createSwapRequest(
     userId: string,
     assignmentId: string,
-    data: { 
+    data: {  
       reason?: string; 
       targetUserId?: string;
       expiresAt?: Date;
@@ -1050,7 +1052,7 @@ export class SwapRequestService {
   }
 
  
-  // services/swapRequest.services.ts - COMPLETE FIXED acceptSwapRequest
+ // services/swapRequest.services.ts - COMPLETE FIXED acceptSwapRequest with cross-frequency support
 
 static async acceptSwapRequest(requestId: string, userId: string) {
   try {
@@ -1157,11 +1159,47 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     let requesterNewAssignments: any[] = [];
     let acceptorNewAssignments: any[] = [];
 
+    // Helper function to calculate next date for a specific day
+    const calculateNextDateForDay = (day: string): Date => {
+      const now = new Date();
+      const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+      const targetIndex = dayNames.indexOf(day);
+      const currentIndex = now.getDay();
+      
+      let daysToAdd = targetIndex - currentIndex;
+      if (daysToAdd < 0) daysToAdd += 7;
+      
+      const dueDate = new Date(now);
+      dueDate.setDate(now.getDate() + daysToAdd);
+      dueDate.setHours(18, 0, 0, 0);
+      
+      return dueDate;
+    };
+
+    // Helper to get weekly task days
+    const getWeeklyDays = (taskObj: any): string[] => {
+      let days: string[] = [];
+      if (taskObj.selectedDays) {
+        try {
+          days = JSON.parse(taskObj.selectedDays as string);
+        } catch { days = []; }
+      }
+      if (days.length === 0 && taskObj.dayOfWeek) {
+        days = [taskObj.dayOfWeek];
+      }
+      if (days.length === 0) {
+        days = ['MONDAY'];
+      }
+      return days;
+    };
+
+    const allDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
+    // ========== DAY SWAP ==========
     if (swapRequest.scope === 'day' && swapRequest.selectedDay) {
-      // ========== DAY SWAP = ONE-WAY TRANSFER ==========
       console.log(`🔄 Processing DAY swap for ${swapRequest.selectedDay}`);
       
-      const transactionResult = await prisma.$transaction(async (prisma:any) => {
+      const transactionResult = await prisma.$transaction(async (prisma: any) => {
         const updated = await prisma.swapRequest.update({
           where: { id: requestId },
           data: { 
@@ -1207,7 +1245,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         }
 
         if (acceptorAssignment) {
-          // Both have tasks on that day - swap them
           const updatedReqAssign = await prisma.assignment.update({
             where: { id: requesterAssignment.id },
             data: {
@@ -1233,7 +1270,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
             acceptorAssignment: updatedAccAssign
           };
         } else {
-          // Acceptor is free on that day - transfer only
           const updatedReqAssign = await prisma.assignment.update({
             where: { id: requesterAssignment.id },
             data: {
@@ -1258,31 +1294,185 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       acceptorNewAssignments = transactionResult.acceptorNew;
       requesterNewAssignments = transactionResult.requesterNew;
       
-      await SocketService.emitAssignmentUpdated(
-        transactionResult.requesterAssignment.id,
-        requesterId,
-        groupId
-      );
+      await SocketService.emitAssignmentUpdated(transactionResult.requesterAssignment.id, requesterId, groupId);
       
       if (transactionResult.acceptorAssignment) {
-        await SocketService.emitAssignmentUpdated(
-          transactionResult.acceptorAssignment.id,
-          userId,
-          groupId
-        );
+        await SocketService.emitAssignmentUpdated(transactionResult.acceptorAssignment.id, userId, groupId);
       } else {
-        await SocketService.emitAssignmentUpdated(
-          transactionResult.requesterAssignment.id,
-          userId,
-          groupId
-        );
+        await SocketService.emitAssignmentUpdated(transactionResult.requesterAssignment.id, userId, groupId);
+      }
+    }
+    // ========== CROSS-FREQUENCY SWAP (Daily ↔ Weekly) ==========
+    else if (swapRequest.scope === 'cross' && swapRequest.targetTaskId) {
+      console.log(`🔄 Processing CROSS-FREQUENCY swap: Daily ↔ Weekly`);
+      
+      const sourceTask = task;
+      const targetTask = await prisma.task.findUnique({
+        where: { id: swapRequest.targetTaskId },
+        include: { timeSlots: true }
+      });
+
+      if (!targetTask) {
+        return { success: false, message: "Target task not found" };
       }
 
-    } else {
-      // ========== WEEK SWAP = TWO-WAY EXCHANGE ==========
+      const sourceIsDaily = sourceTask.executionFrequency === 'DAILY';
+      const targetIsDaily = targetTask.executionFrequency === 'DAILY';
+
+      console.log(`📊 Cross swap: ${sourceTask.title} (${sourceTask.executionFrequency}) ↔ ${targetTask.title} (${targetTask.executionFrequency})`);
+
+      // Update swap request status
+      updatedRequest = await prisma.swapRequest.update({
+        where: { id: requestId },
+        data: { 
+          status: "ACCEPTED", 
+          targetUserId: userId, 
+          acceptedBy: userId, 
+          acceptedAt: new Date() 
+        }
+      });
+
+      // Delete existing assignments for both tasks this week
+      await prisma.assignment.deleteMany({
+        where: {
+          OR: [
+            { taskId: sourceTask.id, rotationWeek: currentWeek },
+            { taskId: targetTask.id, rotationWeek: currentWeek }
+          ]
+        }
+      });
+
+      // CASE 1: Daily → Weekly (source is Daily, target is Weekly)
+      if (sourceIsDaily && !targetIsDaily) {
+        const weeklyDays = getWeeklyDays(targetTask);
+        console.log(`   Daily → Weekly swap. Weekly task runs on: ${weeklyDays.join(', ')}`);
+        
+        // Acceptor gets Weekly task (only on specific days)
+        for (const day of weeklyDays) {
+          const dueDate = calculateNextDateForDay(day);
+          const timeSlot = targetTask.timeSlots[0]?.id;
+          
+          const newAssign = await prisma.assignment.create({
+            data: {
+              taskId: targetTask.id,
+              userId: userId,
+              dueDate: dueDate,
+              points: targetTask.points,
+              rotationWeek: currentWeek,
+              assignmentDay: day as DayOfWeek,
+              timeSlotId: timeSlot,
+              notes: `[CROSS SWAP: Daily→Weekly from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName}]`
+            }
+          });
+          acceptorNewAssignments.push(newAssign);
+          console.log(`   ✅ Acceptor gets ${day} assignment for Weekly task`);
+        }
+        
+        // Requester gets Daily task (all 7 days)
+        for (const day of allDays) {
+          const dueDate = calculateNextDateForDay(day);
+          const timeSlot = sourceTask.timeSlots[0]?.id;
+          
+          const newAssign = await prisma.assignment.create({
+            data: {
+              taskId: sourceTask.id,
+              userId: requesterId,
+              dueDate: dueDate,
+              points: sourceTask.points,
+              rotationWeek: currentWeek,
+              assignmentDay: day as DayOfWeek,
+              timeSlotId: timeSlot,
+              notes: `[CROSS SWAP: Daily→Weekly from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName}]`
+            }
+          });
+          requesterNewAssignments.push(newAssign);
+          console.log(`   ✅ Requester gets ${day} assignment for Daily task`);
+        }
+        
+        transferredCount = acceptorNewAssignments.length + requesterNewAssignments.length;
+        
+        // Update currentAssignee on tasks
+        await prisma.task.update({
+          where: { id: sourceTask.id },
+          data: { currentAssignee: requesterId, lastAssignedAt: new Date() }
+        });
+        await prisma.task.update({
+          where: { id: targetTask.id },
+          data: { currentAssignee: userId, lastAssignedAt: new Date() }
+        });
+      }
+      // CASE 2: Weekly → Daily (source is Weekly, target is Daily)
+      else if (!sourceIsDaily && targetIsDaily) {
+        const weeklyDays = getWeeklyDays(sourceTask);
+        console.log(`   Weekly → Daily swap. Weekly task runs on: ${weeklyDays.join(', ')}`);
+        
+        // Acceptor gets Daily task (all 7 days)
+        for (const day of allDays) {
+          const dueDate = calculateNextDateForDay(day);
+          const timeSlot = targetTask.timeSlots[0]?.id;
+          
+          const newAssign = await prisma.assignment.create({
+            data: {
+              taskId: targetTask.id,
+              userId: userId,
+              dueDate: dueDate,
+              points: targetTask.points,
+              rotationWeek: currentWeek,
+              assignmentDay: day as DayOfWeek,
+              timeSlotId: timeSlot,
+              notes: `[CROSS SWAP: Weekly→Daily from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName}]`
+            }
+          });
+          acceptorNewAssignments.push(newAssign);
+          console.log(`   ✅ Acceptor gets ${day} assignment for Daily task`);
+        }
+        
+        // Requester gets Weekly task (only on specific days)
+        for (const day of weeklyDays) {
+          const dueDate = calculateNextDateForDay(day);
+          const timeSlot = sourceTask.timeSlots[0]?.id;
+          
+          const newAssign = await prisma.assignment.create({
+            data: {
+              taskId: sourceTask.id,
+              userId: requesterId,
+              dueDate: dueDate,
+              points: sourceTask.points,
+              rotationWeek: currentWeek,
+              assignmentDay: day as DayOfWeek,
+              timeSlotId: timeSlot,
+              notes: `[CROSS SWAP: Weekly→Daily from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName}]`
+            }
+          });
+          requesterNewAssignments.push(newAssign);
+          console.log(`   ✅ Requester gets ${day} assignment for Weekly task`);
+        }
+        
+        transferredCount = acceptorNewAssignments.length + requesterNewAssignments.length;
+        
+        // Update currentAssignee on tasks
+        await prisma.task.update({
+          where: { id: sourceTask.id },
+          data: { currentAssignee: requesterId, lastAssignedAt: new Date() }
+        });
+        await prisma.task.update({
+          where: { id: targetTask.id },
+          data: { currentAssignee: userId, lastAssignedAt: new Date() }
+        });
+      }
+      
+      // Emit socket events for all new assignments
+      for (const assign of acceptorNewAssignments) {
+        await SocketService.emitAssignmentCreated(assign, userId, groupId);
+      }
+      for (const assign of requesterNewAssignments) {
+        await SocketService.emitAssignmentCreated(assign, requesterId, groupId);
+      }
+    }
+    // ========== WEEK SWAP (Same Frequency) ==========
+    else {
       console.log(`🔄 Processing WEEK swap - TWO-WAY EXCHANGE of ALL tasks between users`);
 
-      // ✅✅✅ CRITICAL FIX: Update Task.currentAssignee FIRST ✅✅✅
       const requesterIdForTasks = swapRequest.requestedBy;
       const acceptorIdForTasks = userId;
       
@@ -1309,30 +1499,30 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       console.log(`   Acceptor (${acceptorDetails?.fullName}) has ${acceptorTasks.length} tasks`);
       
       // Swap currentAssignee in Task table
-      for (const task of requesterTasks) {
+      for (const taskItem of requesterTasks) {
         await prisma.task.update({
-          where: { id: task.id },
+          where: { id: taskItem.id },
           data: { 
             currentAssignee: acceptorIdForTasks,
             lastAssignedAt: new Date()
           }
         });
-        console.log(`   ✅ Task "${task.title}" → now assigned to ${acceptorDetails?.fullName}`);
+        console.log(`   ✅ Task "${taskItem.title}" → now assigned to ${acceptorDetails?.fullName}`);
       }
       
-      for (const task of acceptorTasks) {
+      for (const taskItem of acceptorTasks) {
         await prisma.task.update({
-          where: { id: task.id },
+          where: { id: taskItem.id },
           data: { 
             currentAssignee: requesterIdForTasks,
             lastAssignedAt: new Date()
           }
         });
-        console.log(`   ✅ Task "${task.title}" → now assigned to ${requesterDetails?.fullName}`);
+        console.log(`   ✅ Task "${taskItem.title}" → now assigned to ${requesterDetails?.fullName}`);
       }
       
       // Now update assignments
-      const transactionResult = await prisma.$transaction(async (prisma:any) => {
+      const transactionResult = await prisma.$transaction(async (prisma: any) => {
         const updated = await prisma.swapRequest.update({
           where: { id: requestId },
           data: { 
@@ -1343,7 +1533,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           }
         });
 
-        // Get ALL assignments for BOTH users across ALL tasks in this group
         const requesterAllAssignments = await prisma.assignment.findMany({
           where: {
             userId: requesterIdForTasks,
@@ -1367,7 +1556,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         const updatedRequesterAssignments: any[] = [];
         const updatedAcceptorAssignments: any[] = [];
 
-        // Move ALL of requester's assignments to acceptor
         for (const assign of requesterAllAssignments) {
           const updated = await prisma.assignment.update({
             where: { id: assign.id },
@@ -1381,7 +1569,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
           updatedAcceptorAssignments.push(updated);
         }
 
-        // Move ALL of acceptor's assignments to requester
         for (const assign of acceptorAllAssignments) {
           const updated = await prisma.assignment.update({
             where: { id: assign.id },
@@ -1410,44 +1597,18 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       requesterNewAssignments = transactionResult.requesterNewAssignments;
       acceptorNewAssignments = transactionResult.acceptorNewAssignments;
 
-      // Emit socket events for all updated assignments
-      for (const assignment of acceptorNewAssignments) {
-        await SocketService.emitAssignmentUpdated(
-          assignment.id,
-          userId,
-          groupId
-        );
+      for (const assign of acceptorNewAssignments) {
+        await SocketService.emitAssignmentUpdated(assign.id, userId, groupId);
+      }
+      for (const assign of requesterNewAssignments) {
+        await SocketService.emitAssignmentUpdated(assign.id, requesterIdForTasks, groupId);
       }
       
-      for (const assignment of requesterNewAssignments) {
-        await SocketService.emitAssignmentUpdated(
-          assignment.id,
-          requesterIdForTasks,
-          groupId
-        );
+      for (const taskItem of requesterTasks) {
+        await SocketService.emitTaskAssigned(taskItem.id, taskItem.title, acceptorIdForTasks, userId, groupId, new Date());
       }
-      
-      // ✅ Also emit task updated events for the Task table changes
-      for (const task of requesterTasks) {
-        await SocketService.emitTaskAssigned(
-          task.id, 
-          task.title, 
-          acceptorIdForTasks, 
-          userId, 
-          groupId, 
-          new Date()
-        );
-      }
-      
-      for (const task of acceptorTasks) {
-        await SocketService.emitTaskAssigned(
-          task.id, 
-          task.title, 
-          requesterIdForTasks, 
-          userId, 
-          groupId, 
-          new Date()
-        );
+      for (const taskItem of acceptorTasks) {
+        await SocketService.emitTaskAssigned(taskItem.id, taskItem.title, requesterIdForTasks, userId, groupId, new Date());
       }
     }
 
@@ -1458,6 +1619,8 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       } else {
         successMessage = `Swap completed! You've taken over ${swapRequest.selectedDay}'s assignment from ${requesterDetails?.fullName}.`;
       }
+    } else if (swapRequest.scope === 'cross') {
+      successMessage = `Cross-frequency swap completed! You and ${requesterDetails?.fullName} have exchanged tasks between ${task.executionFrequency === 'DAILY' ? 'Daily' : 'Weekly'} and ${swapRequest.targetTaskId ? 'the other task' : 'different frequency tasks'}.`;
     } else {
       successMessage = `Week swap completed! You and ${requesterDetails?.fullName} have EXCHANGED ALL tasks for week ${currentWeek}. (${transferredCount} assignments swapped)`;
     }
@@ -1465,7 +1628,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     await UserNotificationService.createNotification({
       userId: swapRequest.requestedBy,
       type: "SWAP_ACCEPTED",
-      title: swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed",
+      title: swapRequest.scope === 'cross' ? "✅ Cross-Frequency Swap Completed" : (swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed"),
       message: successMessage,
       data: {
         swapRequestId: requestId,
@@ -1483,7 +1646,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     await UserNotificationService.createNotification({
       userId,
       type: "SWAP_COMPLETED",
-      title: swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed",
+      title: swapRequest.scope === 'cross' ? "✅ Cross-Frequency Swap Completed" : (swapRequest.scope === 'week' ? "✅ Week Swap Completed" : "✅ Day Swap Completed"),
       message: successMessage,
       data: {
         swapRequestId: requestId,
@@ -1508,7 +1671,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       acceptorDetails?.fullName || 'User',
       groupId,
       'ACCEPTED',
-      swapRequest.scope === 'day' ? 'day' : 'week',
+      swapRequest.scope === 'day' ? 'day' : (swapRequest.scope === 'cross' ? 'cross' : 'week'),
       swapRequest.selectedDay || undefined
     );
 
@@ -1571,7 +1734,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     };
   }
 }
-
 
 
   // GET: Get swap requests created by a user
@@ -2296,7 +2458,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       const updatedRequest = await prisma.swapRequest.update({
         where: { id: requestId },
         data: { status: "CANCELLED" }
-      });
+      }); 
 
       if (swapRequest.targetUserId) {
         await UserNotificationService.createNotification({
@@ -2425,4 +2587,4 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       return { success: false, message: error.message };
     }
   }
-}
+} 
