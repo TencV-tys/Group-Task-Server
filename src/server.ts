@@ -159,7 +159,7 @@ svr.use('/api/group', lightThrottle);
 svr.use('/api/home', lightThrottle);
 svr.use('/api/assignments', lightThrottle);
 svr.use('/api/group-activity', lightThrottle);
- svr.use('/api/swap-requests', lightThrottle); // ← COMMENTED OUT to fix batch endpoints
+ svr.use('/api/swap-requests', lightThrottle); 
 
 // Admin throttles
 svr.use('/api/auth/admins/login', loginThrottle);
