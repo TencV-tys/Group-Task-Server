@@ -1052,7 +1052,7 @@ export class SwapRequestService {
   }
 
  
- // services/swapRequest.services.ts - COMPLETE FIXED acceptSwapRequest with cross-frequency support
+ // services/swapRequest.services.ts - COMPLETE FIXED acceptSwapRequest with due date preservation
 
 static async acceptSwapRequest(requestId: string, userId: string) {
   try {
@@ -1159,8 +1159,8 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     let requesterNewAssignments: any[] = [];
     let acceptorNewAssignments: any[] = [];
 
-    // Helper function to calculate next date for a specific day
-    const calculateNextDateForDay = (day: string): Date => {
+    // ✅ FIXED: Helper function to calculate due date preserving original time slot
+    const calculateNextDateForDay = (day: string, timeSlot?: any): Date => {
       const now = new Date();
       const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
       const targetIndex = dayNames.indexOf(day);
@@ -1171,7 +1171,14 @@ static async acceptSwapRequest(requestId: string, userId: string) {
       
       const dueDate = new Date(now);
       dueDate.setDate(now.getDate() + daysToAdd);
-      dueDate.setHours(18, 0, 0, 0);
+      
+      // ✅ PRESERVE ORIGINAL TIME FROM TIME SLOT
+      if (timeSlot && timeSlot.startTime) {
+        const [hours, minutes] = timeSlot.startTime.split(':').map(Number);
+        dueDate.setHours(hours || 0, minutes || 0, 0, 0);
+      } else {
+        dueDate.setHours(18, 0, 0, 0);
+      }
       
       return dueDate;
     };
@@ -1194,6 +1201,18 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     };
 
     const allDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
+    // Get source assignments for time slot preservation
+    const sourceAssignments = await prisma.assignment.findMany({
+      where: {
+        taskId: task.id,
+        userId: requesterId,
+        rotationWeek: currentWeek
+      },
+      include: {
+        timeSlot: true
+      }
+    });
 
     // ========== DAY SWAP ==========
     if (swapRequest.scope === 'day' && swapRequest.selectedDay) {
@@ -1222,7 +1241,8 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         }
 
         const requesterAssignment = await prisma.assignment.findFirst({
-          where: requesterWhere
+          where: requesterWhere,
+          include: { timeSlot: true }
         });
 
         const acceptorWhere: any = {
@@ -1237,7 +1257,8 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         }
 
         const acceptorAssignment = await prisma.assignment.findFirst({
-          where: acceptorWhere
+          where: acceptorWhere,
+          include: { timeSlot: true }
         });
 
         if (!requesterAssignment) {
@@ -1349,8 +1370,12 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         
         // Acceptor gets Weekly task (only on specific days)
         for (const day of weeklyDays) {
-          const dueDate = calculateNextDateForDay(day);
-          const timeSlot = targetTask.timeSlots[0]?.id;
+          // ✅ Find matching daily assignment to preserve its time
+          const matchingDaily = sourceAssignments.find(a => a.assignmentDay === day);
+          const timeSlotToUse = matchingDaily?.timeSlot || targetTask.timeSlots[0];
+          
+          const dueDate = calculateNextDateForDay(day, timeSlotToUse);
+          const timeSlotId = timeSlotToUse?.id;
           
           const newAssign = await prisma.assignment.create({
             data: {
@@ -1360,18 +1385,22 @@ static async acceptSwapRequest(requestId: string, userId: string) {
               points: targetTask.points,
               rotationWeek: currentWeek,
               assignmentDay: day as DayOfWeek,
-              timeSlotId: timeSlot,
+              timeSlotId: timeSlotId,
               notes: `[CROSS SWAP: Daily→Weekly from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName}]`
             }
           });
           acceptorNewAssignments.push(newAssign);
-          console.log(`   ✅ Acceptor gets ${day} assignment for Weekly task`);
+          console.log(`   ✅ Acceptor gets ${day} assignment for Weekly task at ${timeSlotToUse?.startTime || '18:00'}`);
         }
         
         // Requester gets Daily task (all 7 days)
         for (const day of allDays) {
-          const dueDate = calculateNextDateForDay(day);
-          const timeSlot = sourceTask.timeSlots[0]?.id;
+          // ✅ Find original daily assignment for this day to preserve its time
+          const originalDaily = sourceAssignments.find(a => a.assignmentDay === day);
+          const timeSlotToUse = originalDaily?.timeSlot || sourceTask.timeSlots[0];
+          
+          const dueDate = calculateNextDateForDay(day, timeSlotToUse);
+          const timeSlotId = timeSlotToUse?.id;
           
           const newAssign = await prisma.assignment.create({
             data: {
@@ -1381,12 +1410,12 @@ static async acceptSwapRequest(requestId: string, userId: string) {
               points: sourceTask.points,
               rotationWeek: currentWeek,
               assignmentDay: day as DayOfWeek,
-              timeSlotId: timeSlot,
+              timeSlotId: timeSlotId,
               notes: `[CROSS SWAP: Daily→Weekly from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName}]`
             }
           });
           requesterNewAssignments.push(newAssign);
-          console.log(`   ✅ Requester gets ${day} assignment for Daily task`);
+          console.log(`   ✅ Requester gets ${day} assignment for Daily task at ${timeSlotToUse?.startTime || '18:00'}`);
         }
         
         transferredCount = acceptorNewAssignments.length + requesterNewAssignments.length;
@@ -1408,8 +1437,12 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         
         // Acceptor gets Daily task (all 7 days)
         for (const day of allDays) {
-          const dueDate = calculateNextDateForDay(day);
-          const timeSlot = targetTask.timeSlots[0]?.id;
+          // ✅ Find matching weekly assignment for this day to preserve its time
+          const matchingWeekly = sourceAssignments.find(a => a.assignmentDay === day);
+          const timeSlotToUse = matchingWeekly?.timeSlot || targetTask.timeSlots[0];
+          
+          const dueDate = calculateNextDateForDay(day, timeSlotToUse);
+          const timeSlotId = timeSlotToUse?.id;
           
           const newAssign = await prisma.assignment.create({
             data: {
@@ -1419,18 +1452,22 @@ static async acceptSwapRequest(requestId: string, userId: string) {
               points: targetTask.points,
               rotationWeek: currentWeek,
               assignmentDay: day as DayOfWeek,
-              timeSlotId: timeSlot,
+              timeSlotId: timeSlotId,
               notes: `[CROSS SWAP: Weekly→Daily from ${requesterDetails?.fullName} to ${acceptorDetails?.fullName}]`
             }
           });
           acceptorNewAssignments.push(newAssign);
-          console.log(`   ✅ Acceptor gets ${day} assignment for Daily task`);
+          console.log(`   ✅ Acceptor gets ${day} assignment for Daily task at ${timeSlotToUse?.startTime || '18:00'}`);
         }
         
         // Requester gets Weekly task (only on specific days)
         for (const day of weeklyDays) {
-          const dueDate = calculateNextDateForDay(day);
-          const timeSlot = sourceTask.timeSlots[0]?.id;
+          // ✅ Preserve original weekly assignment time
+          const originalWeekly = sourceAssignments.find(a => a.assignmentDay === day);
+          const timeSlotToUse = originalWeekly?.timeSlot || sourceTask.timeSlots[0];
+          
+          const dueDate = calculateNextDateForDay(day, timeSlotToUse);
+          const timeSlotId = timeSlotToUse?.id;
           
           const newAssign = await prisma.assignment.create({
             data: {
@@ -1440,12 +1477,12 @@ static async acceptSwapRequest(requestId: string, userId: string) {
               points: sourceTask.points,
               rotationWeek: currentWeek,
               assignmentDay: day as DayOfWeek,
-              timeSlotId: timeSlot,
+              timeSlotId: timeSlotId,
               notes: `[CROSS SWAP: Weekly→Daily from ${acceptorDetails?.fullName} to ${requesterDetails?.fullName}]`
             }
           });
           requesterNewAssignments.push(newAssign);
-          console.log(`   ✅ Requester gets ${day} assignment for Weekly task`);
+          console.log(`   ✅ Requester gets ${day} assignment for Weekly task at ${timeSlotToUse?.startTime || '18:00'}`);
         }
         
         transferredCount = acceptorNewAssignments.length + requesterNewAssignments.length;
@@ -1620,7 +1657,7 @@ static async acceptSwapRequest(requestId: string, userId: string) {
         successMessage = `Swap completed! You've taken over ${swapRequest.selectedDay}'s assignment from ${requesterDetails?.fullName}.`;
       }
     } else if (swapRequest.scope === 'cross') {
-      successMessage = `Cross-frequency swap completed! You and ${requesterDetails?.fullName} have exchanged tasks between ${task.executionFrequency === 'DAILY' ? 'Daily' : 'Weekly'} and ${swapRequest.targetTaskId ? 'the other task' : 'different frequency tasks'}.`;
+      successMessage = `Cross-frequency swap completed! You and ${requesterDetails?.fullName} have exchanged tasks between ${task.executionFrequency === 'DAILY' ? 'Daily' : 'Weekly'} and the target task.`;
     } else {
       successMessage = `Week swap completed! You and ${requesterDetails?.fullName} have EXCHANGED ALL tasks for week ${currentWeek}. (${transferredCount} assignments swapped)`;
     }
@@ -1734,7 +1771,6 @@ static async acceptSwapRequest(requestId: string, userId: string) {
     };
   }
 }
-
 
   // GET: Get swap requests created by a user
   static async getUserSwapRequests(
