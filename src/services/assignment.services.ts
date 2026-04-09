@@ -831,139 +831,141 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   return false;
 }
 
-  // ========== SEND UPCOMING TASK REMINDERS ==========
-  static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
-    try {
-      const now = new Date();
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
-      const currentInMinutes = currentHour * 60 + currentMinute;
+ 
+static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
+  try {
+    const now = new Date();
+    
+    // ✅ Convert to PHT for comparison since slot times are stored in PHT (UTC+8)
+    const phtOffset = 8 * 60;
+    const phtNow = new Date(now.getTime() + phtOffset * 60000);
+    const currentHour = phtNow.getUTCHours();
+    const currentMinute = phtNow.getUTCMinutes();
+    const currentInMinutes = currentHour * 60 + currentMinute;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(today.getUTCDate() + 1);
 
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          completed: false,
-          dueDate: {
-            gte: today,
-            lt: tomorrow
-          }
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        completed: false,
+        dueDate: {
+          gte: today,
+          lt: tomorrow
+        }
+      },
+      include: {
+        user: true,
+        task: { 
+          include: { 
+            group: true 
+          } 
         },
-        include: {
-          user: true,
-          task: { 
-            include: { 
-              group: true 
-            } 
-          },
-          timeSlot: true
-        }
-      });
+        timeSlot: true
+      }
+    });
 
-      const validAssignments = assignments.filter(a => a.task !== null);
-      let remindersSent = 0;
+    const validAssignments = assignments.filter(a => a.task !== null);
+    let remindersSent = 0;
 
-      for (const assignment of validAssignments) {
-        if (!assignment.timeSlot) continue;
+    for (const assignment of validAssignments) {
+      if (!assignment.timeSlot) continue;
 
-        const startParts = assignment.timeSlot.startTime.split(':');
-        const startHourStr = startParts[0] || '0';
-        const startMinuteStr = startParts[1] || '0';
-        
-        const startHour = parseInt(startHourStr, 10);
-        const startMinute = parseInt(startMinuteStr, 10);
-        
-        if (isNaN(startHour) || isNaN(startMinute)) continue;
-        
-        const startInMinutes = startHour * 60 + startMinute;
-        const timeUntilStart = startInMinutes - currentInMinutes;
-        
-        if (timeUntilStart > 0 && timeUntilStart <= 60) {
-          const existingReminder = await prisma.userNotification.findFirst({
-            where: {
-              userId: assignment.userId,
-              type: "TASK_REMINDER",
-              createdAt: { gte: new Date(Date.now() - 30 * 60000) }
+      // ✅ Slot times are in PHT so compare directly with PHT current time
+      const startParts = assignment.timeSlot.startTime.split(':');
+      const startHour = parseInt(startParts[0] || '0', 10);
+      const startMinute = parseInt(startParts[1] || '0', 10);
+      
+      if (isNaN(startHour) || isNaN(startMinute)) continue;
+      
+      const startInMinutes = startHour * 60 + startMinute;
+      const timeUntilStart = startInMinutes - currentInMinutes;
+      
+      // Send reminder if task starts within 60 minutes
+      if (timeUntilStart > 0 && timeUntilStart <= 60) {
+        const existingReminder = await prisma.userNotification.findFirst({
+          where: {
+            userId: assignment.userId,
+            type: "TASK_REMINDER",
+            createdAt: { gte: new Date(Date.now() - 30 * 60000) }
+          }
+        });
+
+        if (!existingReminder) {
+          await UserNotificationService.createNotification({
+            userId: assignment.userId,
+            type: "TASK_REMINDER",
+            title: "⏰ Task Starting Soon",
+            message: `"${assignment.task!.title}" starts at ${assignment.timeSlot.startTime} (in ${timeUntilStart} minutes)`,
+            data: {
+              assignmentId: assignment.id,
+              taskId: assignment.task!.id,
+              taskTitle: assignment.task!.title,
+              groupId: assignment.task!.groupId,
+              groupName: assignment.task!.group?.name || 'Group',
+              startTime: assignment.timeSlot.startTime,
+              endTime: assignment.timeSlot.endTime,
+              minutesUntilStart: timeUntilStart,
+              dueDate: assignment.dueDate
             }
           });
-
-          if (!existingReminder) {
-            await UserNotificationService.createNotification({
-              userId: assignment.userId,
-              type: "TASK_REMINDER",
-              title: "⏰ Task Starting Soon",
-              message: `"${assignment.task!.title}" starts at ${assignment.timeSlot.startTime} (in ${timeUntilStart} minutes)`,
-              data: {
-                assignmentId: assignment.id,
-                taskId: assignment.task!.id,
-                taskTitle: assignment.task!.title,
-                groupId: assignment.task!.groupId,
-                groupName: assignment.task!.group?.name || 'Group',
-                startTime: assignment.timeSlot.startTime,
-                endTime: assignment.timeSlot.endTime,
-                minutesUntilStart: timeUntilStart,
-                dueDate: assignment.dueDate
-              }
-            });
-            remindersSent++;
-          }
-        }
-
-        const endParts = assignment.timeSlot.endTime.split(':');
-        const endHourStr = endParts[0] || '0';
-        const endMinuteStr = endParts[1] || '0';
-        
-        const endHour = parseInt(endHourStr, 10);
-        const endMinute = parseInt(endMinuteStr, 10);  
-        
-        if (isNaN(endHour) || isNaN(endMinute)) continue;
-        
-        const endInMinutes = endHour * 60 + endMinute;
-        const submissionStartInMinutes = endInMinutes - 30;
-        const graceEndInMinutes = endInMinutes + 30;
-
-        if (currentInMinutes >= submissionStartInMinutes && currentInMinutes <= graceEndInMinutes) {
-          const existingActive = await prisma.userNotification.findFirst({
-            where: {
-              userId: assignment.userId,
-              type: "TASK_ACTIVE",
-              createdAt: { gte: new Date(Date.now() - 15 * 60000) }
-            }
-          });
-
-          if (!existingActive) {
-            const timeLeft = graceEndInMinutes - currentInMinutes;
-            await UserNotificationService.createNotification({
-              userId: assignment.userId,
-              type: "TASK_ACTIVE",
-              title: "🔔 Ready to Submit",
-              message: `"${assignment.task!.title}" can now be submitted (${timeLeft} minutes left)`,
-              data: {
-                assignmentId: assignment.id,
-                taskId: assignment.task!.id,
-                taskTitle: assignment.task!.title,
-                groupId: assignment.task!.groupId,
-                groupName: assignment.task!.group?.name || 'Group',
-                endTime: assignment.timeSlot.endTime,
-                timeLeft,
-                dueDate: assignment.dueDate
-              }
-            });
-            remindersSent++;
-          }
+          remindersSent++;
         }
       }
 
-      return { success: true, remindersSent };
+      // ✅ Check submission window using PHT time
+      const endParts = assignment.timeSlot.endTime.split(':');
+      const endHour = parseInt(endParts[0] || '0', 10);
+      const endMinute = parseInt(endParts[1] || '0', 10);
       
-    } catch (error: any) {
-      console.error("AssignmentService.sendUpcomingTaskReminders error:", error);
-      return { success: false, remindersSent: 0, message: error.message };
+      if (isNaN(endHour) || isNaN(endMinute)) continue;
+      
+      const endInMinutes = endHour * 60 + endMinute;
+      const submissionStartInMinutes = endInMinutes - 0;  // opens AT end time
+      const graceEndInMinutes = endInMinutes + 30;        // closes 30 mins after end
+
+      if (currentInMinutes >= submissionStartInMinutes && currentInMinutes <= graceEndInMinutes) {
+        const existingActive = await prisma.userNotification.findFirst({
+          where: {
+            userId: assignment.userId,
+            type: "TASK_ACTIVE",
+            createdAt: { gte: new Date(Date.now() - 15 * 60000) }
+          }
+        });
+
+        if (!existingActive) {
+          const timeLeft = graceEndInMinutes - currentInMinutes;
+          await UserNotificationService.createNotification({
+            userId: assignment.userId,
+            type: "TASK_ACTIVE",
+            title: "🔔 Ready to Submit",
+            message: `"${assignment.task!.title}" can now be submitted (${timeLeft} minutes left)`,
+            data: {
+              assignmentId: assignment.id,
+              taskId: assignment.task!.id,
+              taskTitle: assignment.task!.title,
+              groupId: assignment.task!.groupId,
+              groupName: assignment.task!.group?.name || 'Group',
+              endTime: assignment.timeSlot.endTime,
+              timeLeft,
+              dueDate: assignment.dueDate
+            }
+          });
+          remindersSent++;
+        }
+      }
     }
+
+    return { success: true, remindersSent };
+    
+  } catch (error: any) {
+    console.error("AssignmentService.sendUpcomingTaskReminders error:", error);
+    return { success: false, remindersSent: 0, message: error.message };
   }
+}
+
   
 // In assignment.services.ts - FIXED getAssignmentDetails with UTC date conversion
 
