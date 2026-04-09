@@ -29,318 +29,323 @@ export class TimeHelpers {
   static readonly LATE_SUBMISSION_PENALTY = 0.5;
 
   // ========== UTC-BASED METHODS ==========
-
-  static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
-    const dueDate = new Date(assignment.dueDate);
-    const currentDate = currentTime;
+static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
+  const dueDate = new Date(assignment.dueDate);
+  const currentDate = currentTime;
+  
+  const isDueTodayUTC = 
+    dueDate.getUTCFullYear() === currentDate.getUTCFullYear() &&
+    dueDate.getUTCMonth() === currentDate.getUTCMonth() &&
+    dueDate.getUTCDate() === currentDate.getUTCDate();
+  
+  if (!isDueTodayUTC) {
+    return { 
+      allowed: false, 
+      reason: 'Not due date', 
+      dueDate: dueDate, 
+      currentDate: currentDate
+    };
+  }
+   
+  if (!assignment.timeSlot) {
+    return { 
+      allowed: true,
+      willBePenalized: false,
+      finalPoints: assignment.points,
+      originalPoints: assignment.points
+    };
+  }
+  
+  const endParts = assignment.timeSlot.endTime.split(':');
+  const endHour = parseInt(endParts[0] || '0', 10);
+  const endMinute = parseInt(endParts[1] || '0', 10);
+  
+  // ✅ PHT is UTC+8, so subtract 8 to convert slot time to UTC
+  const endTime = new Date(Date.UTC(
+    dueDate.getUTCFullYear(),
+    dueDate.getUTCMonth(),
+    dueDate.getUTCDate(),
+    endHour - 8,
+    endMinute, 0, 0
+  ));
+  
+  const submissionStart = endTime;
+  const onTimeEnd = new Date(endTime.getTime() + 25 * 60000);
+  const lateWindowEnd = new Date(endTime.getTime() + 30 * 60000);
+  const gracePeriodEnd = lateWindowEnd;
+  
+  const currentTimeMs = currentDate.getTime();
+  
+  console.log(`⏰ Time check (UTC):`, {
+    now: currentDate.toISOString(),
+    submissionStart: submissionStart.toISOString(),
+    onTimeEnd: onTimeEnd.toISOString(),
+    lateWindowEnd: lateWindowEnd.toISOString(),
+    endTime: endTime.toISOString()
+  });
+  
+  if (currentTimeMs < submissionStart.getTime()) {
+    const timeUntilStart = submissionStart.getTime() - currentTimeMs;
+    return { 
+      allowed: false, 
+      reason: 'Submission not open yet',
+      opensIn: Math.ceil(timeUntilStart / 60000),
+      opensAt: submissionStart,
+      submissionStart,
+      currentTime: currentDate, 
+      willBePenalized: false,
+      timeLeft: Math.ceil(timeUntilStart / 1000),
+      timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeUntilStart / 1000)),
+      activeSlot: null
+    };
+  }
+  
+  if (currentTimeMs <= onTimeEnd.getTime()) {
+    const timeLeft = onTimeEnd.getTime() - currentTimeMs;
+    return {  
+      allowed: true, 
+      timeLeft: Math.ceil(timeLeft / 1000),
+      timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
+      onTimeEnd,
+      currentTime: currentDate,
+      willBePenalized: false,
+      finalPoints: assignment.points,
+      originalPoints: assignment.points,
+      submissionStatus: 'on_time',
+      activeSlot: assignment.timeSlot
+    };
+  }
+  
+  if (currentTimeMs <= lateWindowEnd.getTime()) {
+    const timeLeft = lateWindowEnd.getTime() - currentTimeMs;
+    return { 
+      allowed: true, 
+      timeLeft: Math.ceil(timeLeft / 1000),
+      timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
+      onTimeEnd,
+      lateWindowEnd,
+      currentTime: currentDate,
+      willBePenalized: true,
+      finalPoints: Math.floor(assignment.points * (1 - TimeHelpers.LATE_SUBMISSION_PENALTY)),
+      originalPoints: assignment.points,
+      submissionStatus: 'late',
+      activeSlot: assignment.timeSlot
+    };
+  }
+  
+  return { 
+    allowed: false, 
+    reason: 'Submission window closed',
+    lateWindowEnd,
+    currentTime: currentDate,
+    willBePenalized: true,
+    originalPoints: assignment.points,
+    activeSlot: null
+  };
+}
+ 
+static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): boolean {
+  if (assignment.completed) return false;
+  
+  const dueDate = new Date(assignment.dueDate);
+  
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
+  
+  if (currentUTC < dueDateUTC) return false;
+  
+  let timeSlotsToCheck: any[] = [];
+  
+  if (assignment.timeSlot) {
+    timeSlotsToCheck = [assignment.timeSlot];
+  } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+    timeSlotsToCheck = assignment.task.timeSlots;
+  }
+  
+  if (timeSlotsToCheck.length === 0) {
+    return currentUTC > dueDateUTC;
+  }
+  
+  const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+  const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+  const remainingSlots = timeSlotsToCheck.filter((slot: any) => 
+    !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
+  );
+  
+  if (remainingSlots.length === 0) return false;
+  
+  for (const slot of remainingSlots) {
+    if (!slot) continue;
     
-    // ✅ Check if it's the due date using UTC
-    const isDueTodayUTC = 
-      dueDate.getUTCFullYear() === currentDate.getUTCFullYear() &&
-      dueDate.getUTCMonth() === currentDate.getUTCMonth() &&
-      dueDate.getUTCDate() === currentDate.getUTCDate();
-    
-    if (!isDueTodayUTC) {
-      return { 
-        allowed: false, 
-        reason: 'Not due date', 
-        dueDate: dueDate, 
-        currentDate: currentDate
-      };
-    }
-     
-    if (!assignment.timeSlot) {
-      return { 
-        allowed: true,
-        willBePenalized: false,
-        finalPoints: assignment.points,
-        originalPoints: assignment.points
-      };
-    }
-    
-    const endParts = assignment.timeSlot.endTime.split(':');
+    const endParts = slot.endTime.split(':');
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Use UTC for time calculations
+    // ✅ Convert PHT to UTC
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour, endMinute, 0, 0
+      endHour - 8, endMinute, 0, 0
     ));
+    const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
-    const submissionStart = endTime;
-    const onTimeEnd = new Date(endTime.getTime() + 25 * 60000);
-    const lateWindowEnd = new Date(endTime.getTime() + 30 * 60000);
-    const gracePeriodEnd = lateWindowEnd;
-    
-    const currentTimeMs = currentDate.getTime();
-    
-    console.log(`⏰ Time check (UTC):`, {
-      now: currentDate.toISOString(),
-      submissionStart: submissionStart.toISOString(),
-      onTimeEnd: onTimeEnd.toISOString(),
-      lateWindowEnd: lateWindowEnd.toISOString(),
-      endTime: endTime.toISOString()
-    });
-    
-    if (currentTimeMs < submissionStart.getTime()) {
-      const timeUntilStart = submissionStart.getTime() - currentTimeMs;
-      return { 
-        allowed: false, 
-        reason: 'Submission not open yet',
-        opensIn: Math.ceil(timeUntilStart / 60000),
-        opensAt: submissionStart,
-        submissionStart,
-        currentTime: currentDate, 
-        willBePenalized: false,
-        activeSlot: null
-      };
+    if (currentTime <= gracePeriodEnd) {
+      return false;
     }
-    
-    if (currentTimeMs <= onTimeEnd.getTime()) {
-      const timeLeft = onTimeEnd.getTime() - currentTimeMs;
-      return {  
-        allowed: true, 
-        timeLeft: Math.ceil(timeLeft / 1000),
-        timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
-        onTimeEnd,
-        currentTime: currentDate,
-        willBePenalized: false,
-        finalPoints: assignment.points,
-        originalPoints: assignment.points,
-        submissionStatus: 'on_time',
-        activeSlot: assignment.timeSlot
-      };
-    }
-    
-    if (currentTimeMs <= lateWindowEnd.getTime()) {
-      const timeLeft = lateWindowEnd.getTime() - currentTimeMs;
-      return { 
-        allowed: true, 
-        timeLeft: Math.ceil(timeLeft / 1000),
-        timeLeftText: TimeHelpers.getTimeLeftText(Math.ceil(timeLeft / 1000)),
-        onTimeEnd,
-        lateWindowEnd,
-        currentTime: currentDate,
-        willBePenalized: true,
-        finalPoints: Math.floor(assignment.points * (1 - TimeHelpers.LATE_SUBMISSION_PENALTY)),
-        originalPoints: assignment.points,
-        submissionStatus: 'late',
-        activeSlot: assignment.timeSlot
-      };
-    }
-    
-    return { 
-      allowed: false, 
-      reason: 'Submission window closed',
-      lateWindowEnd,
-      currentTime: currentDate,
-      willBePenalized: true,
-      originalPoints: assignment.points,
-      activeSlot: null
-    };
   }
+  
+  return true;
+}
 
-  static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): boolean {
-    if (assignment.completed) return false;
+static getNeglectedTimeSlots(assignment: any, currentTime: Date = new Date()): any[] {
+  if (assignment.completed) return [];
+  
+  const dueDate = new Date(assignment.dueDate);
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
+  
+  if (currentUTC < dueDateUTC) return [];
+  
+  let timeSlotsToCheck: any[] = [];
+  
+  if (assignment.timeSlot) {
+    timeSlotsToCheck = [assignment.timeSlot];
+  } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+    timeSlotsToCheck = assignment.task.timeSlots;
+  }
+  
+  if (timeSlotsToCheck.length === 0) return [];
+  
+  const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+  const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+  const neglectedSlots: any[] = [];
+  
+  for (const slot of timeSlotsToCheck) {
+    if (completedSlotIds.includes(slot.id) || missedSlotIds.includes(slot.id)) continue;
     
-    const dueDate = new Date(assignment.dueDate);
+    const endParts = slot.endTime.split(':');
+    const endHour = parseInt(endParts[0] || '0', 10);
+    const endMinute = parseInt(endParts[1] || '0', 10);
     
-    const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
-    const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
+    // ✅ Convert PHT to UTC
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour - 8, endMinute, 0, 0
+    ));
+    const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
-    if (currentUTC < dueDateUTC) return false;
-    
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
+    if (currentTime > gracePeriodEnd) {
+      neglectedSlots.push({
+        ...slot,
+        neglectedAt: new Date(),
+        pointsLost: slot.points || assignment.points
+      });
     }
-    
-    if (timeSlotsToCheck.length === 0) {
-      return currentUTC > dueDateUTC;
-    }
-    
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
-    const remainingSlots = timeSlotsToCheck.filter((slot: any) => 
-      !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
-    );
-    
-    if (remainingSlots.length === 0) return false;
-    
-    for (const slot of remainingSlots) {
-      if (!slot) continue;
-      
-      const endParts = slot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(Date.UTC(
-        dueDate.getUTCFullYear(),
-        dueDate.getUTCMonth(),
-        dueDate.getUTCDate(),
-        endHour, endMinute, 0, 0
-      ));
-      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
-      
-      if (currentTime <= gracePeriodEnd) {
-        return false;
-      }
-    }
-    
+  }
+  
+  return neglectedSlots;
+}
+
+static hasAvailableTimeSlot(assignment: any, currentTime: Date = new Date()): boolean {
+  const dueDate = new Date(assignment.dueDate);
+  
+  const isDueToday = 
+    dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
+    dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
+    dueDate.getUTCDate() === currentTime.getUTCDate();
+  
+  if (!isDueToday) return false;
+  
+  let timeSlotsToCheck: any[] = [];
+  
+  if (assignment.timeSlot) {
+    timeSlotsToCheck = [assignment.timeSlot];
+  } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+    timeSlotsToCheck = assignment.task.timeSlots;
+  } else {
     return true;
   }
   
-  static getNeglectedTimeSlots(assignment: any, currentTime: Date = new Date()): any[] {
-    if (assignment.completed) return [];
-    
-    const dueDate = new Date(assignment.dueDate);
-    const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
-    const currentUTC = Date.UTC(currentTime.getUTCFullYear(), currentTime.getUTCMonth(), currentTime.getUTCDate());
-    
-    if (currentUTC < dueDateUTC) return [];
-    
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
-    }
-    
-    if (timeSlotsToCheck.length === 0) return [];
-    
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
-    const neglectedSlots: any[] = [];
-    
-    for (const slot of timeSlotsToCheck) {
-      if (completedSlotIds.includes(slot.id) || missedSlotIds.includes(slot.id)) continue;
-      
-      const endParts = slot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(Date.UTC(
-        dueDate.getUTCFullYear(),
-        dueDate.getUTCMonth(),
-        dueDate.getUTCDate(),
-        endHour, endMinute, 0, 0
-      ));
-      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
-      
-      if (currentTime > gracePeriodEnd) {
-        neglectedSlots.push({
-          ...slot,
-          neglectedAt: new Date(),
-          pointsLost: slot.points || assignment.points
-        });
-      }
-    }
-    
-    return neglectedSlots;
-  }
+  const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+  const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
   
-  static hasAvailableTimeSlot(assignment: any, currentTime: Date = new Date()): boolean {
-    const dueDate = new Date(assignment.dueDate);
+  if (availableSlots.length === 0) return false;
+  
+  for (const slot of availableSlots) {
+    if (!slot) continue;
     
-    const isDueToday = 
-      dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
-      dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
-      dueDate.getUTCDate() === currentTime.getUTCDate();
+    const endParts = slot.endTime.split(':');
+    const endHour = parseInt(endParts[0] || '0', 10);
+    const endMinute = parseInt(endParts[1] || '0', 10);
     
-    if (!isDueToday) return false;
+    // ✅ Convert PHT to UTC
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour - 8, endMinute, 0, 0
+    ));
+    const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
-    } else {
+    if (currentTime <= gracePeriodEnd) {
       return true;
     }
-    
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
-    
-    if (availableSlots.length === 0) return false;
-    
-    for (const slot of availableSlots) {
-      if (!slot) continue;
-      
-      const endParts = slot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(Date.UTC(
-        dueDate.getUTCFullYear(),
-        dueDate.getUTCMonth(),
-        dueDate.getUTCDate(),
-        endHour, endMinute, 0, 0
-      ));
-      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
-      
-      if (currentTime <= gracePeriodEnd) {
-        return true;
-      }
-    }
-    
-    return false;
   }
   
-  static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
-    const dueDate = new Date(assignment.dueDate);
-    
-    const isDueToday = 
-      dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
-      dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
-      dueDate.getUTCDate() === currentTime.getUTCDate();
-    
-    if (!isDueToday) return null;
-    
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
-    } else {
-      return null;
-    }
-    
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
-    
-    for (const slot of availableSlots) {
-      if (!slot) continue;
-      
-      const endParts = slot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(Date.UTC(
-        dueDate.getUTCFullYear(),
-        dueDate.getUTCMonth(),
-        dueDate.getUTCDate(),
-        endHour, endMinute, 0, 0
-      ));
-      
-      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-      const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
-      
-      if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
-        return slot;
-      }
-    }
-    
+  return false;
+}
+  
+static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
+  const dueDate = new Date(assignment.dueDate);
+  
+  const isDueToday = 
+    dueDate.getUTCFullYear() === currentTime.getUTCFullYear() &&
+    dueDate.getUTCMonth() === currentTime.getUTCMonth() &&
+    dueDate.getUTCDate() === currentTime.getUTCDate();
+  
+  if (!isDueToday) return null;
+  
+  let timeSlotsToCheck: any[] = [];
+  
+  if (assignment.timeSlot) {
+    timeSlotsToCheck = [assignment.timeSlot];
+  } else if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+    timeSlotsToCheck = assignment.task.timeSlots;
+  } else {
     return null;
   }
+  
+  const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+  const availableSlots = timeSlotsToCheck.filter((slot: any) => !completedSlotIds.includes(slot.id));
+  
+  for (const slot of availableSlots) {
+    if (!slot) continue;
+    
+    const endParts = slot.endTime.split(':');
+    const endHour = parseInt(endParts[0] || '0', 10);
+    const endMinute = parseInt(endParts[1] || '0', 10);
+    
+    // ✅ Convert PHT to UTC
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour - 8, endMinute, 0, 0
+    ));
+    
+    const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+    const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
+    
+    if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
+      return slot;
+    }
+  }
+  
+  return null;
+}
   
   static getNextTimeSlot(assignment: any, currentTime: Date = new Date()): any | null {
     const dueDate = new Date(assignment.dueDate);
@@ -441,86 +446,86 @@ export class TimeHelpers {
   }
   
   static getAllSlotsSubmissionInfo(assignment: any): {
-    slotId: string;
-    startTime: string;
-    endTime: string;
-    label: string | null;
-    points: number;
-    status: 'pending' | 'completed' | 'missed' | 'available' | 'expired';
-    submissionStart: Date;
-    gracePeriodEnd: Date;
-    timeLeft: number | null;
-    timeLeftText: string | null;
-  }[] {
-    const dueDate = new Date(assignment.dueDate);
-    const currentTime = new Date();
-    
-    let timeSlotsToCheck: any[] = [];
-    
-    if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
-      timeSlotsToCheck = assignment.task.timeSlots;
-    } else if (assignment.timeSlot) {
-      timeSlotsToCheck = [assignment.timeSlot];
-    } else {
-      return [];
-    }
-    
-    const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
-    const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
-    
-    return timeSlotsToCheck.map((slot: any) => {
-      const endParts = slot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
-      
-      const endTime = new Date(Date.UTC(
-        dueDate.getUTCFullYear(),
-        dueDate.getUTCMonth(),
-        dueDate.getUTCDate(),
-        endHour, endMinute, 0, 0
-      ));
-      
-      const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-      const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
-      
-      let status: 'pending' | 'completed' | 'missed' | 'available' | 'expired' = 'pending';
-      
-      if (completedSlotIds.includes(slot.id)) {
-        status = 'completed';
-      } else if (missedSlotIds.includes(slot.id)) {
-        status = 'missed';
-      } else if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
-        status = 'available';
-      } else if (currentTime > gracePeriodEnd) {
-        status = 'expired';
-      }
-      
-      let timeLeft: number | null = null;
-      let timeLeftText: string | null = null;
-      
-      if (status === 'available') {
-        timeLeft = Math.max(0, Math.floor((gracePeriodEnd.getTime() - currentTime.getTime()) / 1000));
-        timeLeftText = this.getTimeLeftText(timeLeft);
-      } else if (status === 'pending' && currentTime < submissionStart) {
-        timeLeft = Math.floor((submissionStart.getTime() - currentTime.getTime()) / 1000);
-        timeLeftText = this.getTimeLeftText(timeLeft);
-      }
-      
-      return {
-        slotId: slot.id,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        label: slot.label || null,
-        points: slot.points || assignment.points,
-        status,
-        submissionStart,
-        gracePeriodEnd,
-        timeLeft,
-        timeLeftText
-      };
-    });
+  slotId: string;
+  startTime: string;
+  endTime: string;
+  label: string | null;
+  points: number;
+  status: 'pending' | 'completed' | 'missed' | 'available' | 'expired';
+  submissionStart: Date;
+  gracePeriodEnd: Date;
+  timeLeft: number | null;
+  timeLeftText: string | null;
+}[] {
+  const dueDate = new Date(assignment.dueDate);
+  const currentTime = new Date();
+  
+  let timeSlotsToCheck: any[] = [];
+  
+  if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0) {
+    timeSlotsToCheck = assignment.task.timeSlots;
+  } else if (assignment.timeSlot) {
+    timeSlotsToCheck = [assignment.timeSlot];
+  } else {
+    return [];
   }
   
+  const completedSlotIds: string[] = (assignment.completedTimeSlotIds as string[]) || [];
+  const missedSlotIds: string[] = (assignment.missedTimeSlotIds as string[]) || [];
+  
+  return timeSlotsToCheck.map((slot: any) => {
+    const endParts = slot.endTime.split(':');
+    const endHour = parseInt(endParts[0] || '0', 10);
+    const endMinute = parseInt(endParts[1] || '0', 10);
+    
+    // ✅ Convert PHT to UTC
+    const endTime = new Date(Date.UTC(
+      dueDate.getUTCFullYear(),
+      dueDate.getUTCMonth(),
+      dueDate.getUTCDate(),
+      endHour - 8, endMinute, 0, 0
+    ));
+    
+    const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+    const gracePeriodEnd = new Date(endTime.getTime() + this.GRACE_PERIOD_MINUTES * 60000);
+    
+    let status: 'pending' | 'completed' | 'missed' | 'available' | 'expired' = 'pending';
+    
+    if (completedSlotIds.includes(slot.id)) {
+      status = 'completed';
+    } else if (missedSlotIds.includes(slot.id)) {
+      status = 'missed';
+    } else if (currentTime >= submissionStart && currentTime <= gracePeriodEnd) {
+      status = 'available';
+    } else if (currentTime > gracePeriodEnd) {
+      status = 'expired';
+    }
+    
+    let timeLeft: number | null = null;
+    let timeLeftText: string | null = null;
+    
+    if (status === 'available') {
+      timeLeft = Math.max(0, Math.floor((gracePeriodEnd.getTime() - currentTime.getTime()) / 1000));
+      timeLeftText = this.getTimeLeftText(timeLeft);
+    } else if (status === 'pending' && currentTime < submissionStart) {
+      timeLeft = Math.floor((submissionStart.getTime() - currentTime.getTime()) / 1000);
+      timeLeftText = this.getTimeLeftText(timeLeft);
+    }
+    
+    return {
+      slotId: slot.id,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      label: slot.label || null,
+      points: slot.points || assignment.points,
+      status,
+      submissionStart,
+      gracePeriodEnd,
+      timeLeft,
+      timeLeftText
+    };
+  });
+}
   static getTimeLeftText(timeLeftSeconds: number): string {
     if (timeLeftSeconds <= 0) return 'Expired';
     
@@ -578,29 +583,30 @@ export class TimeHelpers {
   }
   
   static getSubmissionWindowInfo(timeSlot: any, dueDate: Date) {
-    const endParts = timeSlot.endTime.split(':');
-    const endHour = parseInt(endParts[0] || '0', 10);
-    const endMinute = parseInt(endParts[1] || '0', 10);
-    
-    const endTime = new Date(Date.UTC(
-      dueDate.getUTCFullYear(),
-      dueDate.getUTCMonth(),
-      dueDate.getUTCDate(),
-      endHour, endMinute, 0, 0
-    ));
-    
-    const submissionStart = new Date(endTime.getTime() - 30 * 60000);
-    const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
-    
-    return {
-      endTime,
-      submissionStart,
-      gracePeriodEnd,
-      opensIn: this.getTimeUntil(submissionStart),
-      closesIn: this.getTimeUntil(gracePeriodEnd)
-    };
-  }
+  const endParts = timeSlot.endTime.split(':');
+  const endHour = parseInt(endParts[0] || '0', 10);
+  const endMinute = parseInt(endParts[1] || '0', 10);
   
+  // ✅ Convert PHT to UTC
+  const endTime = new Date(Date.UTC(
+    dueDate.getUTCFullYear(),
+    dueDate.getUTCMonth(),
+    dueDate.getUTCDate(),
+    endHour - 8, endMinute, 0, 0
+  ));
+  
+  const submissionStart = new Date(endTime.getTime() - 30 * 60000);
+  const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
+  
+  return {
+    endTime,
+    submissionStart,
+    gracePeriodEnd,
+    opensIn: this.getTimeUntil(submissionStart),
+    closesIn: this.getTimeUntil(gracePeriodEnd)
+  };
+}
+
   static getTimeUntil(targetDate: Date, currentTime: Date = new Date()): number | null {
     const diff = targetDate.getTime() - currentTime.getTime();
     if (diff <= 0) return null;

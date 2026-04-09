@@ -782,47 +782,54 @@ static async verifyAssignment(
     }
   }
 
-  // Helper method to check if a specific time slot is neglected
-  private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): boolean {
-    if (assignment.completed) return false;
+private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): boolean {
+  if (assignment.completed) return false;
+  
+  const dueDate = new Date(assignment.dueDate);
+  const today = new Date();
+  
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  
+  if (dueDateUTC !== todayUTC) return false;
+  
+  const endParts = timeSlot.endTime.split(':');
+  const endHour = parseInt(endParts[0] || '0', 10);
+  const endMinute = parseInt(endParts[1] || '0', 10);
+  
+  if (isNaN(endHour) || isNaN(endMinute)) return false;
+  
+  // ✅ Convert PHT to UTC
+  const endTime = new Date(Date.UTC(
+    dueDate.getUTCFullYear(),
+    dueDate.getUTCMonth(),
+    dueDate.getUTCDate(),
+    endHour - 8, endMinute, 0, 0
+  ));
+  const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
+  
+  if (now > gracePeriodEnd) {
+    const assignmentAny = assignment as any;
+    const existingMissedSlotsRaw = assignmentAny.missedTimeSlotIds;
+    let existingMissedSlotIds: string[] = [];
     
-    const dueDate = new Date(assignment.dueDate);
-    const today = new Date();
-    
-    if (dueDate.toDateString() !== today.toDateString()) return false;
-    
-    const endParts = timeSlot.endTime.split(':');
-    const endHour = parseInt(endParts[0] || '0', 10);
-    const endMinute = parseInt(endParts[1] || '0', 10);
-    
-    if (isNaN(endHour) || isNaN(endMinute)) return false;
-    
-    const endTime = new Date(dueDate);
-    endTime.setHours(endHour, endMinute, 0, 0);
-    const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
-    
-    if (now > gracePeriodEnd) {
-      const assignmentAny = assignment as any;
-      const existingMissedSlotsRaw = assignmentAny.missedTimeSlotIds;
-      let existingMissedSlotIds: string[] = [];
-      
-      if (existingMissedSlotsRaw) {
-        if (typeof existingMissedSlotsRaw === 'string') {
-          try {
-            existingMissedSlotIds = JSON.parse(existingMissedSlotsRaw);
-          } catch (e) {
-            existingMissedSlotIds = [];
-          }
-        } else if (Array.isArray(existingMissedSlotsRaw)) {
-          existingMissedSlotIds = existingMissedSlotsRaw;
+    if (existingMissedSlotsRaw) {
+      if (typeof existingMissedSlotsRaw === 'string') {
+        try {
+          existingMissedSlotIds = JSON.parse(existingMissedSlotsRaw);
+        } catch (e) {
+          existingMissedSlotIds = [];
         }
+      } else if (Array.isArray(existingMissedSlotsRaw)) {
+        existingMissedSlotIds = existingMissedSlotsRaw;
       }
-      
-      return !existingMissedSlotIds.includes(timeSlot.id);
     }
     
-    return false;
+    return !existingMissedSlotIds.includes(timeSlot.id);
   }
+  
+  return false;
+}
 
   // ========== SEND UPCOMING TASK REMINDERS ==========
   static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
