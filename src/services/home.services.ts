@@ -25,7 +25,6 @@ export class HomeServices {
         };
       }
 
-      // Get user's group memberships with rotation status
       const userMemberships = await prisma.groupMember.findMany({
         where: { userId: userId },
         include: {
@@ -52,33 +51,39 @@ export class HomeServices {
 
       const groupsCount = userMemberships.length;
 
-      // Check user's rotation status across groups
       const userInRotation = userMemberships.some(m => m.inRotation);
       const userIsAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
       const groupsWhereUserInRotation = userMemberships.filter(m => m.inRotation).length;
       const groupsWhereUserIsAdmin = userMemberships.filter(m => m.groupRole === "ADMIN").length;
 
-      // Calculate date ranges
       const now = new Date();
-      const today = new Date(now);
-      today.setHours(0, 0, 0, 0);
-      
-      // Get start of current week (Monday)
-      const currentWeekStart = new Date(now);
-      const day = currentWeekStart.getDay();
-      const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
-      currentWeekStart.setDate(diff);
-      currentWeekStart.setHours(0, 0, 0, 0);
-      
-      // Get end of current week (Sunday)
+
+      // ✅ Use UTC for today's boundaries
+      const today = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        0, 0, 0, 0
+      ));
+
+      // ✅ Use UTC for week start (Monday)
+      const currentUTCDay = now.getUTCDay(); // 0 = Sunday
+      const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
+      const currentWeekStart = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - daysToMonday,
+        0, 0, 0, 0
+      ));
+
+      // ✅ Use UTC for week end (Sunday)
       const currentWeekEnd = new Date(currentWeekStart);
-      currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
-      currentWeekEnd.setHours(23, 59, 59, 999);
+      currentWeekEnd.setUTCDate(currentWeekStart.getUTCDate() + 6);
+      currentWeekEnd.setUTCHours(23, 59, 59, 999);
 
       console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
       console.log(`📅 Today: ${today.toISOString()}`);
 
-      // Count tasks due this week - EXCLUDE assignments from deleted tasks
       const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
@@ -94,7 +99,6 @@ export class HomeServices {
 
       console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
 
-      // Count overdue tasks - EXCLUDE assignments from deleted tasks
       const overdueTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
@@ -107,7 +111,6 @@ export class HomeServices {
 
       console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
-      // Get current week assignments - EXCLUDE assignments from deleted tasks
       const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -139,7 +142,6 @@ export class HomeServices {
         orderBy: { dueDate: 'asc' }
       }) : [];
 
-      // Separate into overdue and upcoming
       const overdueAssignments = currentWeekAssignments.filter(
         assignment => assignment.dueDate < today
       );
@@ -148,7 +150,6 @@ export class HomeServices {
         assignment => assignment.dueDate >= today
       );
 
-      // Count completed tasks - EXCLUDE assignments from deleted tasks
       const completedTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
@@ -157,7 +158,6 @@ export class HomeServices {
         }
       }) : 0;
 
-      // Get total assignments count - EXCLUDE assignments from deleted tasks
       const totalTasks = userInRotation ? await prisma.assignment.count({
         where: { 
           userId: userId,
@@ -165,7 +165,6 @@ export class HomeServices {
         }
       }) : 0;
 
-      // Get pending swap requests - only if user is in rotation
       const swapRequests = userInRotation ? await prisma.swapRequest.count({
         where: {
           assignment: {
@@ -176,7 +175,6 @@ export class HomeServices {
         }
       }) : 0;
 
-      // Get recent activity (notifications)
       const recentActivity = await prisma.userNotification.findMany({
         where: { userId: userId },
         orderBy: { createdAt: 'desc' },
@@ -191,17 +189,14 @@ export class HomeServices {
         }
       });
 
-      // Calculate points earned this week - ✅ FIXED: only verified assignments
       const pointsThisWeek = userInRotation ? await this.getWeeklyPoints(userId, currentWeekStart) : 0;
 
-      // Format groups with rotation info
       const groups = await Promise.all(userMemberships.map(async (member) => {
         const group = member.group;
         const tasksForThisGroup = currentWeekAssignments.filter(
           assignment => assignment.task?.group?.id === group.id
         );
 
-        // Get rotation stats for this group
         const membersInRotation = await prisma.groupMember.count({
           where: { 
             groupId: group.id, 
@@ -237,7 +232,6 @@ export class HomeServices {
         };
       }));
 
-      // Sort groups by activity
       groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
 
       return {
@@ -323,7 +317,6 @@ export class HomeServices {
     
   static async getWeeklySummary(userId: string) {
     try {
-      // Get user's rotation status
       const userMemberships = await prisma.groupMember.findMany({
         where: { userId: userId },
         select: {
@@ -337,15 +330,22 @@ export class HomeServices {
       const isAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
 
       const now = new Date();
-      const weekStart = new Date(now);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-      weekStart.setHours(0, 0, 0, 0);
-      
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
 
-      // Get completed tasks this week - only if user is in rotation
+      // ✅ Use UTC for week boundaries
+      const currentUTCDay = now.getUTCDay();
+      const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
+
+      const weekStart = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - daysToMonday,
+        0, 0, 0, 0
+      ));
+
+      const weekEnd = new Date(weekStart);
+      weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+      weekEnd.setUTCHours(23, 59, 59, 999);
+
       const completedThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -370,7 +370,6 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       }) : [];
 
-      // Get pending tasks for this week - only if user is in rotation
       const pendingThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -402,7 +401,6 @@ export class HomeServices {
         }
       }) : [];
 
-      // Calculate points from verified assignments only
       const totalPoints = completedThisWeek
         .filter(assignment => assignment.verified === true)
         .reduce((sum, assignment) => {
@@ -410,13 +408,16 @@ export class HomeServices {
           return sum + points;
         }, 0);
 
-      // Group by day
       const byDay: Record<string, any> = {};
       completedThisWeek
         .filter(assignment => assignment.verified === true)
         .forEach(assignment => {
           if (assignment.completedAt) {
-            const day = assignment.completedAt.toLocaleDateString('en-US', { weekday: 'short' });
+            // ✅ Use UTC day for grouping
+            const day = assignment.completedAt.toLocaleDateString('en-US', { 
+              weekday: 'short', 
+              timeZone: 'UTC' 
+            });
             if (!byDay[day]) {
               byDay[day] = { count: 0, points: 0 };
             }
@@ -468,14 +469,14 @@ export class HomeServices {
     }
   }
 
-  // ===== FIXED: Helper method to get weekly points - ONLY VERIFIED ASSIGNMENTS =====
+  // ✅ Only verified assignments count for points
   private static async getWeeklyPoints(userId: string, weekStart: Date): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
-          verified: true,  // ✅ FIXED: Only verified assignments count
+          verified: true,
           completedAt: {
             gte: weekStart
           }
@@ -499,14 +500,14 @@ export class HomeServices {
     }
   }
 
-  // ===== FIXED: Helper method to get total points - ONLY VERIFIED ASSIGNMENTS =====
+  // ✅ Only verified assignments count for total points
   private static async getTotalPoints(userId: string): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
-          verified: true  // ✅ FIXED: Only verified assignments count
+          verified: true
         },
         include: {
           task: {
@@ -527,7 +528,6 @@ export class HomeServices {
     }
   }
 
-  // Helper method to get activity icon
   private static getActivityIcon(type: string): string {
     const icons: Record<string, string> = {
       'SUBMISSION_VERIFIED': 'check-circle',
@@ -544,7 +544,6 @@ export class HomeServices {
     return icons[type] || 'bell';
   }
 
-  // Helper method to get time ago string
   private static getTimeAgo(date: Date): string {
     const now = new Date();
     const diffMs = now.getTime() - new Date(date).getTime();
