@@ -376,7 +376,7 @@ static async completeAssignment(
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
-
+ 
 
 
 // services/assignment.services.ts - FIXED verifyAssignment (ADD points on verification)
@@ -1564,36 +1564,34 @@ static async getTodayAssignments(
         userId: { in: memberIdsInRotation }
       };
 
-      
+     // Fix the status filter in getGroupAssignments
 if (filters.status) {
   switch (filters.status) {
     case 'pending':
       where.completed = false;
+      where.expired = false;
       break;
     case 'completed':
       where.completed = true;
       where.verified = null;
       break;
-    case 'pending_verification':  // ✅ ADD THIS NEW STATUS
-      // Show assignments that have photo/notes but not yet verified
-      // This includes:
-      // - Fully completed (completed = true, verified = null)
-      // - Partially completed multi-slot (completed = false, verified = null, has photo)
+    case 'pending_verification':
       where.OR = [
-        { completed: true, verified: null },           // Fully completed awaiting verification
-        { completed: false, verified: null, photoUrl: { not: null } }  // Partial submission
+        { completed: true, verified: null },
+        { completed: false, verified: null, photoUrl: { not: null } }
       ];
       break;
     case 'verified':
-      where.completed = true;
+      // ✅ FIX: Only show assignments with verified = true
       where.verified = true;
       break;
     case 'rejected':
-      where.completed = true;
+      // ✅ FIX: Only show assignments with verified = false
       where.verified = false;
       break;
   }
 }
+
 
       if (filters.userId) {
         if (!memberIdsInRotation.includes(filters.userId)) {
