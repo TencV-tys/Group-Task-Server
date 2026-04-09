@@ -1727,7 +1727,8 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 }
 
 
-// Get rotation schedule - FIXED to show ACTUAL assignments
+// In task.services.ts - COMPLETELY REPLACE getRotationSchedule
+
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -1743,7 +1744,7 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
       return { success: false, message: "Group not found" };
     }
 
-    // Get all recurring tasks
+    // Get all recurring tasks with time slots
     const tasks = await prisma.task.findMany({
       where: { groupId, isRecurring: true },
       include: {
@@ -1763,14 +1764,13 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
 
     const schedule = [];
 
-    // Show only current and past weeks (no future weeks)
+    // Show only current and past weeks
     for (let weekOffset = 0; weekOffset < weeks; weekOffset++) {
-      const weekNumber = group.currentRotationWeek - weekOffset; // Go backwards from current week
+      const weekNumber = group.currentRotationWeek - weekOffset;
       
-      // Stop if we go below week 1
       if (weekNumber < 1) continue;
       
-      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(-weekOffset); // Negative offset for past weeks
+      const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(-weekOffset);
 
       const weekSchedule: any = {
         week: weekNumber,
@@ -1803,23 +1803,40 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
         const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
                              (task.dayOfWeek ? [task.dayOfWeek] : []);
 
+        // ✅ FIX: Calculate TOTAL points by summing ALL time slots
+        let totalTaskPoints = 0;
+        
+        if (task.timeSlots && task.timeSlots.length > 0) {
+          // Sum all time slot points
+          totalTaskPoints = task.timeSlots.reduce((sum: number, slot: any) => sum + (slot.points || 0), 0);
+        } else {
+          // Fallback to task.points if no time slots
+          totalTaskPoints = task.points || 0;
+        }
+
+        // Log for debugging
+        console.log(`📊 Task ${task.title}:`);
+        if (task.timeSlots && task.timeSlots.length > 0) {
+          console.log(`   Time slots:`, task.timeSlots.map(s => `${s.startTime}-${s.endTime}: ${s.points || 0}pts`));
+          console.log(`   Sum of time slots: ${totalTaskPoints}pts`);
+        } else {
+          console.log(`   Single points: ${totalTaskPoints}pts`);
+        }
+
         weekSchedule.tasks.push({
           taskId: task.id,
           taskTitle: task.title,
           executionFrequency: task.executionFrequency,
-          timeSlots: task.timeSlots || [],
+          timeSlots: task.timeSlots || [],  // ✅ Send all time slots to frontend
           selectedDays: selectedDays,
-          // Use ACTUAL assignment data, not projected
           assignee: actualAssignment?.user ? {
             id: actualAssignment.user.id,
             name: actualAssignment.user.fullName,
             avatarUrl: actualAssignment.user.avatarUrl
           } : null,
-          // If no assignment exists for this week, it means the task wasn't assigned
-          // (either task was created after this week or no assignment was created)
-          points: actualAssignment?.points || task.points,
+          points: totalTaskPoints,  // ✅ Use SUMMED total points
           completed: actualAssignment?.completed || false,
-          actualAssignment: !!actualAssignment // Flag to indicate if this is an actual assignment
+          actualAssignment: !!actualAssignment
         });
       }
 
@@ -1839,6 +1856,7 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
     return { success: false, message: error.message || "Error retrieving rotation schedule" };
   }
 }
+
 
 
 // In task.services.ts - UPDATED reassignTask with creation-date-based week boundaries
