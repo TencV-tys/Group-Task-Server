@@ -16,7 +16,7 @@ export class GroupActivityController {
           message: "Not authenticated"
         });
       }
-
+ 
       if (!groupId) {
         return res.status(400).json({
           success: false,
@@ -339,4 +339,51 @@ export class GroupActivityController {
       });
     }
   }
+
+// Add this to GroupActivityController
+
+// ===== GET LEADERBOARD =====
+static async getLeaderboard(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as { groupId: string };
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated"
+      });
+    }
+
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: "Group ID is required"
+      });
+    }
+
+    const result = await GroupActivityService.getLeaderboard(groupId, userId);
+
+    if (!result.success) {
+      return res.status(403).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: result.data
+    });
+
+  } catch (error: any) {
+    console.error("❌ Error in getLeaderboard:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
 } 

@@ -338,7 +338,8 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
     }
   }
 
-// ========== GET MEMBER CONTRIBUTION DETAILS ==========
+ // In group.activity.services.ts - FIXED getMemberContributionDetails
+
 static async getMemberContributionDetails(
   groupId: string,
   memberId: string,
@@ -366,7 +367,6 @@ static async getMemberContributionDetails(
       select: { currentRotationWeek: true }
     });
 
-    // ===== UPDATED: Get member info with rotation status =====
     const targetMember = await prisma.groupMember.findFirst({
       where: { userId: memberId, groupId },
       include: {
@@ -385,7 +385,6 @@ static async getMemberContributionDetails(
       return { success: false, message: "Member not found" };
     }
 
-    // Check if member is an admin (and therefore not in rotation)
     const isAdmin = targetMember.groupRole === "ADMIN";
     const inRotation = targetMember.inRotation || false;
 
@@ -401,7 +400,16 @@ static async getMemberContributionDetails(
             id: true, 
             title: true, 
             points: true,
-            executionFrequency: true 
+            executionFrequency: true,
+            timeSlots: {
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                label: true,
+                points: true
+              }
+            }
           } 
         },
         timeSlot: true
@@ -411,6 +419,12 @@ static async getMemberContributionDetails(
 
     // Filter out assignments with null tasks
     const validAssignments = assignments.filter(a => a.task !== null);
+    
+    // ✅ DEBUG: Log all assignments to see what's happening
+    console.log(`📊 [MemberContributions] Found ${validAssignments.length} assignments for ${targetMember.user.fullName}`);
+    validAssignments.forEach(a => {
+      console.log(`   Assignment: ${a.task?.title}, completed: ${a.completed}, verified: ${a.verified}, points: ${a.points}, expired: ${a.expired}, week: ${a.rotationWeek}`);
+    });
 
     // Group by week
     const weeks: Record<number, any> = {};
@@ -429,14 +443,50 @@ static async getMemberContributionDetails(
         };
       }
 
+      // Get the points for this assignment
+      let assignmentPoints = assignment.points || 0;
+      
+      // For tasks with time slots, use the specific time slot points
+      if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0 && assignment.timeSlot) {
+        assignmentPoints = assignment.timeSlot.points || assignment.points || 0;
+      }
+      
       weeks[weekNum].totalAssignments++;
-      weeks[weekNum].totalPoints += (assignment.points || 0);
+      weeks[weekNum].totalPoints += assignmentPoints;
 
-      if (assignment.completed) {
+      // ✅ Check if completed
+      if (assignment.completed === true) {
         weeks[weekNum].completedAssignments++;
-        // ✅ FIXED: Only count VERIFIED assignments for earned points
-        if (assignment.verified === true) {
-          weeks[weekNum].earnedPoints += (assignment.points || 0);
+        console.log(`   ✅ Completed assignment found: ${assignment.task?.title}, verified: ${assignment.verified}, points: ${assignmentPoints}`);
+      }
+      
+      // ✅ Check if verified (points earned)
+      if (assignment.verified === true) {
+        weeks[weekNum].earnedPoints += assignmentPoints;
+        console.log(`   💰 Verified assignment found: ${assignment.task?.title}, points: ${assignmentPoints}`);
+      }
+
+      // Check if missed
+      let isMissed = false;
+      if (assignment.expired === true) {
+        isMissed = true;
+      }
+      
+      const missedSlotIdsRaw = (assignment as any).missedTimeSlotIds;
+      if (missedSlotIdsRaw && assignment.timeSlot?.id) {
+        let missedSlotIds: string[] = [];
+        if (typeof missedSlotIdsRaw === 'string') {
+          try {
+            missedSlotIds = JSON.parse(missedSlotIdsRaw);
+          } catch (e) {
+            missedSlotIds = [];
+          }
+        } else if (Array.isArray(missedSlotIdsRaw)) {
+          missedSlotIds = missedSlotIdsRaw;
+        }
+        
+        if (missedSlotIds.includes(assignment.timeSlot.id)) {
+          isMissed = true;
         }
       }
 
@@ -447,26 +497,39 @@ static async getMemberContributionDetails(
         completed: assignment.completed,
         completedAt: assignment.completedAt,
         verified: assignment.verified,
-        points: assignment.points || 0,
+        points: assignmentPoints,
         isLate: assignment.completedAt && assignment.completedAt > assignment.dueDate,
         timeSlot: assignment.timeSlot ? 
-          `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}` : null
+          `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}` : null,
+        isMissed: isMissed
       });
     });
 
     const weeksArray = Object.values(weeks).sort((a: any, b: any) => b.week - a.week);
 
-    // Calculate totals
-    const totalAssignments = validAssignments.length;
-    const completedAssignments = validAssignments.filter(a => a.completed).length;
-    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    // Calculate totals from weeks data
+    let totalAssignments = 0;
+    let completedAssignments = 0;
+    let totalPoints = 0;
+    let earnedPoints = 0;
     
-    // ✅ FIXED: Only count VERIFIED assignments for earned points
-    const earnedPoints = validAssignments
-      .filter(a => a.completed && a.verified === true)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
+    weeksArray.forEach((week: any) => {
+      totalAssignments += week.totalAssignments;
+      completedAssignments += week.completedAssignments;
+      totalPoints += week.totalPoints;
+      earnedPoints += week.earnedPoints;
+    });
 
-    // ===== NEW: Add role-based response =====
+    const completionRate = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
+
+    console.log(`📊 [MemberContributions] FINAL Stats for ${targetMember.user.fullName}:`, {
+      totalAssignments,
+      completedAssignments,
+      totalPoints, 
+      earnedPoints,
+      completionRate: completionRate.toFixed(1)
+    }); 
+
     let roleMessage = "";
     if (isAdmin) {
       roleMessage = "This user is an admin and does not participate in task rotation. They have no assigned tasks.";
@@ -484,14 +547,14 @@ static async getMemberContributionDetails(
           email: targetMember.user.email,
           avatarUrl: targetMember.user.avatarUrl,
           role: targetMember.groupRole,
-          inRotation: targetMember.inRotation,
+          inRotation: targetMember.inRotation, 
           isActive: targetMember.isActive,
           joinedAt: targetMember.joinedAt
         },
         summary: {
           totalAssignments,
           completedAssignments,
-          completionRate: totalAssignments > 0 ? (completedAssignments / totalAssignments) * 100 : 0,
+          completionRate: Math.round(completionRate),
           totalPoints,
           earnedPoints,
           currentWeek: group?.currentRotationWeek || 1,
@@ -503,14 +566,13 @@ static async getMemberContributionDetails(
         roleInfo: roleMessage ? { message: roleMessage } : undefined
       }
     };
-
+ 
   } catch (error: any) {
     console.error("GroupActivityService.getMemberContributionDetails error:", error);
     return { success: false, message: error.message || "Error retrieving member details" };
   }
 }
 
-// In group.activity.services.ts - REPLACE getTaskCompletionHistory
 
 // ========== GET TASK COMPLETION HISTORY ==========
 static async getTaskCompletionHistory(
@@ -1143,4 +1205,35 @@ static async getRecentActivity(groupId: string, userId: string, limit: number = 
     return { success: false, message: error.message };
   }
 }
+
+// Add this to group.activity.services.ts
+static async getLeaderboard(groupId: string, userId: string) {
+  const membership = await prisma.groupMember.findFirst({
+    where: { userId, groupId }
+  });
+  if (!membership) {
+    return { success: false, message: "You are not a member" };
+  }
+  
+  const members = await prisma.groupMember.findMany({
+    where: { groupId, isActive: true, inRotation: true, groupRole: { not: "ADMIN" } },
+    include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
+    orderBy: { cumulativePoints: 'desc' }
+  });
+  
+  const leaderboard = members.map((member, index) => ({
+    rank: index + 1,
+    userId: member.userId,
+    fullName: member.user.fullName,
+    avatarUrl: member.user.avatarUrl,
+    points: member.cumulativePoints || 0,
+  })); 
+  
+  return {
+    success: true,
+    data: { leaderboard, totalPoints: leaderboard.reduce((sum, m) => sum + m.points, 0) }
+  };
+}
+
+
 } 

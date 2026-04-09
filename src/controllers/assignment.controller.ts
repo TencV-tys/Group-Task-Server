@@ -873,7 +873,7 @@ static async getAssignmentStats(req: UserAuthRequest, res: Response) {
       success: false, 
       message: error.message || "Error retrieving assignment statistics" 
     });
-  }
+  } 
 }
 
   // ========== GET USER NEGLECTED TASKS ==========

@@ -5,7 +5,7 @@ import { UserAuthMiddleware } from '../middlewares/user.auth.middleware';
 const router = Router();
 
 // All routes require authentication
-router.use(UserAuthMiddleware);
+router.use(UserAuthMiddleware); 
 
 // Get group activity summary (Admin only)
 router.get('/:groupId/summary', GroupActivityController.getActivitySummary);
@@ -28,5 +28,7 @@ router.get('/:groupId/member-dashboard', GroupActivityController.getMemberDashbo
 
 // Get recent activity for dashboard
 router.get('/:groupId/recent-activity', GroupActivityController.getRecentActivity);
+
+router.get('/:groupId/leaderboard', GroupActivityController.getLeaderboard);
 
 export default router;
