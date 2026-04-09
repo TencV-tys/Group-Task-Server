@@ -331,7 +331,7 @@ model Assignment {
   weekEnd       DateTime?
   assignmentDay DayOfWeek?
  
-  // ✅ FIELDS FOR DELETED TASK PRESERVATION (already have these)
+  // ✅ FIELDS FOR DELETED TASK PRESERVATION
   taskTitle    String? // Store task title at time of deletion
   taskPoints   Int?    // Store task points at time of deletion
   taskCategory String? // Store category at time of deletion
@@ -339,22 +339,13 @@ model Assignment {
   expired    Boolean   @default(false)
   expiredAt  DateTime?
 
-  // ===== ADD THESE 4 NEW FIELDS FOR PER-TIME-SLOT PENALTY =====
+  // ===== ADD THIS NEW FIELD =====
+  completedTimeSlotIds Json? @default("[]")  // ✅ ADD THIS LINE
   
-  // Track which time slots were missed (store array of time slot IDs)
-  // Example: ["slot_abc123", "slot_def456"]
+  // ===== EXISTING FIELDS =====
   missedTimeSlotIds Json? @default("[]")
-  
-  // Store original points per slot (slotId -> points)
-  // Example: {"slot_abc123": 3, "slot_def456": 3, "slot_ghi789": 4}
   slotPoints Json? @default("{}")
-  
-  // Original total points before any slots were missed
-  // Example: 10 (sum of all slot points)
   originalTotalPoints Int? @default(0)
-  
-  // Track if partially expired (some slots missed, some still available)
-  // Example: true if at least one slot missed but not all
   partiallyExpired Boolean @default(false)
 
   // Relationships

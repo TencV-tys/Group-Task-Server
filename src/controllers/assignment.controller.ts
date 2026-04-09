@@ -9,6 +9,7 @@ import prisma from "../prisma";
 export class AssignmentController {
   
   // controllers/assignment.controller.ts - ADD MORE DETAILED LOGS
+// controllers/assignment.controller.ts - FIXED completeAssignment method
 
 static async completeAssignment(req: UserAuthRequest, res: Response) {
   console.log('\n📸🔵 ========== [completeAssignment] ==========');
@@ -16,6 +17,7 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
   console.log('   👤 User ID:', req.user?.id);
   console.log('   📸 File present:', !!(req as any).file);
   console.log('   📝 Notes body:', req.body.notes);
+  console.log('   ⏰ timeSlotId body:', req.body.timeSlotId);  // ✅ ADD THIS LOG
   
   try {
     const userId = req.user?.id;
@@ -50,7 +52,10 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
     }
 
     const notes = req.body.notes;
+    const timeSlotId = req.body.timeSlotId;  // ✅ GET timeSlotId from request body
+    
     console.log("   📝 Notes received:", notes || '(none)');
+    console.log("   ⏰ timeSlotId received:", timeSlotId || '(none)');  // ✅ LOG timeSlotId
 
     if (!userId) {
       console.log("   ❌ No user ID in request");
@@ -69,12 +74,19 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
     }
 
     console.log("   🔄 Calling AssignmentService.completeAssignment...");
+    console.log("   📦 Data being passed:", {
+      photoUrl,
+      notes: notes || undefined,
+      timeSlotId: timeSlotId || undefined
+    });
+    
     const result = await AssignmentService.completeAssignment(
       assignmentId,
       userId,
       { 
         photoUrl,
-        notes: notes || undefined 
+        notes: notes || undefined,
+        timeSlotId: timeSlotId || undefined  // ✅ ADD timeSlotId
       }
     );
 
@@ -129,7 +141,7 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
       message: "Internal server error"
     }); 
   } 
-} 
+}
 
   // ========== VERIFY ASSIGNMENT ==========
   static async verifyAssignment(req: UserAuthRequest, res: Response) {
