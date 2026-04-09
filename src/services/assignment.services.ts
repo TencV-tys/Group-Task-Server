@@ -9,6 +9,8 @@ export class AssignmentService {
 
 // services/assignment.services.ts - ADD MORE DETAILED LOGGING
 
+// In assignment.services.ts - completeAssignment method
+
 static async completeAssignment(
   assignmentId: string,
   userId: string,
@@ -19,7 +21,7 @@ static async completeAssignment(
   }
 ) {
   let timeValidation;
-    let admins: any[] = []; 
+  let admins: any[] = []; 
   try {
     console.log('🔵🔵🔵 [COMPLETE ASSIGNMENT] START 🔵🔵🔵');
     console.log(`📝 Assignment ID: ${assignmentId}`);
@@ -232,15 +234,25 @@ static async completeAssignment(
       console.log(`🏁 Single slot task - marking as completed`);
     }
 
+    // ✅ FIXED: For multi-slot tasks, mark as ready for verification after EACH slot
+    // This ensures admin can verify each slot individually
+    const shouldMarkForVerification = isMultiSlotTask ? true : allSlotsCompleted;
+
     // Update assignment
     const updateData: any = {
       completed: allSlotsCompleted,
       completedAt: allSlotsCompleted ? new Date() : undefined,
       photoUrl: data.photoUrl || undefined,
       notes: data.notes || (isLate ? `[LATE: Submitted after ${targetTimeSlot?.endTime}]` : undefined),
-        verified: allSlotsCompleted ? null : undefined, 
       points: updatedPoints 
     };
+    
+    // ✅ For multi-slot tasks, mark as pending verification after EACH slot completion
+    if (shouldMarkForVerification) {
+      updateData.verified = null;  // Pending admin verification
+    } else {
+      updateData.verified = undefined;
+    }
     
     if (isMultiSlotTask && targetTimeSlot) {
       updateData.completedTimeSlotIds = updatedCompletedSlots;
@@ -279,8 +291,55 @@ static async completeAssignment(
     console.log(`✅ New points: ${updatedAssignment.points}`);
     console.log(`✅ Photo URL saved: ${updatedAssignment.photoUrl}`);
 
-    // Send notifications (same as before...)
-    // ... rest of the code
+    // ✅ Get admins to notify
+    if (assignment.task?.groupId) {
+      admins = await prisma.groupMember.findMany({
+        where: {
+          groupId: assignment.task.groupId,
+          groupRole: "ADMIN",
+          isActive: true
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
+          }
+        }
+      });
+    }
+
+    // ✅ Send notification to admins for verification
+    for (const admin of admins) {
+      await UserNotificationService.createNotification({
+        userId: admin.userId,
+        type: "SUBMISSION_PENDING",
+        title: "📸 New Submission Ready for Review",
+        message: `${assignment.user?.fullName || 'A member'} submitted "${assignment.task!.title}" (${targetTimeSlot?.startTime}-${targetTimeSlot?.endTime}) for verification. ${isLate ? '⚠️ Late submission - points reduced.' : '✅ On-time submission.'}`,
+        data: {
+          assignmentId: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.task!.title,
+          groupId: assignment.task!.groupId,
+          groupName: assignment.task!.group?.name,
+          userId: assignment.userId,
+          userName: assignment.user?.fullName,
+          timeSlot: targetTimeSlot ? {
+            startTime: targetTimeSlot.startTime,
+            endTime: targetTimeSlot.endTime,
+            label: targetTimeSlot.label
+          } : null,
+          isLate,
+          originalPoints: slotPoints,
+          finalPoints,
+          slotsCompleted: updatedCompletedSlots.length,
+          totalSlots: assignment.task.timeSlots.length,
+          allSlotsCompleted
+        }
+      });
+    }
 
     let successMessage = "";
     if (allSlotsCompleted) {
@@ -306,9 +365,9 @@ static async completeAssignment(
       totalSlots: assignment.task.timeSlots.length,
       allSlotsCompleted,
       notifications: {
-        notifiedAdmins: allSlotsCompleted ? admins.length : 0,
+        notifiedAdmins: admins.length,
         showSuccessNotification: true
-      }
+      } 
     }; 
 
   } catch (error: any) {
@@ -317,6 +376,8 @@ static async completeAssignment(
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
+
+
 
 // services/assignment.services.ts - FIXED verifyAssignment (ADD points on verification)
 
@@ -335,7 +396,8 @@ static async verifyAssignment(
       include: {
         task: {
           include: {
-            group: true
+            group: true,
+            timeSlots: true
           }
         },
         user: {
@@ -370,8 +432,19 @@ static async verifyAssignment(
       return { success: false, message: "Only group admins can verify assignments" };
     }
 
-    if (!assignment.completed) {
+    // ✅ FIXED: Allow verification for:
+    // 1. Fully completed assignments (completed = true)
+    // 2. Partially completed multi-slot assignments (has photo, verified = null)
+    const isMultiSlotTask = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
+    const hasSubmission = assignment.photoUrl !== null;
+    
+    if (!isMultiSlotTask && !assignment.completed) {
       return { success: false, message: "Assignment must be completed before verification" };
+    }
+    
+    // For multi-slot tasks, allow verification even if not fully completed
+    if (isMultiSlotTask && !hasSubmission) {
+      return { success: false, message: "No submission to verify" };
     }
 
     const updatedAssignment = await prisma.assignment.update({
@@ -394,7 +467,8 @@ static async verifyAssignment(
       }
     });
 
-    // ✅ ADD THIS: Award points only when verified (approved)
+    // ✅ Award points only when verified (approved)
+    // For multi-slot tasks, award points for the completed slot
     if (data.verified === true && assignment.points > 0) {
       await prisma.groupMember.updateMany({
         where: {
@@ -508,7 +582,7 @@ static async verifyAssignment(
     console.error("AssignmentService.verifyAssignment error:", error);
     return { success: false, message: error.message || "Error verifying assignment" };
   }
-} 
+}
 
   // ========== CHECK NEGLECTED ASSIGNMENTS (FOR CRON) ==========
   static async checkNeglectedAssignments() {
@@ -1490,25 +1564,36 @@ static async getTodayAssignments(
         userId: { in: memberIdsInRotation }
       };
 
-      if (filters.status) {
-        switch (filters.status) {
-          case 'pending':
-            where.completed = false;
-            break;
-          case 'completed':
-            where.completed = true;
-            where.verified = null;
-            break;
-          case 'verified':
-            where.completed = true;
-            where.verified = true;
-            break;
-          case 'rejected':
-            where.completed = true;
-            where.verified = false;
-            break;
-        }
-      }
+      
+if (filters.status) {
+  switch (filters.status) {
+    case 'pending':
+      where.completed = false;
+      break;
+    case 'completed':
+      where.completed = true;
+      where.verified = null;
+      break;
+    case 'pending_verification':  // ✅ ADD THIS NEW STATUS
+      // Show assignments that have photo/notes but not yet verified
+      // This includes:
+      // - Fully completed (completed = true, verified = null)
+      // - Partially completed multi-slot (completed = false, verified = null, has photo)
+      where.OR = [
+        { completed: true, verified: null },           // Fully completed awaiting verification
+        { completed: false, verified: null, photoUrl: { not: null } }  // Partial submission
+      ];
+      break;
+    case 'verified':
+      where.completed = true;
+      where.verified = true;
+      break;
+    case 'rejected':
+      where.completed = true;
+      where.verified = false;
+      break;
+  }
+}
 
       if (filters.userId) {
         if (!memberIdsInRotation.includes(filters.userId)) {
@@ -2026,4 +2111,4 @@ static async getUpcomingAssignments(
       return { success: false, message: error.message };
     }
   }
-}
+} 

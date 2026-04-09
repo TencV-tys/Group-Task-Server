@@ -732,127 +732,149 @@ static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
     }
   }
 
-  // ========== GET ASSIGNMENT STATISTICS ==========
-  static async getAssignmentStats(req: UserAuthRequest, res: Response) {
-    console.log('\n📊 ========== [getAssignmentStats] ==========');
-    console.log('   🏢 Group ID:', req.params.groupId);
-    console.log('   👤 User ID:', req.user?.id);
+// In assignment.controller.ts - UPDATE getAssignmentStats
+
+static async getAssignmentStats(req: UserAuthRequest, res: Response) {
+  console.log('\n📊 ========== [getAssignmentStats] ==========');
+  console.log('   🏢 Group ID:', req.params.groupId);
+  console.log('   👤 User ID:', req.user?.id);
+  
+  try {
+    const { groupId } = req.params as { groupId: string };
+    const userId = req.user?.id;
     
-    try {
-      const { groupId } = req.params as { groupId: string };
-      const userId = req.user?.id;
-      
-      if (!userId) {
-        console.log("   ❌ No user ID");
-        return res.status(401).json({ 
-          success: false, 
-          message: "Authentication required" 
-        });
-      }
-      
-      console.log("   🔍 Checking group membership...");
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
-      
-      if (!membership) {
-        console.log("   ❌ User not a member of this group");
-        return res.status(403).json({ 
-          success: false, 
-          message: "You are not a member of this group" 
-        });
-      }
-      
-      console.log("   🔍 Getting current rotation week...");
-      const currentWeek = await prisma.group.findUnique({
-        where: { id: groupId },
-        select: { currentRotationWeek: true }
-      });
-      
-      if (!currentWeek) {
-        console.log("   ❌ Group not found");
-        return res.status(404).json({ 
-          success: false, 
-          message: "Group not found" 
-        });
-      }
-      
-      console.log(`   📊 Fetching assignments for week ${currentWeek.currentRotationWeek}...`);
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          task: { groupId },
-          rotationWeek: currentWeek.currentRotationWeek
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true
-            }
-          },
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true
-            }
-          },
-          timeSlot: true
-        }
-      });
-      
-      console.log(`   📊 Found ${assignments.length} assignments for week ${currentWeek.currentRotationWeek}`);
-      
-      const totalAssignments = assignments.length;
-      const completedAssignments = assignments.filter(a => a.completed).length;
-      const pendingAssignments = totalAssignments - completedAssignments;
-      const verifiedAssignments = assignments.filter(a => a.verified === true).length;
-      const rejectedAssignments = assignments.filter(a => a.verified === false).length;
-      const pendingVerification = assignments.filter(a => a.completed && a.verified === null).length;
-      const totalPoints = assignments.reduce((sum, a) => sum + a.points, 0);
-      const completedPoints = assignments.filter(a => a.completed).reduce((sum, a) => sum + a.points, 0);
-      const pendingPoints = totalPoints - completedPoints;
-      
-      console.log("   📊 Stats:", {
-        totalAssignments,
-        completedAssignments,
-        pendingAssignments,
-        verifiedAssignments,
-        rejectedAssignments,
-        totalPoints,
-        completedPoints
-      });
-      
-      return res.status(200).json({
-        success: true,
-        message: "Assignment statistics retrieved",
-        data: {
-          groupId,
-          currentWeek: currentWeek.currentRotationWeek,
-          summary: {
-            totalAssignments,
-            completedAssignments,
-            pendingAssignments,
-            verifiedAssignments,
-            rejectedAssignments,
-            pendingVerification,
-            totalPoints,
-            completedPoints,
-            pendingPoints
-          },
-          assignments: assignments.slice(0, 10)
-        }
-      });
-      
-    } catch (error: any) {
-      console.error("❌ [getAssignmentStats] ERROR:", error);
-      return res.status(500).json({ 
+    if (!userId) {
+      return res.status(401).json({ 
         success: false, 
-        message: error.message || "Error retrieving assignment statistics" 
+        message: "Authentication required" 
       });
     }
+    
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
+    
+    if (!membership) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You are not a member of this group" 
+      });
+    }
+    
+    const currentWeek = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { currentRotationWeek: true }
+    });
+    
+    if (!currentWeek) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Group not found" 
+      });
+    }
+    
+    // Get members in rotation
+    const membersInRotation = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        isActive: true, 
+        inRotation: true 
+      },
+      select: { userId: true }
+    });
+    
+    const memberIdsInRotation = membersInRotation.map(m => m.userId);
+    
+    // Get all assignments for current week (for members in rotation)
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: currentWeek.currentRotationWeek,
+        userId: { in: memberIdsInRotation }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        },
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true
+          }
+        },
+        timeSlot: true
+      }
+    });
+    
+    const totalAssignments = assignments.length;
+    const completedAssignments = assignments.filter(a => a.completed).length;
+    const pendingAssignments = totalAssignments - completedAssignments;
+    const verifiedAssignments = assignments.filter(a => a.verified === true).length;
+    const rejectedAssignments = assignments.filter(a => a.verified === false).length;
+    
+    // ✅ FIXED: Count pending verifications (both fully completed AND partially completed with photo)
+    const pendingVerificationCount = await prisma.assignment.count({
+      where: {
+        task: { groupId },
+        userId: { in: memberIdsInRotation },
+        verified: null,           // Not yet verified
+        photoUrl: { not: null },  // Has a submission
+        OR: [
+          { completed: true },     // Fully completed
+          { completed: false }     // Partially completed (multi-slot)
+        ]
+      }
+    });
+    
+    const totalPoints = assignments.reduce((sum, a) => sum + a.points, 0);
+    const completedPoints = assignments.filter(a => a.completed).reduce((sum, a) => sum + a.points, 0);
+    const pendingPoints = totalPoints - completedPoints;
+    
+    console.log("   📊 Stats:", {
+      totalAssignments,
+      completedAssignments,
+      pendingAssignments,
+      verifiedAssignments,
+      rejectedAssignments,
+      pendingVerificationCount,  // ← Now includes partial submissions
+      totalPoints,
+      completedPoints
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: "Assignment statistics retrieved",
+      data: {
+        groupId,
+        currentWeek: currentWeek.currentRotationWeek,
+        summary: {
+          totalAssignments,
+          completedAssignments,
+          pendingAssignments,
+          verifiedAssignments,
+          rejectedAssignments,
+          pendingVerification: pendingVerificationCount,  // ✅ Updated
+          totalPoints,
+          completedPoints,
+          pendingPoints
+        },
+        assignments: assignments.slice(0, 10)
+      }
+    });
+    
+  } catch (error: any) {
+    console.error("❌ [getAssignmentStats] ERROR:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Error retrieving assignment statistics" 
+    });
   }
+}
 
   // ========== GET USER NEGLECTED TASKS ==========
   static async getUserNeglectedTasks(req: UserAuthRequest, res: Response) {
@@ -979,4 +1001,177 @@ static async checkSubmissionTime(req: UserAuthRequest, res: Response) {
       });
     }
   }
+
+
+  // In assignment.controller.ts - Add this new method
+
+// ========== GET PENDING VERIFICATIONS (DEDICATED ENDPOINT) ==========
+static async getPendingVerifications(req: UserAuthRequest, res: Response) {
+  console.log('\n📋 ========== [getPendingVerifications] ==========');
+  console.log('   👤 Admin User ID:', req.user?.id);
+  console.log('   🏢 Group ID:', req.params.groupId);
+  console.log('   📊 Query:', {
+    limit: req.query.limit,
+    offset: req.query.offset
+  });
+  
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as {groupId:string};
+    const { limit = 20, offset = 0 } = req.query;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "User not authenticated" 
+      });
+    }
+    
+    // Check if user is admin of this group
+    const membership = await prisma.groupMember.findFirst({
+      where: { 
+        userId, 
+        groupId, 
+        groupRole: "ADMIN" 
+      }
+    });
+    
+    if (!membership) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Only group admins can view pending verifications" 
+      });
+    }
+    
+    // Get members in rotation for this group
+    const membersInRotation = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        isActive: true, 
+        inRotation: true 
+      },
+      select: { userId: true }
+    });
+    
+    const memberIdsInRotation = membersInRotation.map(m => m.userId);
+    
+    // Get all assignments pending verification
+    // This includes:
+    // 1. Fully completed assignments waiting for verification (completed = true, verified = null)
+    // 2. Partially completed multi-slot assignments with photo (completed = false, verified = null, has photo)
+    const where = {
+      task: { groupId },
+      userId: { in: memberIdsInRotation },
+      verified: null,           // Not yet verified
+      photoUrl: { not: null },  // Has a submission
+      OR: [
+        { completed: true },                    // Fully completed
+        { completed: false }                    // Partially completed (multi-slot)
+      ]
+    };
+    
+    const [assignments, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
+        include: {
+          user: { 
+            select: { 
+              id: true, 
+              fullName: true, 
+              avatarUrl: true 
+            } 
+          },
+          task: { 
+            select: { 
+              id: true, 
+              title: true, 
+              points: true,
+              executionFrequency: true,
+              timeSlots: {
+                select: {
+                  id: true,
+                  startTime: true,
+                  endTime: true,
+                  label: true,
+                  points: true
+                }
+              }
+            } 
+          },
+          timeSlot: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              label: true,
+              points: true
+            }
+          }
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: Number(limit),
+        skip: Number(offset)
+      }),
+      prisma.assignment.count({ where })
+    ]);
+    
+    console.log(`✅ Found ${assignments.length} pending verifications out of ${total} total`);
+    
+    // Format the response
+    const formattedAssignments = assignments.map(assignment => {
+      const isMultiSlot = assignment.task?.timeSlots && assignment.task.timeSlots.length > 1;
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const totalSlots = assignment.task?.timeSlots?.length || 1;
+      const slotsCompleted = completedSlotIds.length;
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task?.title || 'Unknown Task',
+        taskPoints: assignment.task?.points || assignment.points || 0,
+        executionFrequency: assignment.task?.executionFrequency,
+        userName: assignment.user?.fullName || 'Unknown User',
+        userAvatar: assignment.user?.avatarUrl,
+        userId: assignment.userId,
+        submittedAt: assignment.updatedAt,
+        dueDate: assignment.dueDate,
+        photoUrl: assignment.photoUrl,
+        notes: assignment.notes,
+        adminNotes: assignment.adminNotes,
+        timeSlot: assignment.timeSlot ? {
+          startTime: assignment.timeSlot.startTime,
+          endTime: assignment.timeSlot.endTime,
+          label: assignment.timeSlot.label,
+          points: assignment.timeSlot.points
+        } : null,
+        isMultiSlot,
+        slotsCompleted,
+        totalSlots,
+        completed: assignment.completed,
+        verified: assignment.verified,
+        isPartial: !assignment.completed && isMultiSlot && slotsCompleted > 0
+      };
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: "Pending verifications retrieved successfully",
+      data: {
+        assignments: formattedAssignments,
+        total,
+        limit: Number(limit),
+        offset: Number(offset),
+        hasMore: (Number(offset) + formattedAssignments.length) < total
+      }
+    });
+    
+  } catch (error: any) {
+    console.error("❌ [getPendingVerifications] ERROR:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || "Error retrieving pending verifications" 
+    });
+  }
+}
+
 }
