@@ -31,9 +31,9 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
       where: { 
         groupId, 
         isActive: true,
-        groupRole: "ADMIN"
+        groupRole: "ADMIN" 
       }
-    });
+    }); 
 
     const membersInRotation = await prisma.groupMember.count({
       where: { 
@@ -510,6 +510,8 @@ static async getMemberContributionDetails(
   }
 }
 
+// In group.activity.services.ts - REPLACE getTaskCompletionHistory
+
 // ========== GET TASK COMPLETION HISTORY ==========
 static async getTaskCompletionHistory(
   groupId: string,
@@ -528,9 +530,13 @@ static async getTaskCompletionHistory(
       return { success: false, message: "You are not a member of this group" };
     }
 
+    // ✅ Include both fully completed AND verified assignments (partial completions)
     const where: any = {
       task: { groupId },
-      completed: true
+      OR: [
+        { completed: true },                    // Fully completed assignments
+        { verified: true }                      // Verified slots (even if not fully completed)
+      ]
     };
 
     if (filters?.taskId) {
@@ -545,7 +551,30 @@ static async getTaskCompletionHistory(
       where,
       include: {
         user: { select: { id: true, fullName: true, avatarUrl: true } },
-        task: { select: { id: true, title: true } }
+        task: { 
+          select: { 
+            id: true, 
+            title: true, 
+            timeSlots: {
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                label: true,
+                points: true
+              }
+            }
+          } 
+        },
+        timeSlot: {
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        }
       },
       orderBy: [{ rotationWeek: 'desc' }, { completedAt: 'desc' }],
       take: 100
@@ -553,6 +582,8 @@ static async getTaskCompletionHistory(
 
     // Filter out items with null tasks
     const validHistory = history.filter(item => item.task !== null);
+    
+    console.log(`📊 [TaskCompletionHistory] Found ${validHistory.length} completed/verified assignments`);
 
     // Group by task
     const taskGroups: Record<string, any> = {};
@@ -562,14 +593,26 @@ static async getTaskCompletionHistory(
       if (!taskId) return;
       
       if (!taskGroups[taskId]) {
+        const task = item.task!;
+        const totalSlots = task.timeSlots?.length || 1;
+        
         taskGroups[taskId] = {
           taskId: item.taskId,
           taskTitle: item.task!.title,
+          totalSlots,
           completions: []
         };
       }
 
-      // ✅ ADD assignmentId to the completion object
+      // Determine if this is a partial completion
+      const isPartial = item.verified === true && !item.completed;
+      const slotInfo = item.timeSlot ? {
+        startTime: item.timeSlot.startTime,
+        endTime: item.timeSlot.endTime,
+        label: item.timeSlot.label,
+        points: item.timeSlot.points
+      } : null;
+
       taskGroups[taskId].completions.push({
         assignmentId: item.id,
         userId: item.userId,
@@ -578,9 +621,14 @@ static async getTaskCompletionHistory(
         completedAt: item.completedAt,
         week: item.rotationWeek,
         points: item.points || 0,
-        verified: item.verified
+        verified: item.verified,
+        isPartial,
+        timeSlot: slotInfo,
+        isDueToday: item.dueDate ? new Date(item.dueDate).toDateString() === new Date().toDateString() : false
       });
     });
+
+    console.log(`📊 [TaskCompletionHistory] Found ${Object.keys(taskGroups).length} task groups with completions`);
 
     return {
       success: true,
@@ -597,7 +645,9 @@ static async getTaskCompletionHistory(
   }
 }
 
-// services/group.activity.services.ts - COMPLETE FIXED getAdminDashboard METHOD
+
+
+// In group.activity.services.ts - COMPLETE FIXED getAdminDashboard
 
 // ===== ADMIN DASHBOARD DATA =====
 static async getAdminDashboard(groupId: string, userId: string) {
@@ -655,78 +705,72 @@ static async getAdminDashboard(groupId: string, userId: string) {
         rotationWeek: group?.currentRotationWeek || 1
       },
       include: {
-        user: true,
-        task: true
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        },
+        task: {
+          include: {
+            timeSlots: true
+          }
+        },
+        timeSlot: true
       }
     });
 
     // Filter out assignments with null tasks
-    const validWeekAssignments = currentWeekAssignments.filter(a => a.task !== null);
+    const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
     const now = new Date();
 
-    // ===== FIXED CALCULATIONS =====
-    const totalThisWeek = validWeekAssignments.length;
-    const completedThisWeek = validWeekAssignments.filter(a => a.completed).length;
+    // ✅ Calculate stats at ASSIGNMENT level
+    const totalAssignments = validAssignments.length;
+    const completedAssignments = validAssignments.filter(a => a.completed === true).length;
+    const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
+    const pendingAssignments = validAssignments.filter(a => !a.completed && !a.expired).length;
     
-    // Neglected tasks: not completed AND (expired OR due date is in the past)
-    const neglectedAssignments = validWeekAssignments.filter(a => 
-      !a.completed && (a.expired === true || new Date(a.dueDate) < now)
+    // ✅ Calculate expired assignments correctly
+    const expiredAssignmentsList = validAssignments.filter(a => 
+      a.expired === true || (!a.completed && new Date(a.dueDate) < now)
     );
-    const neglectedCount = neglectedAssignments.length;
-    const neglectedPoints = neglectedAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
-
-    // ✅ Pending = total - completed - neglected
-    const pendingThisWeek = Math.max(0, totalThisWeek - completedThisWeek - neglectedCount);
-
-    // ✅ Active tasks = total - neglected (tasks that are still actionable)
-    const activeTotalTasks = Math.max(0, totalThisWeek - neglectedCount);
+    const expiredCount = expiredAssignmentsList.length;
     
-    // ✅ Completion rate based on ACTIVE tasks (excluding neglected)
-    const completionPercentage = activeTotalTasks > 0 
-      ? (completedThisWeek / activeTotalTasks) * 100 
-      : 0;
+    // ✅ Calculate points correctly
+const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+const earnedPoints = validAssignments
+  .filter(a => a.verified === true)
+  .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
 
-    // Calculate neglected tasks by member
+// ✅ Calculate completion percentage - ROUND to nearest integer
+const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+
+    // Calculate neglected by member
     const neglectedByMember: Record<string, { count: number; points: number; name: string }> = {};
-    neglectedAssignments.forEach(assignment => {
-      const userIdKey = assignment.userId;
-      const userName = assignment.user?.fullName || 'Unknown';
+    expiredAssignmentsList.forEach((assignment: any) => {
+      const memberId = assignment.userId;
+      const member = members.find(m => m.userId === memberId);
+      const memberName = member?.user?.fullName || 'Unknown';
       
-      if (!neglectedByMember[userIdKey]) {
-        neglectedByMember[userIdKey] = { count: 0, points: 0, name: userName };
+      if (!neglectedByMember[memberId]) {
+        neglectedByMember[memberId] = { count: 0, points: 0, name: memberName };
       }
-      neglectedByMember[userIdKey].count++;
-      neglectedByMember[userIdKey].points += (assignment.points || 0);
+      neglectedByMember[memberId].count++;
+      neglectedByMember[memberId].points += (assignment.points || 0);
     });
 
-    // Calculate points correctly based on verification status
-    const totalPoints = validWeekAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
-    
-    // Earned points = ONLY from VERIFIED assignments (completed AND verified === true)
-    const earnedPoints = validWeekAssignments
-      .filter(a => a.completed && a.verified === true)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
-    
-    // Pending Verification = completed but not yet verified (verified === null)
-    const pendingVerificationPoints = validWeekAssignments
-      .filter(a => a.completed && a.verified === null)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
-    
-    // Rejected points = verified === false
-    const rejectedPoints = validWeekAssignments
-      .filter(a => a.verified === false)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
-
-    console.log('📊 [AdminDashboard] Weekly Stats:', {
-      totalThisWeek,
-      completedThisWeek,
-      pendingThisWeek,
-      neglectedCount,
-      activeTotalTasks,
-      completionPercentage: completionPercentage.toFixed(0),
+    console.log('📊 [AdminDashboard] Assignment-level Stats:', {
+      totalAssignments,
+      completedAssignments,
+      verifiedAssignments,
+      pendingAssignments,
+      expiredCount,
+      totalPoints,
       earnedPoints,
-      pendingVerificationPoints,
-      rejectedPoints
+      completionPercentage: completionPercentage.toFixed(1),
+      neglectedPoints
     });
 
     return {
@@ -748,20 +792,20 @@ static async getAdminDashboard(groupId: string, userId: string) {
           totalTasks: tasks.length,
           recurringTasks: tasks.filter(t => t.isRecurring).length,
           weeklyCompletion: {
-            total: totalThisWeek,
-            completed: completedThisWeek,
-            pending: pendingThisWeek,           // ✅ EXCLUDES neglected tasks
-            percentage: completionPercentage,    // ✅ Based on active tasks
-            activeTotal: activeTotalTasks       // ✅ Added for reference
+            total: totalAssignments,              // 19 total assignments
+            completed: verifiedAssignments,       // 1 verified assignment
+            pending: pendingAssignments,          // 18 pending assignments
+            percentage: completionPercentage,     // 4.5% (5/110)
+            activeTotal: totalAssignments - expiredCount  // 18 active
           },
           points: {
-            total: totalPoints,
-            earned: earnedPoints,
-            pendingVerification: pendingVerificationPoints,
-            rejected: rejectedPoints
+            total: totalPoints,                   // 110 total points
+            earned: earnedPoints,                 // 5 earned points
+            pendingVerification: 0,
+            rejected: 0
           },
           neglected: {
-            count: neglectedCount,
+            count: expiredCount,
             points: neglectedPoints,
             byMember: neglectedByMember
           }
@@ -783,7 +827,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
   } catch (error: any) {
     console.error("Error in getAdminDashboard:", error);
     return { success: false, message: error.message };
-  } 
+  }
 }
 
 // In group.activity.services.ts - REVERT to show TOTAL ASSIGNMENTS count
