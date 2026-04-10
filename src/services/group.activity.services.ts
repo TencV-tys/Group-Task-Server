@@ -120,9 +120,10 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
     const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
     
     // ✅ FIXED: Calculate neglected using expired flag OR past due date (matches AdminDashboard)
-    const neglectedAssignments = validAssignments.filter(a => 
-      a.expired === true || (!a.completed && new Date(a.dueDate) < now)
-    ).length;
+     const neglectedAssignments = validAssignments.filter(a => 
+  (a.expired === true || (!a.completed && new Date(a.dueDate) < now)) &&
+  a.verified !== true  // ✅ EXCLUDE verified assignments from neglected
+).length;
     
     // ✅ FIXED: Calculate points correctly (only verified assignments)
     const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
@@ -449,12 +450,12 @@ static async getMemberContributionDetails(
       where: {
         userId: memberId,
         task: { groupId }
-      },
+      }, 
       include: {
         task: { 
           select: { 
             id: true, 
-            title: true, 
+            title: true,  
             points: true,
             executionFrequency: true,
             timeSlots: {
@@ -763,9 +764,7 @@ static async getTaskCompletionHistory(
   }
 }
 
-
-
-// In group.activity.services.ts - COMPLETE FIXED getAdminDashboard
+// In group.activity.services.ts - FULLY UPDATED getAdminDashboard
 
 // ===== ADMIN DASHBOARD DATA =====
 static async getAdminDashboard(groupId: string, userId: string) {
@@ -849,23 +848,24 @@ static async getAdminDashboard(groupId: string, userId: string) {
     const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
     const pendingAssignments = validAssignments.filter(a => !a.completed && !a.expired).length;
     
-    // ✅ Calculate expired assignments correctly
+    // ✅ Calculate expired assignments correctly - EXCLUDE verified assignments
     const expiredAssignmentsList = validAssignments.filter(a => 
-      a.expired === true || (!a.completed && new Date(a.dueDate) < now)
+      (a.expired === true || (!a.completed && new Date(a.dueDate) < now)) &&
+      a.verified !== true  // ✅ EXCLUDE verified assignments from neglected
     );
     const expiredCount = expiredAssignmentsList.length;
     
     // ✅ Calculate points correctly
-const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-const earnedPoints = validAssignments
-  .filter(a => a.verified === true)
-  .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+    const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
 
-// ✅ Calculate completion percentage - ROUND to nearest integer
-const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
-const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+    // ✅ Calculate completion percentage - ROUND to nearest integer
+    const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+    const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
 
-    // Calculate neglected by member
+    // Calculate neglected by member (only from expiredAssignmentsList)
     const neglectedByMember: Record<string, { count: number; points: number; name: string }> = {};
     expiredAssignmentsList.forEach((assignment: any) => {
       const memberId = assignment.userId;
@@ -910,15 +910,15 @@ const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => s
           totalTasks: tasks.length,
           recurringTasks: tasks.filter(t => t.isRecurring).length,
           weeklyCompletion: {
-            total: totalAssignments,              // 19 total assignments
-            completed: verifiedAssignments,       // 1 verified assignment
-            pending: pendingAssignments,          // 18 pending assignments
-            percentage: completionPercentage,     // 4.5% (5/110)
-            activeTotal: totalAssignments - expiredCount  // 18 active
+            total: totalAssignments,
+            completed: verifiedAssignments,
+            pending: pendingAssignments,
+            percentage: completionPercentage,
+            activeTotal: totalAssignments - expiredCount
           },
           points: {
-            total: totalPoints,                   // 110 total points
-            earned: earnedPoints,                 // 5 earned points
+            total: totalPoints,
+            earned: earnedPoints,
             pendingVerification: 0,
             rejected: 0
           },
@@ -940,15 +940,13 @@ const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => s
           neglectedPoints: neglectedByMember[m.userId]?.points || 0
         }))
       }
-    };
+    }; 
 
   } catch (error: any) {
     console.error("Error in getAdminDashboard:", error);
     return { success: false, message: error.message };
   }
 }
-
-// In group.activity.services.ts - REVERT to show TOTAL ASSIGNMENTS count
 
 // ===== MEMBER DASHBOARD DATA =====
 static async getMemberDashboard(groupId: string, userId: string) {
