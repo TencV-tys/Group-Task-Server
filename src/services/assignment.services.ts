@@ -1114,7 +1114,6 @@ static async getUserAssignments(
   }
 }
 
-
 // ========== GET TODAY'S ASSIGNMENTS ==========
 static async getTodayAssignments(
   userId: string,
@@ -1133,25 +1132,13 @@ static async getTodayAssignments(
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     
-    console.log(`📅 Today: ${today.toISOString()}`);
-    console.log(`📅 Tomorrow: ${tomorrow.toISOString()}`);
-    console.log(`⏰ Current time: ${now.toLocaleTimeString()}`);
-    
     // First, get all assignments for this user
-    console.log(`📡 Calling getUserAssignments for user ${userId}...`);
     const userAssignmentsResult = await this.getUserAssignments(userId, {
       limit: 100,
       offset: 0
     });
     
-    console.log(`📊 getUserAssignments result:`, {
-      success: userAssignmentsResult.success,
-      totalAssignments: userAssignmentsResult.total,
-      assignmentsLength: userAssignmentsResult.assignments?.length
-    });
-    
     if (!userAssignmentsResult.success) {
-      console.log(`❌ Failed to get user assignments: ${userAssignmentsResult.message}`);
       return {
         success: false,
         data: { assignments: [], currentTime: now, total: 0 },
@@ -1160,22 +1147,37 @@ static async getTodayAssignments(
     }
     
     const allAssignments = userAssignmentsResult.assignments || [];
-    console.log(`📊 Total assignments from API: ${allAssignments.length}`);
     
-    // Log first 3 assignments for debugging
-    if (allAssignments.length > 0) {
-      console.log(`📋 First 3 assignments:`);
-      allAssignments.slice(0, 3).forEach((a: any, i: number) => {
-        console.log(`   ${i+1}. ID: ${a.id}, Title: ${a.taskTitle}, Due: ${a.dueDate}, Completed: ${a.completed}, IsDueToday: ${a.isDueToday}`);
-      });
-    }
-    
-    // Filter assignments due today and not completed
+    // ✅ FIXED: Filter active pending assignments only
     const todayAssignments = allAssignments.filter((assignment: any) => {
-      // Skip completed assignments
+      // ❌ Skip completed assignments
       if (assignment.completed) {
-        console.log(`⏭️ Skipping completed assignment: ${assignment.taskTitle} (${assignment.id})`);
+        console.log(`⏭️ Skipping COMPLETED assignment: ${assignment.taskTitle} (${assignment.id})`);
         return false;
+      }
+      
+      // ❌ Skip VERIFIED assignments (already earned points)
+      if (assignment.verified === true) {
+        console.log(`⏭️ Skipping VERIFIED assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      // ❌ Skip EXPIRED assignments
+      if (assignment.expired === true) {
+        console.log(`⏭️ Skipping EXPIRED assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      // ❌ Skip partially expired assignments with no remaining slots
+      if (assignment.partiallyExpired === true) {
+        const remainingSlots = assignment.timeSlots?.filter((slot: any) => 
+          !assignment.completedTimeSlotIds?.includes(slot.id) && 
+          !assignment.missedTimeSlotIds?.includes(slot.id)
+        );
+        if (!remainingSlots || remainingSlots.length === 0) {
+          console.log(`⏭️ Skipping PARTIALLY EXPIRED with no remaining slots: ${assignment.taskTitle} (${assignment.id})`);
+          return false;
+        }
       }
       
       // Check due date
@@ -1191,19 +1193,19 @@ static async getTodayAssignments(
       const belongsToGroup = !filters?.groupId || assignment.group?.id === filters.groupId;
       
       if (isDueToday) {
-        console.log(`✅ Assignment due today: ${assignment.taskTitle} (${assignment.id})`);
+        console.log(`✅ Active pending assignment due today: ${assignment.taskTitle} (${assignment.id})`);
         console.log(`   Due date: ${dueDate.toLocaleString()}`);
         console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+        console.log(`   Completed: ${assignment.completed}, Verified: ${assignment.verified}, Expired: ${assignment.expired}`);
       }
       
       return isDueToday && belongsToGroup;
     });
     
-    console.log(`📋 Found ${todayAssignments.length} assignments due today`);
+    console.log(`📋 Found ${todayAssignments.length} active pending assignments due today`);
     
     // Transform to TodayAssignment format with time validation
     const assignmentsWithTimeInfo = todayAssignments.map((assignment: any) => {
-      // Create assignment object with timeSlot for validation
       const assignmentForValidation = {
         ...assignment,
         timeSlot: assignment.timeSlot,
@@ -1241,12 +1243,12 @@ static async getTodayAssignments(
       };
     });
     
-    console.log(`✅ Final assignments count: ${assignmentsWithTimeInfo.length}`);
+    console.log(`✅ Final active pending assignments count: ${assignmentsWithTimeInfo.length}`);
     console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
     
     return {
       success: true,
-      message: "Today's assignments retrieved",
+      message: "Today's active pending assignments retrieved",
       data: {
         assignments: assignmentsWithTimeInfo,
         currentTime: now,
