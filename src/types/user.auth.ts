@@ -26,7 +26,7 @@ error?:string;
 export interface UserLoginAuthTypes{
 success:boolean;
 message:string;
-token?:string;
+token?:string; 
 user?:{
     id:string;
     fullName:string;
@@ -36,6 +36,7 @@ user?:{
     role:UserRole;
     roleStatus:UserRoleStatus;
 };
+field?: 'email' | 'password'; 
 error?:string;
 
 

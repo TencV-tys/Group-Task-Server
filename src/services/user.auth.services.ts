@@ -189,101 +189,107 @@ export class UserServices {
     } 
   }
 
-  // ===== SECURE LOGIN WITH RATE LIMITING =====
-  static async login(email: string, password: string): Promise<UserLoginAuthTypes> {
-    try {
-      // ===== INPUT VALIDATION =====
-      if (!email || !password) {
-        return {
-          success: false,
-          message: "Email and password are required"
-        };
-      }
+// In user.auth.services.ts - update the login method
 
-      const sanitizedEmail = this.sanitizeEmail(email);
-
-      // ===== RATE LIMITING CHECK =====
-      if (this.isRateLimited(sanitizedEmail)) {
-        const attempts = failedLoginAttempts.get(sanitizedEmail);
-        const waitTime = Math.ceil((this.LOCKOUT_TIME - (Date.now() - (attempts?.lastAttempt?.getTime() || 0))) / 60000);
-        
-        return {
-          success: false,
-          message: `Too many failed attempts. Please try again in ${waitTime} minutes.`
-        };
-      }
-
-      // ===== FETCH USER =====
-      const user = await prisma.user.findUnique({
-        where: { email: sanitizedEmail }
-      });
-
-      // Use constant-time comparison to prevent timing attacks
-      let isValidPassword = false;
-      if (user) {
-        isValidPassword = await comparePassword(password, user.passwordHash);
-      }
-
-      // ===== HANDLE FAILED ATTEMPT =====
-      if (!user || !isValidPassword) {
-        this.recordFailedAttempt(sanitizedEmail);
-        
-        // Use generic message to prevent user enumeration
-        return {
-          success: false,
-          message: "Invalid email or password"
-        };
-      }
-
-      // ===== CHECK USER STATUS =====
-      if (user.roleStatus !== UserRoleStatus.ACTIVE) {
-        return {
-          success: false,
-          message: "Account is not active. Please contact support."
-        };
-      }
-
-      // ===== GENERATE TOKEN =====
-      const userId = user.id as unknown as string;
-      const token = UserJwtUtils.generateToken(userId, user.email, user.role);
-
-      // ===== UPDATE LAST LOGIN =====
-      await prisma.user.update({
-        where: { id: userId },
-        data: { lastLoginAt: new Date() }
-      });
-
-      // ===== CLEAR FAILED ATTEMPTS =====
-      failedLoginAttempts.delete(sanitizedEmail);
-
+static async login(email: string, password: string): Promise<UserLoginAuthTypes> {
+  try {
+    // ===== INPUT VALIDATION =====
+    if (!email || !password) {
       return {
-        success: true,
-        message: "Login successful",
-        token,
-        user: {
-          id: userId,
-          fullName: user.fullName,
-          email: user.email,
-          avatarUrl: user.avatarUrl,
-          gender: user.gender as Gender | null,
-          role: user.role,
-          roleStatus: user.roleStatus
-        }
+        success: false,
+        message: "Email and password are required"
       };
+    }
 
-    } catch (e: any) {
-      console.error("Login error:", e);
-      
-      // Log security event
-      this.logSecurityEvent('LOGIN_ERROR', { email, error: e.message });
+    const sanitizedEmail = this.sanitizeEmail(email);
+
+    // ===== RATE LIMITING CHECK =====
+    if (this.isRateLimited(sanitizedEmail)) {
+      const attempts = failedLoginAttempts.get(sanitizedEmail);
+      const waitTime = Math.ceil((this.LOCKOUT_TIME - (Date.now() - (attempts?.lastAttempt?.getTime() || 0))) / 60000);
       
       return {
         success: false,
-        message: "Login failed. Please try again later.",
-        error: process.env.NODE_ENV === 'development' ? e.message : undefined
+        message: `Too many failed attempts. Please try again in ${waitTime} minutes.`
       };
-    }  
-  }
+    }
+
+    // ===== FETCH USER =====
+    const user = await prisma.user.findUnique({
+      where: { email: sanitizedEmail }
+    });
+
+    // ===== CHECK IF EMAIL EXISTS =====
+    if (!user) {
+      this.recordFailedAttempt(sanitizedEmail);
+      return {
+        success: false,
+        message: "Email not found",  // ← Specific: email doesn't exist
+        field: "email"  
+      };
+    }
+
+    // ===== CHECK PASSWORD =====
+    const isValidPassword = await comparePassword(password, user.passwordHash);
+    
+    if (!isValidPassword) {
+      this.recordFailedAttempt(sanitizedEmail);
+      return {
+        success: false,
+        message: "Incorrect password",  // ← Specific: password is wrong
+        field: "password"  // ← Add field indicator
+      };
+    }
+
+    // ===== CHECK USER STATUS =====
+    if (user.roleStatus !== UserRoleStatus.ACTIVE) {
+      return {
+        success: false,
+        message: "Account is not active. Please contact support.",
+        field: "email"
+      };
+    }
+
+    // ===== GENERATE TOKEN =====
+    const userId = user.id as unknown as string;
+    const token = UserJwtUtils.generateToken(userId, user.email, user.role);
+
+    // ===== UPDATE LAST LOGIN =====
+    await prisma.user.update({
+      where: { id: userId },
+      data: { lastLoginAt: new Date() }
+    });
+
+    // ===== CLEAR FAILED ATTEMPTS =====
+    failedLoginAttempts.delete(sanitizedEmail);
+
+    return {
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: userId,
+        fullName: user.fullName,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        gender: user.gender as Gender | null,
+        role: user.role,
+        roleStatus: user.roleStatus
+      }
+    };
+
+  } catch (e: any) {
+    console.error("Login error:", e);
+    
+    this.logSecurityEvent('LOGIN_ERROR', { email, error: e.message });
+    
+    return {
+      success: false,
+      message: "Login failed. Please try again later.",
+      error: process.env.NODE_ENV === 'development' ? e.message : undefined
+    };
+  }  
+}
 
   // ===== SECURE AVATAR SAVING =====
   private static async secureSaveBase64Image(base64String: string, email: string): Promise<string | null> {

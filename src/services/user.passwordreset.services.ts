@@ -68,7 +68,7 @@ export class UserPasswordResetService {
       console.log("Reset token stored in database");
 
       // Create reset URL
-        const resetUrl = `http://192.168.1.29:5000/reset-password-form?token=${resetToken}&email=${email}`;
+        const resetUrl = `http://${process.env.WIFI_IP}:${process.env.PORT}/reset-password-form?token=${resetToken}&email=${email}`;
       console.log("Reset URL generated:", resetUrl);
 
       // Email content
