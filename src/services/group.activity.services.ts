@@ -948,7 +948,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
-// ===== MEMBER DASHBOARD DATA =====
+  // ===== MEMBER DASHBOARD DATA - FULLY FIXED WITH TYPE-SAFE VERIFICATION =====
 static async getMemberDashboard(groupId: string, userId: string) {
   try {
     console.log('🔍🔍🔍 [getMemberDashboard] START 🔍🔍🔍');
@@ -1001,7 +1001,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const now = new Date();
     const currentWeek = group?.currentRotationWeek || 1;
 
-    // ✅ SHOW TOTAL ASSIGNMENTS COUNT (not grouped by task)
+    // Total assignments count
     const totalAssignments = assignmentsWithTasks.length;
     
     // Pending = not completed AND not expired
@@ -1012,19 +1012,17 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const completedAssignments = assignmentsWithTasks.filter(a => a.completed === true);
     const completedCount = completedAssignments.length;
     
-    // Expired assignments
-     const expiredAssignments = assignmentsWithTasks.filter(a => {
-  if (a.completed || a.verified === true) return false;
+   // Expired assignments - EXCLUDE verified assignments
+const expiredAssignments = assignmentsWithTasks.filter(a => {
+  // ✅ Skip if verified (already earned points)
+  if (a.verified === true) return false;
   
-  // Check if already marked as expired
   if (a.expired === true) return true;
+  if (a.completed === true) return false;
   
-  // Check if due date has passed (fallback)
   const dueDate = new Date(a.dueDate);
-  const now = new Date();
   if (dueDate < now) return true;
   
-  // If there's a time slot, check properly
   const timeSlot = a.timeSlot;
   if (timeSlot && timeSlot.endTime) {
     const endParts = timeSlot.endTime.split(':');
@@ -1033,18 +1031,13 @@ static async getMemberDashboard(groupId: string, userId: string) {
       const endMinute = parseInt(endParts[1], 10);
       
       if (!isNaN(endHour) && !isNaN(endMinute)) {
-        // Calculate UTC deadline (end time in PHT converted to UTC)
         const deadline = new Date(Date.UTC(
           dueDate.getUTCFullYear(),
           dueDate.getUTCMonth(),
           dueDate.getUTCDate(),
           endHour - 8, endMinute, 0, 0
         ));
-        
-        // Add 30 minute grace period
         const graceEnd = new Date(deadline.getTime() + 30 * 60000);
-        
-        // Check if grace period has passed
         if (now > graceEnd) return true;
       }
     }
@@ -1052,17 +1045,16 @@ static async getMemberDashboard(groupId: string, userId: string) {
   
   return false;
 });
+    const myNeglectedCount = expiredAssignments.length;
+    const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
 
-const myNeglectedCount = expiredAssignments.length;
-const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
-
-    console.log(`📊 [getMemberDashboard] Assignment counts (not grouped):`);
+    console.log(`📊 [getMemberDashboard] Assignment counts:`);
     console.log(`   Total assignments: ${totalAssignments}`);
     console.log(`   Pending assignments: ${pendingCount}`);
     console.log(`   Completed assignments: ${completedCount}`);
     console.log(`   Expired assignments: ${myNeglectedCount}`);
 
-    // Due today - assignments due today that are not completed
+    // Due today assignments
     const today = new Date();
     const startOfDay = new Date(today);
     startOfDay.setHours(0, 0, 0, 0);
@@ -1076,7 +1068,7 @@ const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points 
     
     const dueTodayCount = dueTodayAssignments.length;
 
-    // Upcoming assignments - pending but not due today
+    // Upcoming assignments
     const upcomingAssignments = pendingAssignments.filter(assignment => {
       const dueDate = new Date(assignment.dueDate);
       return !(dueDate >= startOfDay && dueDate <= endOfDay);
@@ -1084,18 +1076,37 @@ const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points 
 
     console.log(`📅 [getMemberDashboard] Due today: ${dueTodayCount}, Upcoming: ${upcomingAssignments.length}`);
 
-    // Points calculation - only from VERIFIED assignments
-    const verifiedCompleted = assignmentsWithTasks.filter(a => a.completed && a.verified === true);
+    // ✅ FIXED: Points calculation - include verified assignments even if not completed
+let totalVerifiedPoints = 0;
+let thisWeekVerifiedPoints = 0;
+const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+
+// In getMemberDashboard, update the points calculation:
+
+for (const a of assignmentsWithTasks) {
+  // Check if verified (regardless of completed status)
+  const isVerified = a.verified === true;
+  
+  if (isVerified) {
+    const points = a.points || 0;
+    totalVerifiedPoints += points;
     
-    const pointsThisWeek = verifiedCompleted
-      .filter(a => {
-        const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-        return a.completedAt && a.completedAt > weekAgo;
-      })
-      .reduce((sum, a) => sum + (a.points || 0), 0);
+    // Use updatedAt (when verification happened) or fallback to completedAt
+    const verificationDate = a.updatedAt || a.completedAt;
+    if (verificationDate && new Date(verificationDate) > weekAgo) {
+      thisWeekVerifiedPoints += points;
+    }
+  }
+}
 
-    const totalPoints = verifiedCompleted.reduce((sum, a) => sum + (a.points || 0), 0);
-
+const verifiedAssignmentsCount = assignmentsWithTasks.filter(a => a.verified === true).length;
+const totalPoints = assignmentsWithTasks.reduce((sum, a) => sum + (a.points || 0), 0);
+console.log(`💰 [getMemberDashboard] Points calculation:`, {
+  totalVerifiedPoints,
+  thisWeekVerifiedPoints,
+  verifiedAssignmentsCount: assignmentsWithTasks.filter(a => a.verified === true).length
+});
     // Pending swaps count
     const pendingSwaps = await prisma.swapRequest.count({
       where: {
@@ -1129,20 +1140,20 @@ const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points 
     }));
 
     // Format neglected assignments
-   const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
-  const dueDate = new Date(a.dueDate);
-  const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-  return {
-    id: a.id,
-    taskId: a.taskId,
-    title: a.task!.title,
-    points: a.points || 0,
-    dueDate: a.dueDate,
-    expiredAt: a.expiredAt,
-    daysOverdue,
-    timeSlot: a.timeSlot
-  };
-});
+    const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
+      const dueDate = new Date(a.dueDate);
+      const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      return {
+        id: a.id,
+        taskId: a.taskId,
+        title: a.task!.title,
+        points: a.points || 0,
+        dueDate: a.dueDate,
+        expiredAt: a.expiredAt,
+        daysOverdue,
+        timeSlot: a.timeSlot
+      };
+    });
 
     // Get historical assignments (deleted tasks)
     const historicalAssignments = await prisma.assignment.findMany({
@@ -1170,13 +1181,15 @@ const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points 
       timeSlot: t.timeSlot
     }));
 
-    console.log(`🏁 [getMemberDashboard] Final stats (SHOWING ASSIGNMENT COUNTS):`, {
+    console.log(`🏁 [getMemberDashboard] Final stats:`, {
       totalAssignments,
       pendingCount,
       completedCount,
       dueTodayCount,
       myNeglectedCount,
-      upcomingCount: upcomingAssignments.length
+      upcomingCount: upcomingAssignments.length,
+      totalVerifiedPoints,
+      thisWeekVerifiedPoints
     });
 
     return {
@@ -1189,18 +1202,20 @@ const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points 
           maxMembers: group?.maxMembers || 6,
           memberCount: totalMembers
         },
-        stats: {
-          pendingTasks: pendingCount,        // ✅ Now shows TOTAL ASSIGNMENTS (14)
-          completedTasks: completedCount,
-          dueToday: dueTodayCount,
-          pendingSwaps,
-          pointsThisWeek,
-          totalPoints,
-          totalAssignments,                  // Keep for reference
-          historicalCount: historicalAssignments.length,
-          myNeglectedCount,
-          myNeglectedPoints
-        },
+         stats: {
+  pendingTasks: pendingCount,
+  completedTasks: verifiedAssignmentsCount,  // ← Change this to use verified count
+  dueToday: dueTodayCount,
+  pendingSwaps,
+  pointsThisWeek: thisWeekVerifiedPoints,
+  totalPoints: totalVerifiedPoints,
+  totalPointsPossible: totalPoints,  
+  totalAssignments,
+  verifiedAssignmentsCount,  // ← Add this
+  historicalCount: historicalAssignments.length,
+  myNeglectedCount,
+  myNeglectedPoints
+},
         tasks: {
           dueToday: formattedDueToday,
           upcoming: formattedUpcoming,
