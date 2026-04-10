@@ -321,12 +321,17 @@ static async createTask(
           console.log(`   └─────────────────────────────────────────`);
           
           for (const timeSlot of createdSlots) {
-            const timeParts = timeSlot.startTime.split(':');
-            const hours = Number(timeParts[0]) || 18;
-            const minutes = Number(timeParts[1]) || 0;
-            
-            const slotDueDateUTC = new Date(dueDateUTC);
-            slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+             // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDateUTC = new Date(dueDateUTC);
+slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
             
             const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
@@ -416,12 +421,16 @@ static async createTask(
             console.log(`   Day ${i+1}: ${day} → ${dueDateUTC.toISOString()} (days to add: ${daysToAdd})`);
             
             for (const timeSlot of createdSlots) {
-              const timeParts = timeSlot.startTime.split(':');
-              const hours = Number(timeParts[0]) || 18;
-              const minutes = Number(timeParts[1]) || 0;
-              
-              const slotDueDateUTC = new Date(dueDateUTC);
-              slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+              const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDateUTC = new Date(dueDateUTC);
+slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
               
               const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
@@ -1361,13 +1370,17 @@ static async getTaskDetails(taskId: string, userId: string) {
     dueDate.setUTCDate(todayUTC.getUTCDate() + i);  // ✅ UTC
     
     for (const timeSlot of timeSlots) {
-      const timeParts = timeSlot.startTime.split(':');
-      const hours = Number(timeParts[0]) || 18;
-      const minutes = Number(timeParts[1]) || 0;
-      
-      const slotDueDate = new Date(dueDate);
-      slotDueDate.setUTCHours(hours, minutes, 0, 0);  // ✅ UTC
-      
+        // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDate = new Date(dueDate);
+slotDueDate.setUTCHours(hours, minutes, 0, 0);
       const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
       await prisma.assignment.create({
@@ -1392,13 +1405,17 @@ static async getTaskDetails(taskId: string, userId: string) {
       const baseDueDate = TaskHelpers.calculateDueDate(day, undefined);
       
       for (const timeSlot of timeSlots) {
-        const timeParts = timeSlot.startTime.split(':');
-        const hours = Number(timeParts[0]) || 18;
-        const minutes = Number(timeParts[1]) || 0;
-        
-        const slotDueDate = new Date(baseDueDate);
-        slotDueDate.setUTCHours(hours, minutes, 0, 0);  // ✅ UTC
-        
+          // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDate = new Date(baseDueDate);
+slotDueDate.setUTCHours(hours, minutes, 0, 0);
         const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
         await prisma.assignment.create({
@@ -1613,13 +1630,18 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     dueDate.setUTCDate(dueDate.getUTCDate() + day);  // ✅ UTC
     
     for (const timeSlot of timeSlots) {
-      const timeParts = timeSlot.startTime.split(':');
-      const hours = Number(timeParts[0]) || 0;
-      const minutes = Number(timeParts[1]) || 0;
-      
-      const slotDueDate = new Date(dueDate);
-      slotDueDate.setUTCHours(hours, minutes, 0, 0);  // ✅ UTC
-      
+       // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 0;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDate = new Date(dueDate);
+slotDueDate.setUTCHours(hours, minutes, 0, 0);
+
       await prisma.assignment.create({
         data: {
           taskId: task.id,
@@ -1660,12 +1682,18 @@ static async rotateGroupTasks(groupId: string, userId: string) {
   const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
   
   for (const timeSlot of timeSlots) {
-    const timeParts = timeSlot.startTime.split(':');
-    const hours = Number(timeParts[0]) || 0;
-    const minutes = Number(timeParts[1]) || 0;
     
-    const slotDueDate = new Date(baseDueDate);
-    slotDueDate.setUTCHours(hours, minutes, 0, 0);  // ✅ UTC
+    // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 0;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDate = new Date(baseDueDate);
+slotDueDate.setUTCHours(hours, minutes, 0, 0);
     
     await prisma.assignment.create({
       data: {
@@ -1984,12 +2012,17 @@ static async reassignTask(taskId: string, userId: string, targetUserId: string) 
         console.log(`      Day ${i}: ${actualDayName} (${dueDateUTC.toISOString()})`);
         
         for (const timeSlot of task.timeSlots) {
-          const timeParts = timeSlot.startTime.split(':');
-          const hours = Number(timeParts[0]) || 18;
-          const minutes = Number(timeParts[1]) || 0;
-          
-          const slotDueDateUTC = new Date(dueDateUTC);
-          slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+           // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDateUTC = new Date(dueDateUTC);
+slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
           
           const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
@@ -2106,12 +2139,17 @@ for (let i = 0; i < daysInOrder.length; i++) {
   console.log(`      Day ${i+1}: ${day} (actual: ${actualDayName}) → ${dueDateUTC.toISOString()} (days to add: ${daysToAdd}) ${isInPast ? '⚠️ EXPIRED' : '✅ ACTIVE'}`);
   
   for (const timeSlot of task.timeSlots) {
-    const timeParts = timeSlot.startTime.split(':');
-    const hours = Number(timeParts[0]) || 18;
-    const minutes = Number(timeParts[1]) || 0;
-    
-    const slotDueDateUTC = new Date(dueDateUTC);
-    slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+       // ✅ Use END time, not START time
+const timeParts = timeSlot.endTime.split(':');
+let hours = Number(timeParts[0]) || 18;
+const minutes = Number(timeParts[1]) || 0;
+
+// ✅ Convert PHT to UTC (subtract 8 hours)
+hours = hours - 8;
+if (hours < 0) hours += 24;
+
+const slotDueDateUTC = new Date(dueDateUTC);
+slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
     
     const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 

@@ -412,7 +412,7 @@ static async getMemberContributionDetails(
           { groupRole: "ADMIN" },
           { userId: memberId }
         ]
-      }
+      } 
     });
 
     if (!membership) {
@@ -1013,9 +1013,48 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const completedCount = completedAssignments.length;
     
     // Expired assignments
-    const expiredAssignments = assignmentsWithTasks.filter(a => a.expired === true && !a.completed);
-    const myNeglectedCount = expiredAssignments.length;
-    const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+     const expiredAssignments = assignmentsWithTasks.filter(a => {
+  if (a.completed || a.verified === true) return false;
+  
+  // Check if already marked as expired
+  if (a.expired === true) return true;
+  
+  // Check if due date has passed (fallback)
+  const dueDate = new Date(a.dueDate);
+  const now = new Date();
+  if (dueDate < now) return true;
+  
+  // If there's a time slot, check properly
+  const timeSlot = a.timeSlot;
+  if (timeSlot && timeSlot.endTime) {
+    const endParts = timeSlot.endTime.split(':');
+    if (endParts.length >= 2 && endParts[0] && endParts[1]) {
+      const endHour = parseInt(endParts[0], 10);
+      const endMinute = parseInt(endParts[1], 10);
+      
+      if (!isNaN(endHour) && !isNaN(endMinute)) {
+        // Calculate UTC deadline (end time in PHT converted to UTC)
+        const deadline = new Date(Date.UTC(
+          dueDate.getUTCFullYear(),
+          dueDate.getUTCMonth(),
+          dueDate.getUTCDate(),
+          endHour - 8, endMinute, 0, 0
+        ));
+        
+        // Add 30 minute grace period
+        const graceEnd = new Date(deadline.getTime() + 30 * 60000);
+        
+        // Check if grace period has passed
+        if (now > graceEnd) return true;
+      }
+    }
+  }
+  
+  return false;
+});
+
+const myNeglectedCount = expiredAssignments.length;
+const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
 
     console.log(`📊 [getMemberDashboard] Assignment counts (not grouped):`);
     console.log(`   Total assignments: ${totalAssignments}`);
@@ -1027,7 +1066,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const today = new Date();
     const startOfDay = new Date(today);
     startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
+    const endOfDay = new Date(today); 
     endOfDay.setHours(23, 59, 59, 999);
 
     const dueTodayAssignments = pendingAssignments.filter(assignment => {
@@ -1090,20 +1129,20 @@ static async getMemberDashboard(groupId: string, userId: string) {
     }));
 
     // Format neglected assignments
-    const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
-      const dueDate = new Date(a.dueDate);
-      const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-      return {
-        id: a.id,
-        taskId: a.taskId,
-        title: a.task!.title,
-        points: a.points || 0,
-        dueDate: a.dueDate,
-        expiredAt: a.expiredAt,
-        daysOverdue,
-        timeSlot: a.timeSlot
-      };
-    });
+   const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
+  const dueDate = new Date(a.dueDate);
+  const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+  return {
+    id: a.id,
+    taskId: a.taskId,
+    title: a.task!.title,
+    points: a.points || 0,
+    dueDate: a.dueDate,
+    expiredAt: a.expiredAt,
+    daysOverdue,
+    timeSlot: a.timeSlot
+  };
+});
 
     // Get historical assignments (deleted tasks)
     const historicalAssignments = await prisma.assignment.findMany({

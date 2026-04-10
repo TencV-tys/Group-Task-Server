@@ -610,7 +610,6 @@ static async verifyAssignment(
     }
   }
 
-
 private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): boolean {
   if (assignment.completed) return false;
   
@@ -620,22 +619,11 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
   const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   
+  // Only check for today's assignments
   if (dueDateUTC !== todayUTC) return false;
   
-  const endParts = timeSlot.endTime.split(':');
-  const endHour = parseInt(endParts[0] || '0', 10);
-  const endMinute = parseInt(endParts[1] || '0', 10);
-  
-  if (isNaN(endHour) || isNaN(endMinute)) return false;
-  
-  // ✅ Convert PHT to UTC
-  const endTime = new Date(Date.UTC(
-    dueDate.getUTCFullYear(),
-    dueDate.getUTCMonth(),
-    dueDate.getUTCDate(),
-    endHour - 8, endMinute, 0, 0
-  ));
-  const gracePeriodEnd = new Date(endTime.getTime() + 30 * 60000);
+  // ✅ FIXED: dueDate is already in UTC, so just add 30 minutes grace period
+  const gracePeriodEnd = new Date(dueDate.getTime() + 30 * 60000);
   
   if (now > gracePeriodEnd) {
     const assignmentAny = assignment as any;
@@ -658,8 +646,7 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   }
   
   return false;
-}
-
+} 
  
 static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
   try {
@@ -1615,16 +1602,28 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       }
     }
 
-       const where: any = {
+        const now = new Date();
+    
+    const where: any = { 
       userId,
-      expired: true,
       completed: false,
-      // ✅ Explicitly include both false and null
-      OR: [
-        { verified: false },
-        { verified: null }
-      ]
+      // ✅ Include assignments that are either expired OR past due date
+      AND: [
+        {
+          OR: [
+            { expired: true },
+            { dueDate: { lt: now } }  // Due date has passed
+          ]
+        },
+        {
+          OR: [
+            { verified: false },
+            { verified: null }
+          ]
+        }
+      ] 
     };
+    
 
     if (filters?.groupId) {
       where.task = {
@@ -1795,16 +1794,27 @@ static async getGroupNeglectedTasks(
       return { success: false, message: "Only admins can view all neglected tasks" };
     }
 
-   const where: any = {
-  task: { groupId },
-  expired: true,
-  completed: false,
-  // ✅ Explicitly include both false and null
-  OR: [
-    { verified: false },
-    { verified: null }
-  ]
-};
+     const now = new Date();
+    
+    const where: any = {
+      task: { groupId },
+      completed: false,
+      // ✅ Include assignments that are either expired OR past due date
+      AND: [
+        {
+          OR: [
+            { expired: true },
+            { dueDate: { lt: now } }
+          ]
+        },
+        {
+          OR: [
+            { verified: false },
+            { verified: null }
+          ]
+        }
+      ]
+    };
 
     if (filters?.memberId) {
       where.userId = filters.memberId;
@@ -1889,17 +1899,27 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     if (!group) return { count: 0, pointsNotAwarded: 0 };
 
     const now = new Date();
-   const assignments = await prisma.assignment.findMany({
+    const assignments = await prisma.assignment.findMany({
   where: {
     task: { groupId },
     rotationWeek: group.currentRotationWeek,
     completed: false,
-    // ✅ Include both false and null (never verified)
-    OR: [
-      { verified: false },
-      { verified: null }
+    // ✅ Include past due date as well
+    AND: [
+      {
+        OR: [
+          { expired: true },
+          { dueDate: { lt: now } }
+        ]
+      },
+      {
+        OR: [
+          { verified: false },
+          { verified: null }
+        ]
+      }
     ]
-  }, include: { 
+  },include: { 
         user: {
           select: {
             id: true,
