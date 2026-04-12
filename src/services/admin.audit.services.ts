@@ -1,4 +1,5 @@
-// services/admin.audit.services.ts - COMPLETE UPDATED
+// services/admin.audit.services.ts - FIXED VERSION
+
 import prisma from "../prisma";
 
 export interface AuditLogFilters {
@@ -56,27 +57,16 @@ const IMPORTANT_ACTIONS = [
 
 // Skip logging these frequent view actions
 const SKIP_ACTIONS = [
-  // Group view actions
   'ADMIN_VIEWED_GROUPS',
   'ADMIN_VIEWED_GROUP_STATISTICS',
   'ADMIN_VIEWED_GROUP_DETAILS',
-  
-  // User view actions
   'ADMIN_VIEWED_USERS',
   'ADMIN_VIEWED_USER_DETAILS',
-  
-  // Feedback view actions
   'ADMIN_VIEWED_FEEDBACK',
   'ADMIN_VIEWED_FEEDBACK_STATS',
-  
-  // Report view actions
   'ADMIN_VIEWED_REPORTS',
   'ADMIN_VIEWED_REPORT_STATS',
-  
-  // Dashboard
   'ADMIN_VIEWED_DASHBOARD',
-  
-  // Notifications view
   'ADMIN_VIEWED_NOTIFICATIONS'
 ];
 
@@ -349,18 +339,27 @@ export class AdminAuditService {
     try {
       const where: any = {};
 
+      // Apply basic filters
       if (filters.adminId) where.adminId = filters.adminId;
       if (filters.targetUserId) where.targetUserId = filters.targetUserId;
-      if (filters.action) where.action = filters.action;
       
+      // ===== FIX: Handle action filter correctly =====
+      // If a specific action is requested, use exact match
+      if (filters.action) {
+        where.action = filters.action;
+        console.log(`🔍 [AuditService] Filtering by exact action: ${filters.action}`);
+      } else {
+        // Only apply IMPORTANT_ACTIONS filter when no specific action is requested
+        where.action = { in: IMPORTANT_ACTIONS };
+        console.log('🔍 [AuditService] Filtering by all important actions');
+      }
+      
+      // Date range filter
       if (filters.startDate || filters.endDate) {
         where.createdAt = {};
         if (filters.startDate) where.createdAt.gte = filters.startDate;
         if (filters.endDate) where.createdAt.lte = filters.endDate;
       }
-
-      // Only show IMPORTANT actions
-      where.action = { in: IMPORTANT_ACTIONS };
 
       console.log('📊 [AuditService] GetLogs where:', JSON.stringify(where, null, 2));
 
@@ -419,7 +418,7 @@ export class AdminAuditService {
   }
 
   // ========== GET AUDIT LOG STATISTICS ==========
-  static async getStatistics(filters?: { startDate?: Date; endDate?: Date }) {
+  static async getStatistics(filters?: { startDate?: Date; endDate?: Date; action?: string }) {
     try {
       console.log('📊 [AuditService] getStatistics called with filters:', filters);
       
@@ -438,8 +437,12 @@ export class AdminAuditService {
         }
       }
       
-      // DO NOT filter by IMPORTANT_ACTIONS for statistics
-      // We want ALL actions in stats to show correct counts
+      // If a specific action is requested for stats, filter by it
+      if (filters?.action) {
+        where.action = filters.action;
+        console.log(`📊 [AuditService] Filtering stats by action: ${filters.action}`);
+      }
+      
       console.log('📊 [AuditService] Query where clause:', JSON.stringify(where, null, 2));
 
       // Get total count
