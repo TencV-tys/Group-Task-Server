@@ -1,12 +1,8 @@
-// services/admin.feedback.service.ts - FULLY UPDATED (nothing removed)
-
 import prisma from "../prisma";
-import { UserNotificationService } from "./user.notification.services";
-import { emitToUser } from '../socket';
 
-export interface FeedbackFilters {
-  status?: string;
-  type?: string;
+export interface NotificationFilters {
+  read?: boolean;
+  priority?: string;
   search?: string;
   page?: number;
   limit?: number;
@@ -14,14 +10,14 @@ export interface FeedbackFilters {
   sortOrder?: 'asc' | 'desc';
 }
 
-export class AdminFeedbackService {
-
-  // ========== GET ALL FEEDBACK WITH FILTERS ==========
-  static async getFeedback(filters: FeedbackFilters = {}) {
+export class AdminNotificationsService {
+  
+  // ========== GET ALL NOTIFICATIONS ==========
+  static async getNotifications(adminId: string, filters: NotificationFilters = {}) {
     try {
       const {
-        status,
-        type, 
+        read,
+        priority,
         search,
         page = 1,
         limit = 10,
@@ -31,43 +27,51 @@ export class AdminFeedbackService {
 
       const skip = (page - 1) * limit;
 
-      const where: any = {};
+      // Build where clause
+      const where: any = {
+        adminId
+      };
 
-      if (status) where.status = status;
-      if (type) where.type = type;
+      if (read !== undefined) {
+        where.read = read;
+      }
+
+      if (priority) {
+        where.priority = priority;
+      }
+
       if (search) {
         where.OR = [
-          { message: { contains: search } },
-          { user: { fullName: { contains: search } } },
-          { user: { email: { contains: search } } }
+          { title: { contains: search } },
+          { message: { contains: search } }
         ];
       }
 
-      const [feedback, total] = await Promise.all([
-        prisma.feedback.findMany({
+      // Get notifications
+      const [notifications, total, unreadCount] = await Promise.all([
+        prisma.adminNotification.findMany({
           where,
           skip,
           take: limit,
-          orderBy: { [sortBy]: sortOrder },
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-                avatarUrl: true
-              }
-            }
+          orderBy: {
+            [sortBy]: sortOrder
           }
         }),
-        prisma.feedback.count({ where })
+        prisma.adminNotification.count({ where }),
+        prisma.adminNotification.count({ 
+          where: { 
+            adminId,
+            read: false 
+          } 
+        })
       ]);
 
       return {
         success: true,
-        message: "Feedback retrieved successfully",
+        message: "Notifications retrieved successfully",
         data: {
-          feedback,
+          notifications,
+          unreadCount,
           pagination: {
             page,
             limit,
@@ -78,271 +82,235 @@ export class AdminFeedbackService {
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedback error:", error);
+      console.error("AdminNotificationsService.getNotifications error:", error);
       return {
         success: false,
-        message: error.message || "Failed to retrieve feedback"
+        message: error.message || "Failed to retrieve notifications"
       };
     }
   }
 
-  // ========== GET SINGLE FEEDBACK DETAILS ==========
-  static async getFeedbackById(feedbackId: string) {
+  // ========== GET SINGLE NOTIFICATION ==========
+  static async getNotificationById(notificationId: string, adminId: string) {
     try {
-      const feedback = await prisma.feedback.findUnique({
-        where: { id: feedbackId },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true,
-              avatarUrl: true,
-              role: true,
-              createdAt: true
-            }
-          }
+      const notification = await prisma.adminNotification.findFirst({
+        where: {
+          id: notificationId,
+          adminId
         }
       });
 
-      if (!feedback) {
+      if (!notification) {
         return {
           success: false,
-          message: "Feedback not found"
+          message: "Notification not found"
         };
       }
 
       return {
         success: true,
-        message: "Feedback details retrieved",
-        data: feedback
+        message: "Notification retrieved successfully",
+        data: notification
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedbackById error:", error);
+      console.error("AdminNotificationsService.getNotificationById error:", error);
       return {
         success: false,
-        message: error.message || "Failed to retrieve feedback"
+        message: error.message || "Failed to retrieve notification"
       };
     }
   }
 
-  // ========== UPDATE FEEDBACK STATUS (WITH REAL-TIME) ==========
-  static async updateFeedbackStatus(feedbackId: string, status: string, adminId: string) {
+  // ========== MARK NOTIFICATION AS READ ==========
+  static async markAsRead(notificationId: string, adminId: string) {
     try {
-      const feedback = await prisma.feedback.update({
-        where: { id: feedbackId },
-        data: {
-          status: status,
-          updatedAt: new Date()
+      const notification = await prisma.adminNotification.updateMany({
+        where: {
+          id: notificationId,
+          adminId
         },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              email: true
-            }
-          }
-        }
-      });
-
-      const admin = await prisma.systemAdmin.findUnique({
-        where: { id: adminId },
-        select: { fullName: true }
-      });
-
-      await UserNotificationService.createNotification({
-        userId: feedback.userId,
-        type: "FEEDBACK_STATUS_UPDATE",
-        title: `Feedback ${status}`,
-        message: `Your feedback "${feedback.message.substring(0, 50)}..." has been marked as ${status}${admin ? ` by ${admin.fullName}` : ''}`,
         data: {
-          feedbackId: feedback.id,
-          status,
-          updatedBy: adminId,
-          updatedByName: admin?.fullName || 'Admin'
+          read: true
         }
       });
 
-      emitToUser(
-        feedback.userId,
-        'FEEDBACK_STATUS_UPDATED',
-        {
-          feedbackId: feedback.id,
-          status,
-          updatedBy: adminId,
-          updatedByName: admin?.fullName || 'Admin',
-          updatedAt: new Date()
-        }
-      );
+      if (notification.count === 0) {
+        return {
+          success: false,
+          message: "Notification not found"
+        };
+      }
+
+      // Get updated notification
+      const updated = await prisma.adminNotification.findUnique({
+        where: { id: notificationId }
+      });
 
       return {
         success: true,
-        message: `Feedback status updated to ${status}`,
-        data: feedback
+        message: "Notification marked as read",
+        data: updated
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.updateFeedbackStatus error:", error);
+      console.error("AdminNotificationsService.markAsRead error:", error);
       return {
         success: false,
-        message: error.message || "Failed to update feedback status"
+        message: error.message || "Failed to mark as read"
       };
     }
   }
 
-  // ========== DELETE FEEDBACK ==========
-  static async deleteFeedback(feedbackId: string) {
+  // ========== MARK ALL AS READ ==========
+  static async markAllAsRead(adminId: string) {
     try {
-      const feedback = await prisma.feedback.findUnique({
-        where: { id: feedbackId },
-        include: { user: { select: { id: true, fullName: true } } }
+      const result = await prisma.adminNotification.updateMany({
+        where: {
+          adminId,
+          read: false
+        },
+        data: {
+          read: true
+        }
       });
 
-      await prisma.feedback.delete({
-        where: { id: feedbackId }
+      return {
+        success: true,
+        message: `Marked ${result.count} notifications as read`,
+        data: {
+          count: result.count
+        }
+      };
+
+    } catch (error: any) {
+      console.error("AdminNotificationsService.markAllAsRead error:", error);
+      return {
+        success: false,
+        message: error.message || "Failed to mark all as read"
+      };
+    }
+  }
+
+  // ========== DELETE NOTIFICATION ==========
+  static async deleteNotification(notificationId: string, adminId: string) {
+    try {
+      const result = await prisma.adminNotification.deleteMany({
+        where: {
+          id: notificationId,
+          adminId
+        }
       });
 
-      if (feedback) {
-        await UserNotificationService.createNotification({
-          userId: feedback.userId,
-          type: "FEEDBACK_DELETED",
-          title: "Feedback Deleted",
-          message: `Your feedback has been deleted by an administrator.`,
-          data: {
-            feedbackId: feedback.id,
-            type: feedback.type
-          }
-        });
+      if (result.count === 0) {
+        return {
+          success: false,
+          message: "Notification not found"
+        };
       }
 
       return {
         success: true,
-        message: "Feedback deleted successfully"
+        message: "Notification deleted successfully"
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.deleteFeedback error:", error);
+      console.error("AdminNotificationsService.deleteNotification error:", error);
       return {
         success: false,
-        message: error.message || "Failed to delete feedback"
+        message: error.message || "Failed to delete notification"
       };
     }
   }
 
-  // ========== GET FEEDBACK STATS ==========
-  static async getFeedbackStats() {
+  // ========== DELETE ALL READ NOTIFICATIONS ==========
+  static async deleteAllRead(adminId: string) {
     try {
-      const [open, inProgress, resolved, closed, total] = await Promise.all([
-        prisma.feedback.count({ where: { status: "OPEN" } }),
-        prisma.feedback.count({ where: { status: "IN_PROGRESS" } }),
-        prisma.feedback.count({ where: { status: "RESOLVED" } }),
-        prisma.feedback.count({ where: { status: "CLOSED" } }),
-        prisma.feedback.count()
-      ]);
-
-      const byType = await prisma.feedback.groupBy({
-        by: ['type'],
-        _count: true
-      });
-
-      const typeStats: Record<string, number> = {};
-      byType.forEach(item => {
-        typeStats[item.type] = item._count;
+      const result = await prisma.adminNotification.deleteMany({
+        where: {
+          adminId,
+          read: true
+        }
       });
 
       return {
         success: true,
-        message: "Feedback stats retrieved",
+        message: `Deleted ${result.count} read notifications`,
         data: {
-          total,
-          open,
-          inProgress,
-          resolved,
-          closed,
-          byType: typeStats
+          count: result.count
         }
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedbackStats error:", error);
+      console.error("AdminNotificationsService.deleteAllRead error:", error);
       return {
         success: false,
-        message: error.message || "Failed to retrieve stats"
+        message: error.message || "Failed to delete read notifications"
       };
     }
   }
 
-  // ========== GET FILTERED FEEDBACK STATS ==========
-  static async getFilteredFeedbackStats(filters?: { status?: string, type?: string, search?: string }) {
+  // ========== GET UNREAD COUNT ==========
+  static async getUnreadCount(adminId: string) {
     try {
-      const where: any = {};
-      
-      if (filters?.status) where.status = filters.status;
-      if (filters?.type) where.type = filters.type;
-      if (filters?.search) {
-        where.OR = [
-          { message: { contains: filters.search, mode: 'insensitive' } },
-          { user: { fullName: { contains: filters.search, mode: 'insensitive' } } },
-          { user: { email: { contains: filters.search, mode: 'insensitive' } } }
-        ];
-      }
-
-      console.log('📊 Filtered stats where clause:', JSON.stringify(where));
-
-      const total = await prisma.feedback.count({ where });
-
-      let open = 0, inProgress = 0, resolved = 0, closed = 0;
-
-      if (filters?.status) {
-        switch (filters.status) {
-          case 'OPEN': open = total; break;
-          case 'IN_PROGRESS': inProgress = total; break;
-          case 'RESOLVED': resolved = total; break;
-          case 'CLOSED': closed = total; break;
+      const count = await prisma.adminNotification.count({
+        where: {
+          adminId,
+          read: false
         }
-      } else {
-        [open, inProgress, resolved, closed] = await Promise.all([
-          prisma.feedback.count({ where: { ...where, status: "OPEN" } }),
-          prisma.feedback.count({ where: { ...where, status: "IN_PROGRESS" } }),
-          prisma.feedback.count({ where: { ...where, status: "RESOLVED" } }),
-          prisma.feedback.count({ where: { ...where, status: "CLOSED" } })
-        ]);
-      }
-
-      console.log('📊 Filtered stats results:', { total, open, inProgress, resolved, closed });
-
-      const byType = await prisma.feedback.groupBy({
-        by: ['type'],
-        where,
-        _count: true
-      });
-
-      const typeStats: Record<string, number> = {};
-      byType.forEach(item => {
-        typeStats[item.type] = item._count;
       });
 
       return {
         success: true,
-        message: "Filtered feedback stats retrieved",
+        message: "Unread count retrieved",
         data: {
-          total,
-          open,
-          inProgress,
-          resolved,
-          closed,
-          byType: typeStats
+          count
         }
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFilteredFeedbackStats error:", error);
+      console.error("AdminNotificationsService.getUnreadCount error:", error);
       return {
         success: false,
-        message: error.message || "Failed to retrieve filtered stats"
+        message: error.message || "Failed to get unread count"
       };
     }
   }
-}
+
+  // ========== CREATE NOTIFICATION (for internal use) ==========
+  static async createNotification(data: {
+    adminId: string;
+    type: string;
+    title: string;
+    message: string;
+    priority?: string;
+    data?: any;
+  }) {
+    try {
+      const notification = await prisma.adminNotification.create({
+        data: {
+          adminId: data.adminId,
+          type: data.type,
+          title: data.title,
+          message: data.message,
+          priority: data.priority || 'NORMAL',
+          data: data.data || {},
+          read: false
+        }
+      });
+
+      return {
+        success: true,
+        message: "Notification created",
+        data: notification
+      };
+
+    } catch (error: any) {
+      console.error("AdminNotificationsService.createNotification error:", error);
+      return {
+        success: false,
+        message: error.message || "Failed to create notification"
+      };
+    }
+  }
+}  
