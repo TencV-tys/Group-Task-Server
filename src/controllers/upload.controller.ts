@@ -620,8 +620,13 @@ static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
       });
     }
 
-    const filename = req.file.filename;
-    const fileUrl = UploadController.getFileUrl(req, filename, 'task_photo');
+    const filename = req.file.filename; 
+
+       const cleanFilename = filename.includes('/') 
+      ? filename.split('/').pop() 
+      : filename as any;
+    
+    const fileUrl = UploadController.getFileUrl(req, cleanFilename, 'task_photo');
 
     console.log('New photo URL:', fileUrl);
 

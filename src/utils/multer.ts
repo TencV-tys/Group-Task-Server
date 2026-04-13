@@ -1,4 +1,4 @@
-// src/utils/multer.ts - CLOUDINARY VERSION
+// src/utils/multer.ts - FIXED VERSION
 
 import multer from 'multer';
 import { uploadUserAvatar, uploadGroupAvatar, uploadTaskPhoto } from '../config/cloudinary.config';
@@ -15,12 +15,10 @@ const fileFilter = (req: any, file: any, cb: any) => {
   }
 };
 
-// Cloudinary upload instances
-export const singleUpload = uploadUserAvatar.single('file');     // For user avatar
-export const photoUpload = uploadTaskPhoto.single('photo');      // For task photos
-
-// Group avatar upload
-export const groupAvatarUpload = uploadGroupAvatar.single('groupAvatar');
+// ✅ FIX: Use 'file' for ALL uploads (consistent with frontend)
+export const singleUpload = uploadUserAvatar.single('file');        // User avatar - expects 'file' ✅
+export const photoUpload = uploadTaskPhoto.single('file');          // Task photo - expects 'file' ✅
+export const groupAvatarUpload = uploadGroupAvatar.single('file');  // Group avatar - expects 'file' ✅
 
 // Default export
 export default { singleUpload, photoUpload, groupAvatarUpload };
