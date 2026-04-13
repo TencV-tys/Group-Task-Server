@@ -16,7 +16,7 @@ import {
   GroupMemberJoinedPayload,
   GroupMemberLeftPayload,
   GroupMemberRoleChangedPayload,
-  RotationCompletedPayload,
+  RotationCompletedPayload, 
   NotificationNewPayload,
   AssignmentCreatedPayload,
   GroupCreatedPayload
@@ -612,6 +612,102 @@ static async emitSwapResponded(
       console.log(`📢 Emitted group created event to user ${userName}`);
     } catch (error) {
       console.error('SocketService.emitGroupCreated error:', error);
+    }
+  }
+
+
+  static async emitNewFeedbackReceived(
+    adminIds: string[],
+    feedbackId: string,
+    type: string,
+    userName: string,
+    message: string,
+    createdAt: Date
+  ) {
+    try {
+      const payload = {
+        feedbackId,
+        type,
+        userName,
+        message: message.substring(0, 100),
+        createdAt
+      };
+      
+      emitToUsers(adminIds, 'NEW_FEEDBACK_RECEIVED', payload);
+      console.log(`📢 Emitted new feedback to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitNewFeedbackReceived error:', error);
+    }
+  }
+
+  static async emitFeedbackStatusChanged(
+    adminIds: string[],
+    feedbackId: string,
+    userId: string,
+    oldStatus: string,
+    newStatus: string
+  ) {
+    try {
+      const payload = {
+        feedbackId,
+        userId,
+        oldStatus,
+        newStatus,
+        updatedAt: new Date()
+      };
+      
+      emitToUsers(adminIds, 'FEEDBACK_STATUS_CHANGED', payload);
+      console.log(`📢 Emitted feedback status change to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitFeedbackStatusChanged error:', error);
+    }
+  }
+
+  static async emitFeedbackUpdated(
+    adminIds: string[],
+    feedbackId: string,
+    userId: string,
+    userName: string,
+    type: string,
+    message: string
+  ) {
+    try {
+      const payload = {
+        feedbackId, 
+        userId,
+        userName,
+        type,
+        message: message.substring(0, 100),
+        updatedAt: new Date() 
+      };
+      
+      emitToUsers(adminIds, 'FEEDBACK_UPDATED', payload);
+      console.log(`📢 Emitted feedback update to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitFeedbackUpdated error:', error);
+    }
+  }
+
+  static async emitFeedbackDeleted(
+    adminIds: string[],
+    feedbackId: string,
+    userId: string,
+    userName: string,
+    type: string
+  ) {
+    try {
+      const payload = {
+        feedbackId,
+        userId,
+        userName,
+        type,
+        deletedAt: new Date()
+      };
+      
+      emitToUsers(adminIds, 'FEEDBACK_DELETED', payload);
+      console.log(`📢 Emitted feedback deletion to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitFeedbackDeleted error:', error);
     }
   }
 }

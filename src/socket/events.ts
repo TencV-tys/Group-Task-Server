@@ -1,4 +1,4 @@
-// socket/events.ts - COMPLETE WITH SWAP ADMIN EVENTS
+// socket/events.ts - COMPLETE WITH ALL EVENTS (including Feedback)
 
 // ========== SOCKET EVENT NAMES ==========
 // Client -> Server events
@@ -51,10 +51,16 @@ export const SERVER_EVENTS = {
   SWAP_CANCELLED: 'swap:cancelled',
   SWAP_EXPIRED: 'swap:expired',
   
-  // ===== NEW SWAP ADMIN EVENTS =====
-  SWAP_PENDING_APPROVAL: 'swap:pending:approval',   // New swap awaiting admin approval
-  SWAP_ADMIN_ACTION: 'swap:admin:action',           // Admin approved/rejected
-  SWAP_READY_FOR_ACCEPTANCE: 'swap:ready:accept',   // Swap approved, ready for acceptance
+  // ===== SWAP ADMIN EVENTS =====
+  SWAP_PENDING_APPROVAL: 'swap:pending:approval',
+  SWAP_ADMIN_ACTION: 'swap:admin:action',
+  SWAP_READY_FOR_ACCEPTANCE: 'swap:ready:accept',
+  
+  // ===== FEEDBACK EVENTS =====
+  NEW_FEEDBACK_RECEIVED: 'feedback:new',
+  FEEDBACK_STATUS_CHANGED: 'feedback:status',
+  FEEDBACK_UPDATED: 'feedback:updated',
+  FEEDBACK_DELETED: 'feedback:deleted',
   
   // Group events
   GROUP_MEMBER_JOINED: 'group:member-joined',
@@ -197,12 +203,11 @@ export interface SwapRespondedPayload {
   toUserName: string;
   groupId: string;
   status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED';
-   scope: 'week' | 'day' | 'cross';
+  scope: 'week' | 'day' | 'cross';
   selectedDay?: string;
 }
 
-// ===== NEW SWAP ADMIN PAYLOADS =====
-
+// ===== SWAP ADMIN PAYLOADS =====
 export interface SwapPendingApprovalPayload {
   swapRequestId: string;
   assignmentId: string;
@@ -245,6 +250,40 @@ export interface SwapReadyForAcceptancePayload {
   selectedDay?: string;
   selectedTimeSlotId?: string;
   expiresAt: Date;
+}
+
+// ===== FEEDBACK PAYLOADS =====
+export interface NewFeedbackReceivedPayload {
+  feedbackId: string;
+  type: string;
+  userName: string;
+  message: string;
+  createdAt: Date;
+}
+
+export interface FeedbackStatusChangedPayload {
+  feedbackId: string;
+  userId: string;
+  oldStatus: string;
+  newStatus: string;
+  updatedAt: Date;
+}
+
+export interface FeedbackUpdatedPayload {
+  feedbackId: string;
+  userId: string;
+  userName: string;
+  type: string;
+  message: string;
+  updatedAt: Date;
+}
+
+export interface FeedbackDeletedPayload {
+  feedbackId: string;
+  userId: string;
+  userName: string;
+  type: string;
+  deletedAt: Date;
 }
 
 // Group event payloads

@@ -1,11 +1,12 @@
-// services/feedback.services.ts - UPDATED with admin notifications
+// services/feedback.services.ts - UPDATED to use SocketService
+
 import prisma from "../prisma";
 import { UserNotificationService } from "./user.notification.services";
-import { AdminNotificationsService } from "./admin.notifications.service";
+import { SocketService } from "./socket.services"; // ✅ Import SocketService
 
 export class FeedbackService {
   
-  // Submit feedback
+  // ========== SUBMIT FEEDBACK ==========
   static async submitFeedback(
     userId: string,
     data: {
@@ -15,35 +16,23 @@ export class FeedbackService {
     } 
   ) {
     try {
-      // Validate
       if (!data.type) {
-        return {
-          success: false,
-          message: "Feedback type is required"
-        };
+        return { success: false, message: "Feedback type is required" };
       }
 
       if (!data.message?.trim()) {
-        return {
-          success: false,
-          message: "Feedback message is required"
-        };
+        return { success: false, message: "Feedback message is required" };
       }
 
-      // Get user
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { fullName: true, email: true }
       });
 
       if (!user) {
-        return {
-          success: false,
-          message: "User not found"
-        };
+        return { success: false, message: "User not found" };
       }
 
-      // Create feedback
       const feedback = await prisma.feedback.create({
         data: {
           userId,
@@ -66,40 +55,22 @@ export class FeedbackService {
         }
       });
 
-      // ========== NOTIFY ALL ADMINS ==========
-      // Get all system admins
+      // ========== NOTIFY ALL ADMINS via Socket ==========
       const admins = await prisma.systemAdmin.findMany({
         where: { isActive: true },
         select: { id: true }
       });
 
-      // Determine priority based on feedback type
-      let priority = 'NORMAL';
-      if (data.type === 'BUG' || data.type === 'COMPLAINT') {
-        priority = 'HIGH';
-      } else if (data.type === 'FEATURE_REQUEST') {
-        priority = 'MEDIUM';
-      }
-
-      // Create notification for each admin
-      for (const admin of admins) {
-        await AdminNotificationsService.createNotification({
-          adminId: admin.id,
-          type: "FEEDBACK_SUBMITTED",
-          title: `New ${data.type} Feedback`,
-          message: `${user.fullName} submitted ${data.type} feedback: ${data.message.substring(0, 100)}${data.message.length > 100 ? '...' : ''}`,
-          priority,
-          data: {
-            feedbackId: feedback.id,
-            userId,
-            userName: user.fullName,
-            userEmail: user.email,
-            type: data.type,
-            category: data.category,
-            message: data.message,
-            createdAt: feedback.createdAt
-          }
-        });
+      if (admins.length > 0) {
+        // ✅ Use SocketService method instead of direct emitToUsers
+        await SocketService.emitNewFeedbackReceived(
+          admins.map(a => a.id),
+          feedback.id,
+          data.type,
+          user.fullName,
+          data.message,
+          feedback.createdAt
+        );
       }
 
       console.log(`📬 Notified ${admins.length} admins about new feedback`);
@@ -119,43 +90,42 @@ export class FeedbackService {
 
     } catch (error: any) {
       console.error("FeedbackService.submitFeedback error:", error);
-      return {
-        success: false,
-        message: error.message || "Error submitting feedback"
-      };
+      return { success: false, message: error.message || "Error submitting feedback" };
     }
   }
 
   // ========== UPDATE FEEDBACK STATUS ==========
-  static async updateFeedbackStatus(
-    feedbackId: string,
-    userId: string,
-    status: string
-  ) {
+  static async updateFeedbackStatus(feedbackId: string, userId: string, status: string) {
     try {
-      // Check if feedback exists and belongs to user
       const existingFeedback = await prisma.feedback.findFirst({
-        where: {
-          id: feedbackId,
-          userId
-        }
+        where: { id: feedbackId, userId }
       });
 
       if (!existingFeedback) {
-        return {
-          success: false,
-          message: "Feedback not found or you don't have permission to update it"
-        };
+        return { success: false, message: "Feedback not found or you don't have permission" };
       }
 
-      // Update feedback
       const updatedFeedback = await prisma.feedback.update({
         where: { id: feedbackId },
-        data: {
-          status,
-          updatedAt: new Date()
-        }
+        data: { status, updatedAt: new Date() }
       });
+
+      // Notify admins about status change
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+
+      if (admins.length > 0) {
+        // ✅ Use SocketService method
+        await SocketService.emitFeedbackStatusChanged(
+          admins.map(a => a.id),
+          feedbackId,
+          userId,
+          existingFeedback.status,
+          status
+        );
+      }
 
       return {
         success: true,
@@ -165,10 +135,7 @@ export class FeedbackService {
 
     } catch (error: any) {
       console.error("FeedbackService.updateFeedbackStatus error:", error);
-      return {
-        success: false,
-        message: error.message || "Error updating feedback status"
-      };
+      return { success: false, message: error.message || "Error updating feedback status" };
     }
   }
 
@@ -193,9 +160,7 @@ export class FeedbackService {
             updatedAt: true
           }
         }),
-        prisma.feedback.count({
-          where: { userId }
-        })
+        prisma.feedback.count({ where: { userId } })
       ]);
 
       return {
@@ -211,11 +176,7 @@ export class FeedbackService {
 
     } catch (error: any) {
       console.error("FeedbackService.getUserFeedback error:", error);
-      return {
-        success: false,
-        message: error.message,
-        feedback: []
-      };
+      return { success: false, message: error.message, feedback: [] };
     }
   }
 
@@ -223,30 +184,18 @@ export class FeedbackService {
   static async getFeedbackDetails(feedbackId: string, userId: string) {
     try {
       const feedback = await prisma.feedback.findFirst({
-        where: {
-          id: feedbackId,
-          userId
-        }
+        where: { id: feedbackId, userId }
       });
 
       if (!feedback) {
-        return {
-          success: false,
-          message: "Feedback not found"
-        };
+        return { success: false, message: "Feedback not found" };
       }
 
-      return {
-        success: true,
-        feedback
-      };
+      return { success: true, feedback };
 
     } catch (error: any) {
       console.error("FeedbackService.getFeedbackDetails error:", error);
-      return {
-        success: false,
-        message: error.message
-      };
+      return { success: false, message: error.message };
     }
   }
 
@@ -254,34 +203,47 @@ export class FeedbackService {
   static async deleteFeedback(feedbackId: string, userId: string) {
     try {
       const feedback = await prisma.feedback.findFirst({
-        where: {
-          id: feedbackId,
-          userId
-        }
+        where: { id: feedbackId, userId },
+        include: { user: { select: { fullName: true } } }
       });
 
       if (!feedback) {
-        return {
-          success: false,
-          message: "Feedback not found"
-        };
+        return { success: false, message: "Feedback not found" };
       }
 
-      await prisma.feedback.delete({
-        where: { id: feedbackId }
+      await prisma.feedback.delete({ where: { id: feedbackId } });
+
+      // Notify user about deletion
+      await UserNotificationService.createNotification({
+        userId,
+        type: "FEEDBACK_DELETED",
+        title: "Feedback Deleted",
+        message: `Your feedback has been deleted.`,
+        data: { feedbackId, type: feedback.type }
       });
 
-      return {
-        success: true,
-        message: "Feedback deleted successfully"
-      };
+      // Notify admins about deletion
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+
+      if (admins.length > 0) {
+        // ✅ Use SocketService method
+        await SocketService.emitFeedbackDeleted(
+          admins.map(a => a.id),
+          feedbackId,
+          userId,
+          feedback.user?.fullName || 'Unknown',
+          feedback.type
+        );
+      }
+
+      return { success: true, message: "Feedback deleted successfully" };
 
     } catch (error: any) {
       console.error("FeedbackService.deleteFeedback error:", error);
-      return {
-        success: false,
-        message: error.message
-      };
+      return { success: false, message: error.message };
     }
   }
 
@@ -295,36 +257,23 @@ export class FeedbackService {
         prisma.feedback.groupBy({
           by: ['type'],
           where: { userId },
-          _count: {
-            type: true
-          }
+          _count: { type: true }
         })
       ]);
 
-      // Create empty object with proper type
       const byTypeStats: Record<string, number> = {};
-      
-      // Fill it manually
       for (const item of byType) {
         byTypeStats[item.type] = item._count.type;
       }
 
       return {
         success: true,
-        stats: {
-          total,
-          open,
-          resolved,
-          byType: byTypeStats
-        }
+        stats: { total, open, resolved, byType: byTypeStats }
       };
 
     } catch (error: any) {
       console.error("FeedbackService.getUserFeedbackStats error:", error);
-      return {
-        success: false,
-        message: error.message
-      };
+      return { success: false, message: error.message };
     }
   }
 
@@ -339,43 +288,28 @@ export class FeedbackService {
     }
   ) {
     try {
-      // Check if feedback exists and belongs to user
       const existingFeedback = await prisma.feedback.findFirst({
-        where: {
-          id: feedbackId,
-          userId
-        }
+        where: { id: feedbackId, userId },
+        include: { user: { select: { fullName: true } } }
       });
 
       if (!existingFeedback) {
-        return {
-          success: false,
-          message: "Feedback not found or you don't have permission to update it"
-        };
+        return { success: false, message: "Feedback not found or you don't have permission" };
       }
 
-      // Don't allow updating if feedback is already RESOLVED or CLOSED
       if (existingFeedback.status === "RESOLVED" || existingFeedback.status === "CLOSED") {
-        return {
-          success: false,
-          message: "Cannot update feedback that is already resolved or closed"
-        };
+        return { success: false, message: "Cannot update feedback that is already resolved or closed" };
       }
 
-      // Prepare update data
       const updateData: any = {};
       
       if (data.type !== undefined) {
-        if (!data.type) {
-          return { success: false, message: "Feedback type cannot be empty" };
-        }
+        if (!data.type) return { success: false, message: "Feedback type cannot be empty" };
         updateData.type = data.type;
       }
       
       if (data.message !== undefined) {
-        if (!data.message?.trim()) {
-          return { success: false, message: "Feedback message cannot be empty" };
-        }
+        if (!data.message?.trim()) return { success: false, message: "Feedback message cannot be empty" };
         updateData.message = data.message.trim();
       }
       
@@ -383,19 +317,41 @@ export class FeedbackService {
         updateData.category = data.category?.trim() || null;
       }
 
-      // If nothing to update
       if (Object.keys(updateData).length === 0) {
-        return {
-          success: false,
-          message: "No data to update"
-        };
+        return { success: false, message: "No data to update" };
       }
 
-      // Update feedback
       const updatedFeedback = await prisma.feedback.update({
         where: { id: feedbackId },
         data: updateData
       });
+
+      // Notify user about update
+      await UserNotificationService.createNotification({
+        userId,
+        type: "FEEDBACK_UPDATED",
+        title: "Feedback Updated",
+        message: `Your feedback has been updated successfully.`,
+        data: { feedbackId, changes: Object.keys(updateData) }
+      });
+
+      // Notify admins about update
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+
+      if (admins.length > 0) {
+        // ✅ Use SocketService method
+        await SocketService.emitFeedbackUpdated(
+          admins.map(a => a.id),
+          feedbackId,
+          userId,
+          existingFeedback.user?.fullName || 'Unknown',
+          updateData.type || existingFeedback.type,
+          updateData.message || existingFeedback.message
+        );
+      }
 
       return {
         success: true,
@@ -413,10 +369,7 @@ export class FeedbackService {
 
     } catch (error: any) {
       console.error("FeedbackService.updateFeedback error:", error);
-      return {
-        success: false,
-        message: error.message || "Error updating feedback"
-      };
+      return { success: false, message: error.message || "Error updating feedback" };
     }
   }
 }
