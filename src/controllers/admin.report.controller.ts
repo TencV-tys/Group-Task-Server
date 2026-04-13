@@ -239,62 +239,71 @@ static async updateReportStatus(req: AdminAuthRequest, res: Response) {
   }
 }
   // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
-  static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
-    try {
-      const adminId = req.admin?.id;
-      const { reportIds, status, resolutionNotes } = req.body;
+ // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
+static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    const { reportIds, status, resolutionNotes } = req.body;
 
-      if (!adminId) {
-        return res.status(401).json({
-          success: false,
-          message: "Admin not authenticated"
-        });
-      }
-
-      if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Report IDs are required"
-        });
-      }
-
-      if (!status) {
-        return res.status(400).json({
-          success: false,
-          message: "Status is required"
-        });
-      }
-
-      // 👇 Validate status against ReportStatus enum
-      const validStatuses = Object.values(ReportStatus);
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-        });
-      }
-
-      const results = await AdminReportService.bulkUpdateReports(
-        reportIds,
-        adminId,
-        status, // Now it's validated as ReportStatus
-        resolutionNotes
-      );
-
-      return res.json({
-        success: true,
-        message: `Updated ${results.successCount} of ${results.totalCount} reports`,
-        results
-      });
-
-    } catch (error: any) {
-      console.error("Error in bulkUpdateReports:", error);
-      return res.status(500).json({
+    if (!adminId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "Admin not authenticated"
       });
     }
+
+    if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Report IDs are required"
+      });
+    }
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "Status is required"
+      });
+    }
+
+    // Validate status against ReportStatus enum
+    const validStatuses = Object.values(ReportStatus);
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    const result = await AdminReportService.bulkUpdateReports(
+      reportIds,
+      adminId,
+      status, // Now it's validated as ReportStatus
+      resolutionNotes
+    );
+
+    // ✅ Access data from the result.data property
+    if (result.success && result.data) {
+      return res.json({
+        success: true,
+        message: `Updated ${result.data.successCount} of ${result.data.totalCount} reports`,
+        results: result.data
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: result.message || "Failed to update reports"
+      });
+    }
+
+  } catch (error: any) {
+    console.error("Error in bulkUpdateReports:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
 
   // ========== GET REPORT STATISTICS (ADMIN ONLY) ==========
   static async getReportStatistics(req: AdminAuthRequest, res: Response) {
