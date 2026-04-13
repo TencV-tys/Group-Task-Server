@@ -1,5 +1,4 @@
-
-// services/socket.services.ts - COMPLETE WITH SWAP ADMIN METHODS
+// services/socket.services.ts - COMPLETE WITH ALL ADMIN EVENTS
 
 import { getIO, emitToUser, emitToGroup, emitToUsers, emitToGroupExcept } from '../socket';
 import { SERVER_EVENTS } from '../socket/events';
@@ -194,7 +193,6 @@ static async emitAssignmentPendingVerification(
       isLate
     };
     
-    // Define the type for admin members
     interface AdminMember {
       userId: string;
     }
@@ -208,7 +206,6 @@ static async emitAssignmentPendingVerification(
       select: { userId: true }
     });
     
-    // Type the admin parameter explicitly
     admins.forEach((admin: AdminMember) => {
       emitToUser(admin.userId, SERVER_EVENTS.ASSIGNMENT_PENDING_VERIFICATION, payload);
     });
@@ -298,7 +295,6 @@ static async emitAssignmentPendingVerification(
     }
   }
 
-  // NEW: Emit swap pending approval event (for admin approval workflow)
   static async emitSwapPendingApproval(
     swapRequestId: string,
     assignmentId: string,
@@ -330,7 +326,6 @@ static async emitAssignmentPendingVerification(
         requiresApproval: true
       };
       
-      // Notify all admins in the group
       const admins = await prisma.groupMember.findMany({
         where: {
           groupId,
@@ -344,7 +339,6 @@ static async emitAssignmentPendingVerification(
         emitToUser(admin.userId, SERVER_EVENTS.SWAP_PENDING_APPROVAL, payload);
       }
       
-      // Notify the group about pending approval
       emitToGroup(groupId, SERVER_EVENTS.SWAP_PENDING_APPROVAL, payload);
       
       console.log(`📢 Emitted swap pending approval for request ${swapRequestId} to ${admins.length} admins`);
@@ -353,7 +347,6 @@ static async emitAssignmentPendingVerification(
     }
   }
 
-  // NEW: Emit swap admin action (approved/rejected)
   static async emitSwapAdminAction(
     swapRequestId: string,
     assignmentId: string,
@@ -381,10 +374,7 @@ static async emitAssignmentPendingVerification(
         timestamp: new Date()
       };
       
-      // Notify the requester
       emitToUser(requesterId, SERVER_EVENTS.SWAP_ADMIN_ACTION, payload);
-      
-      // Notify the group
       emitToGroup(groupId, SERVER_EVENTS.SWAP_ADMIN_ACTION, payload);
       
       console.log(`📢 Admin ${adminName} ${action} swap request ${swapRequestId}`);
@@ -393,47 +383,45 @@ static async emitAssignmentPendingVerification(
     }
   }
 
-// In socket.services.ts - Update the emitSwapResponded method
-
-static async emitSwapResponded(
-  swapRequestId: string,
-  assignmentId: string,
-  taskId: string,
-  taskTitle: string,
-  fromUserId: string,
-  toUserId: string,
-  toUserName: string,
-  groupId: string,
-  status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED',
-  scope: 'week' | 'day' | 'cross',  // ✅ ADD 'cross' here
-  selectedDay?: string
-) {
-  try {
-    const payload: SwapRespondedPayload = {
-      swapRequestId,
-      assignmentId,
-      taskId,
-      taskTitle,
-      fromUserId,
-      toUserId,
-      toUserName,
-      groupId,
-      status,
-      scope,
-      selectedDay
-    };
-    
-    emitToUser(fromUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
-    
-    if (toUserId !== fromUserId) {
-      emitToUser(toUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+  static async emitSwapResponded(
+    swapRequestId: string,
+    assignmentId: string,
+    taskId: string,
+    taskTitle: string,
+    fromUserId: string,
+    toUserId: string,
+    toUserName: string,
+    groupId: string,
+    status: 'ACCEPTED' | 'REJECTED' | 'CANCELLED' | 'EXPIRED',
+    scope: 'week' | 'day' | 'cross',
+    selectedDay?: string
+  ) {
+    try {
+      const payload: SwapRespondedPayload = {
+        swapRequestId,
+        assignmentId,
+        taskId,
+        taskTitle,
+        fromUserId,
+        toUserId,
+        toUserName,
+        groupId,
+        status,
+        scope,
+        selectedDay
+      };
+      
+      emitToUser(fromUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+      
+      if (toUserId !== fromUserId) {
+        emitToUser(toUserId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+      }
+      
+      emitToGroup(groupId, SERVER_EVENTS.SWAP_RESPONDED, payload);
+    } catch (error) {
+      console.error('SocketService.emitSwapResponded error:', error);
     }
-    
-    emitToGroup(groupId, SERVER_EVENTS.SWAP_RESPONDED, payload);
-  } catch (error) {
-    console.error('SocketService.emitSwapResponded error:', error);
   }
-}
 
   // ========== GROUP EVENTS ==========
 
@@ -499,6 +487,182 @@ static async emitSwapResponded(
       emitToGroup(groupId, SERVER_EVENTS.GROUP_MEMBER_ROLE_CHANGED, payload);
     } catch (error) {
       console.error('SocketService.emitGroupMemberRoleChanged error:', error);
+    }
+  }
+
+  // ========== GROUP ADMIN ACTION EVENTS ==========
+
+  static async emitGroupSuspended(
+    groupId: string,
+    groupName: string,
+    adminId: string,
+    adminName: string,
+    reason?: string
+  ) {
+    try {
+      const payload = {
+        groupId,
+        groupName,
+        action: 'SUSPENDED',
+        adminId,
+        adminName,
+        reason: reason || 'Violation of guidelines',
+        timestamp: new Date()
+      };
+      
+      // Get all group members
+      const members = await prisma.groupMember.findMany({
+        where: { groupId, isActive: true },
+        select: { userId: true }
+      });
+      
+      const memberIds = members.map(m => m.userId);
+      
+      if (memberIds.length > 0) {
+        emitToUsers(memberIds, 'group:suspended', payload);
+      }
+      
+      // Notify all admins
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+      
+      emitToUsers(admins.map(a => a.id), 'group:admin_action', payload);
+      
+      console.log(`📢 Emitted group suspended event for ${groupId} to ${memberIds.length} members`);
+    } catch (error) {
+      console.error('SocketService.emitGroupSuspended error:', error);
+    }
+  }
+
+  static async emitGroupDeleted(
+    groupId: string,
+    groupName: string,
+    adminId: string,
+    adminName: string,
+    hardDelete: boolean,
+    reason?: string
+  ) {
+    try {
+      const payload = {
+        groupId,
+        groupName,
+        action: hardDelete ? 'HARD_DELETED' : 'SOFT_DELETED',
+        adminId,
+        adminName,
+        reason: reason || 'Violation of guidelines',
+        hardDelete,
+        timestamp: new Date()
+      };
+      
+      // Get all group members
+      const members = await prisma.groupMember.findMany({
+        where: { groupId, isActive: true },
+        select: { userId: true }
+      });
+      
+      const memberIds = members.map(m => m.userId);
+      
+      if (memberIds.length > 0) {
+        emitToUsers(memberIds, 'group:deleted', payload);
+      }
+      
+      // Notify all admins
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+      
+      emitToUsers(admins.map(a => a.id), 'group:admin_action', payload);
+      
+      console.log(`📢 Emitted group ${hardDelete ? 'hard' : 'soft'} deleted event for ${groupId}`);
+    } catch (error) {
+      console.error('SocketService.emitGroupDeleted error:', error);
+    }
+  }
+
+  static async emitGroupRestored(
+    groupId: string,
+    groupName: string,
+    adminId: string,
+    adminName: string,
+    newInviteCode?: string
+  ) {
+    try {
+      const payload = {
+        groupId,
+        groupName,
+        action: 'RESTORED',
+        adminId,
+        adminName,
+        newInviteCode,
+        timestamp: new Date()
+      };
+      
+      // Get group creator
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { createdById: true }
+      });
+      
+      if (group?.createdById) {
+        emitToUser(group.createdById, 'group:restored', payload);
+      }
+      
+      // Notify all admins
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+      
+      emitToUsers(admins.map(a => a.id), 'group:admin_action', payload);
+      
+      console.log(`📢 Emitted group restored event for ${groupId}`);
+    } catch (error) {
+      console.error('SocketService.emitGroupRestored error:', error);
+    }
+  }
+
+  static async emitGroupMarkedForReview(
+    groupId: string,
+    groupName: string,
+    adminId: string,
+    adminName: string,
+    reason?: string
+  ) {
+    try {
+      const payload = {
+        groupId,
+        groupName,
+        action: 'MARKED_FOR_REVIEW',
+        adminId,
+        adminName,
+        reason: reason || 'Multiple reports',
+        timestamp: new Date()
+      };
+      
+      // Get group creator
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { createdById: true }
+      });
+      
+      if (group?.createdById) {
+        emitToUser(group.createdById, 'group:review_needed', payload);
+      }
+      
+      // Notify all admins
+      const admins = await prisma.systemAdmin.findMany({
+        where: { isActive: true },
+        select: { id: true }
+      });
+      
+      emitToUsers(admins.map(a => a.id), 'group:admin_action', payload);
+      
+      console.log(`📢 Emitted group marked for review event for ${groupId}`);
+    } catch (error) {
+      console.error('SocketService.emitGroupMarkedForReview error:', error);
     }
   }
 
@@ -615,6 +779,7 @@ static async emitSwapResponded(
     }
   }
 
+  // ========== FEEDBACK EVENTS ==========
 
   static async emitNewFeedbackReceived(
     adminIds: string[],
@@ -633,7 +798,7 @@ static async emitSwapResponded(
         createdAt
       };
       
-      emitToUsers(adminIds, 'NEW_FEEDBACK_RECEIVED', payload);
+      emitToUsers(adminIds, 'feedback:new', payload);
       console.log(`📢 Emitted new feedback to ${adminIds.length} admins`);
     } catch (error) {
       console.error('SocketService.emitNewFeedbackReceived error:', error);
@@ -656,7 +821,7 @@ static async emitSwapResponded(
         updatedAt: new Date()
       };
       
-      emitToUsers(adminIds, 'FEEDBACK_STATUS_CHANGED', payload);
+      emitToUsers(adminIds, 'feedback:status', payload);
       console.log(`📢 Emitted feedback status change to ${adminIds.length} admins`);
     } catch (error) {
       console.error('SocketService.emitFeedbackStatusChanged error:', error);
@@ -681,7 +846,7 @@ static async emitSwapResponded(
         updatedAt: new Date() 
       };
       
-      emitToUsers(adminIds, 'FEEDBACK_UPDATED', payload);
+      emitToUsers(adminIds, 'feedback:updated', payload);
       console.log(`📢 Emitted feedback update to ${adminIds.length} admins`);
     } catch (error) {
       console.error('SocketService.emitFeedbackUpdated error:', error);
@@ -704,14 +869,16 @@ static async emitSwapResponded(
         deletedAt: new Date()
       };
       
-      emitToUsers(adminIds, 'FEEDBACK_DELETED', payload);
+      emitToUsers(adminIds, 'feedback:deleted', payload);
       console.log(`📢 Emitted feedback deletion to ${adminIds.length} admins`);
     } catch (error) {
       console.error('SocketService.emitFeedbackDeleted error:', error);
     }
   }
 
-    static async emitNewReportReceived(
+  // ========== REPORT EVENTS ==========
+
+  static async emitNewReportReceived(
     adminIds: string[],
     reportId: string,
     groupId: string,
@@ -763,7 +930,6 @@ static async emitSwapResponded(
         resolvedAt: new Date()
       };
       
-      // Notify the reporter
       emitToUser(reporterId, 'report:status', payload);
       console.log(`📢 Emitted report status change to reporter ${reporterId}`);
     } catch (error) {
