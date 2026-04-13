@@ -1,9 +1,10 @@
 // src/controllers/uploadController.ts - COMPLETELY FIXED
 import { Request, Response } from 'express';
-import path from 'path';
+import path from 'path'; 
 import fs from 'fs';
 import prisma from '../prisma'; 
 import { UserAuthRequest } from '../middlewares/user.auth.middleware';
+import { extractPublicId, deleteFromCloudinary } from '../config/cloudinary.config';
 
 export class UploadController {
   // Helper to get public URL for file with separate directories
@@ -644,5 +645,144 @@ static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
   }
 }
   
+// src/controllers/upload.controller.ts - ADD THESE METHODS
+  // Cloudinary user avatar upload
+  static async uploadAvatarCloudinary(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
 
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
+      }
+
+      // Get Cloudinary URL
+      const fileUrl = req.file.path;
+
+      // Delete old avatar if exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true }
+      });
+
+      if (user?.avatarUrl) {
+        // ✅ Use imported functions directly (no dynamic import)
+        const publicId = extractPublicId(user.avatarUrl);
+        if (publicId) {
+          await deleteFromCloudinary(publicId);
+        }
+      }
+
+      // Update user
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: fileUrl },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          avatarUrl: true,
+          gender: true
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Avatar uploaded successfully',
+        data: { avatarUrl: fileUrl, user: updatedUser }
+      });
+    } catch (error: any) {
+      console.error('Cloudinary avatar upload error:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  // Cloudinary group avatar upload
+  static async uploadGroupAvatarCloudinary(req: UserAuthRequest, res: Response) {
+    try {
+      const { groupId } = req.params as {groupId:string};
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+
+      // Check if user is admin
+      const groupMember = await prisma.groupMember.findFirst({
+        where: { groupId, userId, groupRole: 'ADMIN' }
+      });
+
+      if (!groupMember) {
+        return res.status(403).json({ success: false, message: 'Only admins can update group avatar' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No file uploaded' });
+      }
+
+      const fileUrl = req.file.path;
+
+      // Delete old avatar
+      const group = await prisma.group.findUnique({
+        where: { id: groupId },
+        select: { avatarUrl: true }
+      });
+
+      if (group?.avatarUrl) {
+        // ✅ Use imported functions directly
+        const publicId = extractPublicId(group.avatarUrl);
+        if (publicId) {
+          await deleteFromCloudinary(publicId);
+        }
+      }
+
+      // Update group
+      const updatedGroup = await prisma.group.update({
+        where: { id: groupId },
+        data: { avatarUrl: fileUrl },
+        select: {
+          id: true,
+          name: true,
+          avatarUrl: true,
+          description: true
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Group avatar uploaded successfully',
+        data: { avatarUrl: fileUrl, group: updatedGroup }
+      });
+    } catch (error: any) {
+      console.error('Cloudinary group avatar upload error:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  // Cloudinary task photo upload
+  static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No photo uploaded' });
+      }
+
+      const fileUrl = req.file.path;
+
+      return res.status(200).json({
+        success: true,
+        message: 'Photo uploaded successfully',
+        data: { photoUrl: fileUrl }
+      });
+    } catch (error: any) {
+      console.error('Cloudinary task photo upload error:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
 }

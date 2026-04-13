@@ -1,73 +1,42 @@
+// src/routes/upload.routes.ts - CLOUDINARY VERSION
+
 import { UserAuthMiddleware } from './../middlewares/user.auth.middleware';
 import express from 'express';
 import { UploadController } from '../controllers/upload.controller';
-import { singleUpload, photoUpload } from '../utils/multer'; // Import both
+import { singleUpload, photoUpload, groupAvatarUpload } from '../utils/multer';
 
 const router = express.Router();
 
-// Avatar upload (file upload)
+// User avatar upload (Cloudinary)
 router.post(
   '/avatar',
   UserAuthMiddleware,
-  (req, res, next) => {
-    // Set upload type in body
-    req.body.uploadType = 'avatar';
-    next(); 
-  },
-  singleUpload, // Uses 'file' field
-  UploadController.uploadAvatar
+  singleUpload,
+  UploadController.uploadAvatarCloudinary
 );
 
-// Avatar upload (base64)
-router.post(
-  '/avatar/base64',
-  UserAuthMiddleware,
-  UploadController.uploadAvatarBase64
-);
-
-// Task photo upload (file upload) - FOR ASSIGNMENTS
-router.post(
-  '/task/:taskId/photo',
-  UserAuthMiddleware,
-  (req, res, next) => {
-    req.body.uploadType = 'task_photo';
-    next();
-  },
-  photoUpload, // Uses 'photo' field for assignments
-  UploadController.uploadTaskPhoto
-);
-
-// Delete avatar
-router.delete(
-  '/avatar',
-  UserAuthMiddleware,
-  UploadController.deleteAvatar
-);
- 
+// Group avatar upload (Cloudinary)
 router.post(
   '/group/:groupId/avatar',
   UserAuthMiddleware,
-  (req, res, next) => { 
-    req.body.uploadType = 'group_avatar';
-    next();
-  },
-  singleUpload, // Uses 'file' field
-  UploadController.uploadGroupAvatar
+  groupAvatarUpload,
+  UploadController.uploadGroupAvatarCloudinary
 );
- 
-// Group avatar upload (base64)
+
+// Task photo upload (Cloudinary)
 router.post(
-  '/group/:groupId/avatar/base64',
+  '/task-photo',
   UserAuthMiddleware,
-  UploadController.uploadGroupAvatarBase64
+  photoUpload,
+  UploadController.uploadTaskPhotoCloudinary
 );
 
-router.delete(
-  '/group/:groupId/avatar',
-  UserAuthMiddleware,
-  UploadController.deleteGroupAvatar
-);
+// Keep base64 endpoints for fallback
+router.post('/avatar/base64', UserAuthMiddleware, UploadController.uploadAvatarBase64);
+router.post('/group/:groupId/avatar/base64', UserAuthMiddleware, UploadController.uploadGroupAvatarBase64);
 
-// Remove duplicate route at the bottom
+// Delete endpoints
+router.delete('/avatar', UserAuthMiddleware, UploadController.deleteAvatar);
+router.delete('/group/:groupId/avatar', UserAuthMiddleware, UploadController.deleteGroupAvatar);
 
 export default router;
