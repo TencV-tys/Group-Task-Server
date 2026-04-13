@@ -122,78 +122,76 @@ static async getFilteredFeedbackStats(req: AdminAuthRequest, res: Response) {
   }
 
   // ========== UPDATE FEEDBACK STATUS ==========
-  static async updateFeedbackStatus(req: AdminAuthRequest, res: Response) {
-    try {
-      const adminId = req.admin?.id;
-      
-      if (!adminId) {
-        return res.status(401).json({
-          success: false,
-          message: "Admin not authenticated"
-        });
-      }
-
-      const { feedbackId } = req.params as { feedbackId: string };
-      const { status } = req.body; // Removed adminNotes
-
-      if (!status) {
-        return res.status(400).json({
-          success: false,
-          message: "Status is required"
-        });
-      }
-
-      // ✅ FIXED: Only passing 2 arguments
-      const result = await AdminFeedbackService.updateFeedbackStatus(feedbackId, status);
-
-      if (!result.success) {
-        return res.status(400).json(result);
-      }
-
-      return res.json(result);
-
-    } catch (error: any) {
-      console.error("AdminFeedbackController.updateFeedbackStatus error:", error);
-      return res.status(500).json({
+static async updateFeedbackStatus(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    
+    if (!adminId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "Admin not authenticated"
       });
     }
-  }
 
-  // ========== ADD ADMIN REPLY - REMOVED ==========
-  // This method is removed because your schema doesn't support admin replies
+    const { feedbackId } = req.params as { feedbackId: string };
+    const { status } = req.body;
 
-  // ========== DELETE FEEDBACK ==========
-  static async deleteFeedback(req: AdminAuthRequest, res: Response) {
-    try {
-      const adminId = req.admin?.id;
-      
-      if (!adminId) {
-        return res.status(401).json({
-          success: false,
-          message: "Admin not authenticated"
-        });
-      }
-
-      const { feedbackId } = req.params as { feedbackId: string };
-
-      const result = await AdminFeedbackService.deleteFeedback(feedbackId);
-
-      if (!result.success) {
-        return res.status(400).json(result);
-      }
-
-      return res.json(result);
-
-    } catch (error: any) {
-      console.error("AdminFeedbackController.deleteFeedback error:", error);
-      return res.status(500).json({
+    if (!status) {
+      return res.status(400).json({
         success: false,
-        message: "Internal server error"
+        message: "Status is required"
       });
     }
+
+    // ✅ FIXED: Pass adminId as the 3rd argument
+    const result = await AdminFeedbackService.updateFeedbackStatus(feedbackId, status, adminId);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.json(result);
+
+  } catch (error: any) {
+    console.error("AdminFeedbackController.updateFeedbackStatus error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
+
+// ========== DELETE FEEDBACK ==========
+static async deleteFeedback(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin not authenticated"
+      });
+    }
+
+    const { feedbackId } = req.params as { feedbackId: string };
+
+    // If deleteFeedback expects adminId
+    const result = await AdminFeedbackService.deleteFeedback(feedbackId, adminId);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    return res.json(result);
+
+  } catch (error: any) {
+    console.error("AdminFeedbackController.deleteFeedback error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
 
   // ========== GET FEEDBACK STATS ==========
   static async getFeedbackStats(req: AdminAuthRequest, res: Response) {
