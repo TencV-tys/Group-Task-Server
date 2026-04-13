@@ -1266,7 +1266,7 @@ static async getTodayAssignments(
         assignments: [],
         currentTime: new Date(),
         total: 0
-      } 
+      }  
     };
   }
 }
@@ -1891,6 +1891,8 @@ static async getGroupNeglectedTasks(
 
 
 // ========== CHECK GROUP NEGLECTED ASSIGNMENTS (FOR CRON) ==========
+// In assignment.services.ts - UPDATE checkGroupNeglectedAssignments method
+
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({ 
@@ -1902,26 +1904,26 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
     const now = new Date();
     const assignments = await prisma.assignment.findMany({
-  where: {
-    task: { groupId },
-    rotationWeek: group.currentRotationWeek,
-    completed: false,
-    // ✅ Include past due date as well
-    AND: [
-      {
-        OR: [
-          { expired: true },
-          { dueDate: { lt: now } }
+      where: {
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek,
+        completed: false,
+        AND: [
+          {
+            OR: [
+              { expired: true },
+              { dueDate: { lt: now } }
+            ]
+          },
+          {
+            OR: [
+              { verified: false },
+              { verified: null }
+            ]
+          }
         ]
       },
-      {
-        OR: [
-          { verified: false },
-          { verified: null }
-        ]
-      }
-    ]
-  },include: { 
+      include: { 
         user: {
           select: {
             id: true,
@@ -1996,6 +1998,23 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             const slotPoints = timeSlot.points || assignment.points;
             pointsLost += slotPoints;
             totalPointsNotAwarded += slotPoints;
+            
+            // ✅ DEDUCT POINTS FROM USER'S CUMULATIVE POINTS FOR MISSED SLOT
+            await prisma.groupMember.updateMany({
+              where: {
+                userId: assignment.userId,
+                groupId: groupId,
+                isActive: true
+              },
+              data: {
+                cumulativePoints: {
+                  decrement: slotPoints
+                },
+                pointsUpdatedAt: new Date()
+              }
+            });
+            
+            console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${slotPoints} points for missing slot ${timeSlot.startTime}-${timeSlot.endTime}`);
           }
         }
         
@@ -2059,7 +2078,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               userId: admin.userId,
               type: "NEGLECT_DETECTED",
               title: "⚠️ Time Slot Missed",
-              message: `${assignment.user?.fullName || 'Unknown'} missed ${missedSlots.length} time slot(s) for "${assignment.task!.title}" - ${pointsLost} points not awarded`,
+              message: `${assignment.user?.fullName || 'Unknown'} missed ${missedSlots.length} time slot(s) for "${assignment.task!.title}" - ${pointsLost} points deducted`,
               data: {
                 assignmentId: assignment.id,
                 taskId: assignment.taskId,
@@ -2090,6 +2109,23 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
           totalPointsNotAwarded += pointsLost;
           
+          // ✅ DEDUCT POINTS FROM USER'S CUMULATIVE POINTS FOR MISSED TASK
+          await prisma.groupMember.updateMany({
+            where: {
+              userId: assignment.userId,
+              groupId: groupId,
+              isActive: true
+            },
+            data: {
+              cumulativePoints: {
+                decrement: pointsLost
+              },
+              pointsUpdatedAt: new Date()
+            }
+          });
+          
+          console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${pointsLost} points for missing task ${assignment.task!.title}`);
+          
           await prisma.assignment.update({
             where: { id: assignment.id },
             data: {
@@ -2103,7 +2139,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             userId: assignment.userId,
             type: "TASK_MISSED",
             title: "⚠️ Task Missed",
-            message: `You missed "${assignment.task!.title}" - No points awarded (worth ${pointsLost} points)`,
+            message: `You missed "${assignment.task!.title}" - Lost ${pointsLost} points`,
             data: { 
               assignmentId: assignment.id,
               taskId: assignment.taskId,
@@ -2120,7 +2156,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               userId: admin.userId,
               type: "NEGLECT_DETECTED",
               title: "⚠️ Task Missed",
-              message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" - ${pointsLost} points not awarded`,
+              message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" - ${pointsLost} points deducted`,
               data: {
                 assignmentId: assignment.id,
                 taskId: assignment.taskId,
@@ -2148,5 +2184,5 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
- 
+
 } 

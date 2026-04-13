@@ -45,6 +45,6 @@ export const initNeglectDetectionCron = () => {
       console.error('❌ Error in end-of-day neglect check:', error);
     }
   });
-  
+   
   console.log('⏰ Neglect detection cron job initialized (running every 30 minutes)');
 }; 
