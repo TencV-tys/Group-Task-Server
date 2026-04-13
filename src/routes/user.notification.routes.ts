@@ -13,6 +13,9 @@ router.get('/', UserNotificationController.getMyNotifications);
 // Get unread count
 router.get('/unread-count', UserNotificationController.getUnreadCount);
 
+// ✅ Register push token (NEW)
+router.post('/register-push-token', UserNotificationController.registerPushToken);
+
 // Mark as read
 router.patch('/:notificationId/read', UserNotificationController.markAsRead);
 

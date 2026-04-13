@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { UserNotificationService } from "../services/user.notification.services";
+import prisma from "../prisma";
 
 export class UserNotificationController { 
   
@@ -174,6 +175,58 @@ export class UserNotificationController {
       return res.status(500).json({
         success: false,
         message: "Internal server error"
+      });
+    }
+  }
+
+  // ✅ ADD THIS NEW METHOD - Register push token
+  static async registerPushToken(req: UserAuthRequest, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { expoPushToken, deviceType } = req.body;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated"
+        });
+      }
+
+      if (!expoPushToken) {
+        return res.status(400).json({
+          success: false,
+          message: "Expo push token is required"
+        });
+      }
+
+      // Upsert the device token
+      await prisma.userDevice.upsert({
+        where: { expoPushToken },
+        update: {
+          userId,
+          deviceType: deviceType || 'unknown',
+          isActive: true,
+          lastUsedAt: new Date()
+        },
+        create: {
+          userId,
+          expoPushToken,
+          deviceType: deviceType || 'unknown',
+          isActive: true
+        }
+      });
+
+      console.log(`📱 Push token registered for user ${userId}`);
+
+      return res.status(200).json({
+        success: true,
+        message: "Push token registered successfully"
+      });
+    } catch (error: any) {
+      console.error("Error registering push token:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to register push token"
       });
     }
   }

@@ -1,9 +1,81 @@
+// services/user.notification.services.ts - UPDATED with push notifications
+
 import prisma from "../prisma";
 import { SocketService } from "./socket.services";
+
 export class UserNotificationService {
   
-  // Create notification for a user
- static async createNotification(data: {
+  // Send push notification to user's device
+  private static async sendPushNotification(
+    userId: string,
+    title: string,
+    message: string,
+    data?: any
+  ): Promise<void> {
+    try {
+      // Get user's active device tokens
+      const devices = await prisma.userDevice.findMany({
+        where: { 
+          userId, 
+          isActive: true 
+        }
+      });
+
+      if (devices.length === 0) {
+        console.log(`📱 No active devices found for user ${userId}`);
+        return;
+      }
+
+      // Prepare notifications for all devices
+      const notifications = devices.map((device:{expoPushToken:string}) => ({
+        to: device.expoPushToken,
+        sound: 'default',
+        title: title,
+        body: message,
+        data: {
+          ...data,
+          notificationId: data?.notificationId,
+          type: data?.type,
+        },
+        priority: 'high' as const,
+      }));
+
+      // Send to Expo push service
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(notifications), 
+      });
+
+      const result = await response.json();
+      
+      // Handle invalid tokens (remove them)
+      if (result.data) {
+        for (let i = 0; i < result.data.length; i++) {
+          const ticket = result.data[i];
+          if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') {
+            // Remove invalid device
+            await prisma.userDevice.updateMany({
+              where: { expoPushToken: devices[i].expoPushToken },
+              data: { isActive: false }
+            });
+            console.log(`📱 Removed invalid device token: ${devices[i].expoPushToken}`);
+          }
+        }
+      }
+      
+      console.log(`📱 Push notification sent to ${devices.length} device(s) for user ${userId}`);
+    } catch (error) {
+      console.error("Error sending push notification:", error);
+    }
+  }
+  
+  // Create notification for a user - UPDATED with push
+  static async createNotification(data: {
     userId: string;
     type: string;
     title: string;
@@ -30,6 +102,18 @@ export class UserNotificationService {
         data.title,
         data.message,
         data.data
+      );
+
+      // 📱 SEND PUSH NOTIFICATION (NEW!)
+      await this.sendPushNotification(
+        data.userId,
+        data.title,
+        data.message,
+        {
+          ...data.data,
+          notificationId: notification.id,
+          type: data.type,
+        }
       );
 
       return {
