@@ -677,7 +677,7 @@ static async emitSwapResponded(
         userId,
         userName,
         type,
-        message: message.substring(0, 100),
+        message: message.substring(0, 100), 
         updatedAt: new Date() 
       };
       
@@ -708,6 +708,99 @@ static async emitSwapResponded(
       console.log(`📢 Emitted feedback deletion to ${adminIds.length} admins`);
     } catch (error) {
       console.error('SocketService.emitFeedbackDeleted error:', error);
+    }
+  }
+
+    static async emitNewReportReceived(
+    adminIds: string[],
+    reportId: string,
+    groupId: string,
+    groupName: string,
+    reporterId: string,
+    reporterName: string,
+    reportType: string,
+    description: string,
+    createdAt: Date
+  ) {
+    try {
+      const payload = {
+        reportId,
+        groupId,
+        groupName,
+        reporterId,
+        reporterName,
+        reportType,
+        description: description.substring(0, 200),
+        createdAt
+      };
+      
+      emitToUsers(adminIds, 'report:new', payload);
+      console.log(`📢 Emitted new report to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitNewReportReceived error:', error);
+    }
+  }
+
+  static async emitReportStatusChanged(
+    reporterId: string,
+    reportId: string,
+    groupId: string,
+    groupName: string,
+    oldStatus: string,
+    newStatus: string,
+    resolvedBy: string,
+    resolutionNotes?: string
+  ) {
+    try {
+      const payload = {
+        reportId,
+        groupId,
+        groupName,
+        oldStatus,
+        newStatus,
+        resolvedBy,
+        resolutionNotes: resolutionNotes || null,
+        resolvedAt: new Date()
+      };
+      
+      // Notify the reporter
+      emitToUser(reporterId, 'report:status', payload);
+      console.log(`📢 Emitted report status change to reporter ${reporterId}`);
+    } catch (error) {
+      console.error('SocketService.emitReportStatusChanged error:', error);
+    }
+  }
+
+  static async emitReportStatusChangedToAdmins(
+    adminIds: string[],
+    reportId: string,
+    groupId: string,
+    groupName: string,
+    reporterId: string,
+    reporterName: string,
+    oldStatus: string,
+    newStatus: string,
+    resolvedBy: string,
+    resolutionNotes?: string
+  ) {
+    try {
+      const payload = {
+        reportId,
+        groupId,
+        groupName,
+        reporterId,
+        reporterName,
+        oldStatus,
+        newStatus,
+        resolvedBy,
+        resolutionNotes: resolutionNotes || null,
+        resolvedAt: new Date()
+      };
+      
+      emitToUsers(adminIds, 'report:status', payload);
+      console.log(`📢 Emitted report status change to ${adminIds.length} admins`);
+    } catch (error) {
+      console.error('SocketService.emitReportStatusChangedToAdmins error:', error);
     }
   }
 }
