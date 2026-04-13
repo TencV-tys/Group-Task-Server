@@ -767,27 +767,43 @@ static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
   }
 
   // Cloudinary task photo upload
-  static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: 'Unauthorized' });
-      }
-
-      if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No photo uploaded' });
-      }
-
-      const fileUrl = req.file.path;
-
-      return res.status(200).json({
-        success: true,
-        message: 'Photo uploaded successfully',
-        data: { photoUrl: fileUrl }
-      });
-    } catch (error: any) {
-      console.error('Cloudinary task photo upload error:', error);
-      return res.status(500).json({ success: false, message: error.message });
+// Cloudinary task photo upload
+static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No photo uploaded' });
+    }
+
+    let fileUrl = req.file.path;
+    
+    // ✅ FIX: Clean duplicate folder if present
+    if (fileUrl.includes('/task-photos/task-photos/')) {
+      fileUrl = fileUrl.replace('/task-photos/task-photos/', '/task-photos/');
+      console.log('🔧 Fixed duplicate folder in URL:', fileUrl);
+    }
+    
+    // Also clean if filename contains the folder path
+    if (fileUrl.includes('/')) {
+      const parts = fileUrl.split('/');
+      const filename = parts[parts.length - 1];
+      // Reconstruct with single folder
+      fileUrl = `https://res.cloudinary.com/.../task-photos/${filename}`;
+      // Or simpler: use the cleaned version above
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Photo uploaded successfully',
+      data: { photoUrl: fileUrl }
+    });
+  } catch (error: any) {
+    console.error('Cloudinary task photo upload error:', error);
+    return res.status(500).json({ success: false, message: error.message });
   }
+}
 }
