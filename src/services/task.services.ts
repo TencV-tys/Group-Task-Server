@@ -1756,13 +1756,12 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
 
 
 // In task.services.ts - COMPLETELY REPLACE getRotationSchedule
-
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
   try {
     const membership = await prisma.groupMember.findFirst({
       where: { userId, groupId }
     });
-
+ 
     if (!membership) {
       return { success: false, message: "You are not a member in this group" };
     }
@@ -1804,12 +1803,47 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
         week: weekNumber,
         weekStart,
         weekEnd,
-        tasks: []
+        tasks: [],
+        verifiedByDay: {
+          Monday: 0, Tuesday: 0, Wednesday: 0, 
+          Thursday: 0, Friday: 0, Saturday: 0, Sunday: 0
+        },
+        totalVerified: 0
       };
+
+      // ✅ FIXED: Get all verified assignments for this week through task relation
+      const verifiedAssignments = await prisma.assignment.findMany({
+        where: {
+          task: {
+            groupId: groupId  // ✅ Correct way to filter by group
+          },
+          rotationWeek: weekNumber,
+          verified: true,
+          completedAt: { not: null }
+        },
+        select: { 
+          completedAt: true,
+          points: true,
+          taskId: true
+        }
+      });
+
+      // Count verified by day
+      verifiedAssignments.forEach(assignment => {
+        if (assignment.completedAt) {
+          const day = new Date(assignment.completedAt).toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            timeZone: 'UTC' 
+          });
+          if (weekSchedule.verifiedByDay[day] !== undefined) {
+            weekSchedule.verifiedByDay[day]++;
+          }
+        }
+      });
+      weekSchedule.totalVerified = verifiedAssignments.length;
 
       // For each task, get the ACTUAL assignments for this week
       for (const task of tasks) {
-        // Get the actual assignment for this specific week
         const actualAssignment = await prisma.assignment.findFirst({
           where: {
             taskId: task.id,
@@ -1827,22 +1861,17 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
           }
         });
 
-        // Get selected days
         const selectedDays = TaskHelpers.safeJsonParse<DayOfWeek>(task.selectedDays as any) || 
                              (task.dayOfWeek ? [task.dayOfWeek] : []);
 
-        // ✅ FIX: Calculate TOTAL points by summing ALL time slots
         let totalTaskPoints = 0;
         
         if (task.timeSlots && task.timeSlots.length > 0) {
-          // Sum all time slot points
           totalTaskPoints = task.timeSlots.reduce((sum: number, slot: any) => sum + (slot.points || 0), 0);
         } else {
-          // Fallback to task.points if no time slots
           totalTaskPoints = task.points || 0;
         }
 
-        // Log for debugging
         console.log(`📊 Task ${task.title}:`);
         if (task.timeSlots && task.timeSlots.length > 0) {
           console.log(`   Time slots:`, task.timeSlots.map(s => `${s.startTime}-${s.endTime}: ${s.points || 0}pts`));
@@ -1855,14 +1884,16 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
           taskId: task.id,
           taskTitle: task.title,
           executionFrequency: task.executionFrequency,
-          timeSlots: task.timeSlots || [],  // ✅ Send all time slots to frontend
+          timeSlots: task.timeSlots || [],
           selectedDays: selectedDays,
+          dueDate: actualAssignment?.dueDate,
+          dayOfWeek: selectedDays.length > 0 ? selectedDays[0] : null,
           assignee: actualAssignment?.user ? {
             id: actualAssignment.user.id,
             name: actualAssignment.user.fullName,
             avatarUrl: actualAssignment.user.avatarUrl
           } : null,
-          points: totalTaskPoints,  // ✅ Use SUMMED total points
+          points: totalTaskPoints,
           completed: actualAssignment?.completed || false,
           actualAssignment: !!actualAssignment
         });
@@ -1884,7 +1915,6 @@ static async getRotationSchedule(groupId: string, userId: string, weeks: number 
     return { success: false, message: error.message || "Error retrieving rotation schedule" };
   }
 }
-
 
 
 // In task.services.ts - UPDATED reassignTask with creation-date-based week boundaries

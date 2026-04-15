@@ -1,6 +1,5 @@
 // cron/neglectDetection.cron.ts - FIXED BACK TO 30 MINUTES
 import cron from 'node-cron';
-import prisma from '../prisma';
 import { AssignmentService } from '../services/assignment.services';
 
 export const initNeglectDetectionCron = () => {

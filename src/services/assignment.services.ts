@@ -173,25 +173,30 @@ static async completeAssignment(
         submissionStatus: timeValidation.submissionStatus
       });
       
-      if (!timeValidation.allowed) {
-        let errorMessage = "Cannot submit assignment at this time.";
-        
-        if (timeValidation.reason === 'Submission not open yet') {
-          const timeUntilStart = timeValidation.opensIn || 0;
-          errorMessage = `Submission opens at ${targetTimeSlot.endTime}. Please wait until then.`;
-        } else if (timeValidation.reason === 'Submission window closed') {
-          errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
-        } else if (timeValidation.reason === 'Not due date') {
-          errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
-        }
-        
-        console.log(`❌ Time validation failed: ${errorMessage}`);
-        return { 
-          success: false, 
-          message: errorMessage,
-          validation: timeValidation
-        };
-      }
+       // In completeAssignment, where time validation fails (around line where you return error):
+
+if (!timeValidation.allowed) {
+  let errorMessage = "Cannot submit assignment at this time.";
+  
+  if (timeValidation.reason === 'Submission not open yet') {
+    errorMessage = `Submission opens at ${targetTimeSlot.endTime}. Please wait until then.`;
+  } else if (timeValidation.reason === 'Submission window closed') {
+    errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
+    
+    // ✅ ADD THIS - Immediately mark as neglected when window closes
+    await this.markAssignmentAsNeglected(assignmentId, userId);
+    errorMessage = `Submission window closed. This task has been marked as missed. -${slotPoints} points deducted.`;
+    
+  } else if (timeValidation.reason === 'Not due date') {
+    errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
+  }
+  
+  return { 
+    success: false, 
+    message: errorMessage,
+    validation: timeValidation
+  };
+}
       
       // Check if late based on the time validation result
       isLate = timeValidation.willBePenalized || false;
@@ -2098,8 +2103,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 dueDate: assignment.dueDate,
                 detectedAt: now
               }
-            });
-          }
+            }); 
+          } 
         }
       } else {
         // Single time slot task
@@ -2185,4 +2190,107 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
   }
 }
 
+// In assignment.services.ts - Add this method
+
+private static async markAssignmentAsNeglected(
+  assignmentId: string,
+  userId: string
+) {
+  try {
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        user: { select: { id: true, fullName: true, avatarUrl: true } },
+        task: { include: { group: true, timeSlots: true } },
+        timeSlot: true
+      }
+    });
+
+    if (!assignment || assignment.completed) return;
+
+    const now = new Date();
+    const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
+
+    // Deduct points immediately
+    await prisma.groupMember.updateMany({
+      where: {
+        userId: assignment.userId,
+        groupId: assignment.task!.groupId,
+        isActive: true
+      },
+      data: {
+        cumulativePoints: {
+          decrement: pointsLost
+        },
+        pointsUpdatedAt: now
+      }
+    });
+
+    // Mark as expired
+    await prisma.assignment.update({
+      where: { id: assignmentId },
+      data: {
+        expired: true,
+        expiredAt: now,
+        notes: `[MISSED: ${now.toLocaleDateString()}] ${assignment.notes || ''}`
+      }
+    });
+
+    // Get admins
+    const admins = await prisma.groupMember.findMany({
+      where: {
+        groupId: assignment.task!.groupId,
+        groupRole: "ADMIN",
+        isActive: true
+      },
+      select: { userId: true, user: { select: { fullName: true } } }
+    });
+
+    // Send real-time notification to user
+    await UserNotificationService.createNotification({
+      userId: assignment.userId,
+      type: "TASK_MISSED",
+      title: "⚠️ Task Missed",
+      message: `You missed "${assignment.task!.title}" - Lost ${pointsLost} points`,
+      data: {
+        assignmentId: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
+        groupId: assignment.task!.groupId,
+        pointsLost,
+        dueDate: assignment.dueDate,
+        detectedAt: now
+      }
+    });
+
+    // Send real-time notifications to admins
+    for (const admin of admins) {
+      await UserNotificationService.createNotification({
+        userId: admin.userId,
+        type: "NEGLECT_DETECTED",
+        title: "⚠️ Task Missed Immediately",
+        message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" immediately after window closed - ${pointsLost} points deducted`,
+        data: {
+          assignmentId: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.task!.title,
+          groupId: assignment.task!.groupId,
+          userId: assignment.userId,
+          userName: assignment.user?.fullName || 'Unknown',
+          pointsLost,
+          dueDate: assignment.dueDate,
+          detectedAt: now
+        }
+      });
+    }
+
+    console.log(`💰💰💰 [IMMEDIATE NEGLECT] User ${assignment.userId} lost -${pointsLost} points for missing ${assignment.task!.title} immediately after window closed`);
+
+    return { success: true, pointsLost };
+
+  } catch (error) {
+    console.error('Error marking assignment as neglected immediately:', error);
+    return { success: false, pointsLost: 0 };
+  }
+}
 } 
