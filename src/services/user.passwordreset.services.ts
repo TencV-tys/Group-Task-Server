@@ -68,7 +68,7 @@ export class UserPasswordResetService {
       console.log("Reset token stored in database");
 
       // Create reset URL
-        const resetUrl = `http://${process.env.WIFI_IP}:${process.env.PORT}/reset-password-form?token=${resetToken}&email=${email}`;
+        const resetUrl = `http://${process.env.MY_IP}:${process.env.PORT}/reset-password-form?token=${resetToken}&email=${email}`;
       console.log("Reset URL generated:", resetUrl);
 
       // Email content
@@ -206,7 +206,7 @@ static async verifyResetToken(token: string, email: string) {
             lt: new Date()
           }
         }
-      });
+      }); 
       
       if (expiredUser) {
         console.log("⏰ Token found but EXPIRED at:", expiredUser.resetPasswordExpires);
@@ -254,91 +254,148 @@ static async verifyResetToken(token: string, email: string) {
   }
 }
 
-  // Reset password
-  static async resetPassword(token: string, email: string, newPassword: string, confirmPassword: string) {
-    try {
-      if (!token || !email || !newPassword || !confirmPassword) {
-        return {
-          success: false,
-          message: "All fields are required"
-        };
+// Reset password - UPDATED with proper validation
+static async resetPassword(token: string, email: string, newPassword: string, confirmPassword: string) {
+  try {
+    if (!token || !email || !newPassword || !confirmPassword) {
+      return {
+        success: false,
+        message: "All fields are required"
+      };
+    }
+
+    if (newPassword !== confirmPassword) {
+      return {
+        success: false,
+        message: "Passwords do not match"
+      };
+    }
+
+    // ✅ Updated validation - match signup requirements
+    if (newPassword.length < 8) {
+      return {
+        success: false,
+        message: "Password must be at least 8 characters"
+      };
+    }
+
+    if (newPassword.length > 128) {
+      return {
+        success: false,
+        message: "Password is too long (max 128 characters)"
+      };
+    }
+
+    const hasUpperCase = /[A-Z]/.test(newPassword);
+    const hasLowerCase = /[a-z]/.test(newPassword);
+    const hasNumber = /[0-9]/.test(newPassword);
+    const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(newPassword);
+
+    if (!hasUpperCase) {
+      return {
+        success: false,
+        message: "Password must contain at least one uppercase letter (A-Z)"
+      };
+    }
+    if (!hasLowerCase) {
+      return {
+        success: false,
+        message: "Password must contain at least one lowercase letter (a-z)"
+      };
+    }
+    if (!hasNumber) {
+      return {
+        success: false,
+        message: "Password must contain at least one number (0-9)"
+      };
+    }
+    if (!hasSpecial) {
+      return {
+        success: false,
+        message: "Password must contain at least one special character (!@#$%^&* etc.)"
+      };
+    }
+
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    const user = await prisma.user.findFirst({
+      where: {
+        email,
+        resetPasswordToken: hashedToken,
+        resetPasswordExpires: {
+          gt: new Date()
+        }
       }
+    });
 
-      if (newPassword !== confirmPassword) {
-        return {
-          success: false,
-          message: "Passwords do not match"
-        };
-      }
-
-      if (newPassword.length < 6) {
-        return {
-          success: false,
-          message: "Password must be at least 6 characters"
-        };
-      }
-
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(token)
-        .digest('hex');
-
-      const user = await prisma.user.findFirst({
+    if (!user) {
+      // Check if token exists but is expired
+      const expiredUser = await prisma.user.findFirst({
         where: {
           email,
           resetPasswordToken: hashedToken,
           resetPasswordExpires: {
-            gt: new Date()
+            lt: new Date()
           }
         }
       });
-
-      if (!user) {
+      
+      if (expiredUser) {
         return {
           success: false,
-          message: "Invalid or expired reset token"
+          message: "Reset link has expired. Please request a new one."
         };
       }
-
-      // Hash new password
-      const hashedNewPassword = await hashedPassword(newPassword, 10);
-
-      // Update password and clear reset token
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          passwordHash: hashedNewPassword,
-          resetPasswordToken: null,
-          resetPasswordExpires: null
-        }
-      });
-
-      // Optionally send confirmation email
-      await transporter.sendMail({
-        from: `"Your App Name" <${process.env.SMTP_USER}>`,
-        to: email,
-        subject: "Password Reset Successful",
-        html: `
-          <div style="font-family: Arial, sans-serif;">
-            <h2>Password Reset Successful</h2>
-            <p>Hello ${user.fullName},</p>
-            <p>Your password has been successfully reset.</p>
-            <p>If you didn't make this change, please contact support immediately.</p>
-          </div>
-        `
-      });
-
-      return {
-        success: true,
-        message: "Password reset successful"
-      };
-
-    } catch (error: any) {
-      console.error("Reset password error:", error);
+      
       return {
         success: false,
-        message: "Failed to reset password"
+        message: "Invalid or expired reset token"
       };
     }
+
+    // Hash new password
+    const hashedNewPassword = await hashedPassword(newPassword, 12); // Use 12 rounds like signup
+
+    // Update password and clear reset token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: hashedNewPassword,
+        resetPasswordToken: null,
+        resetPasswordExpires: null
+      }
+    });
+
+    // Send confirmation email (optional but recommended)
+    await transporter.sendMail({
+      from: `"GroupTask" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: "Password Reset Successful",
+      html: `
+        <div style="font-family: Arial, sans-serif;">
+          <h2>Password Reset Successful</h2>
+          <p>Hello ${user.fullName},</p>
+          <p>Your password has been successfully reset.</p>
+          <p>If you didn't make this change, please contact support immediately.</p>
+          <p>You can now log in to GroupTask with your new password.</p>
+        </div>
+      `
+    });
+
+    return {
+      success: true,
+      message: "Password reset successful"
+    };
+
+  } catch (error: any) {
+    console.error("Reset password error:", error);
+    return {
+      success: false,
+      message: "Failed to reset password"
+    };
   }
+}
 }

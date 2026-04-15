@@ -1,4 +1,5 @@
-// services/user.auth.services.ts - UPDATED with security improvements
+// services/user.auth.services.ts - FULLY UPDATED with remainingAttempts
+
 import { UserJwtUtils } from './../utils/user.jwtutils';
 import { UserRole, UserRoleStatus, Gender } from "@prisma/client";
 import prisma from "../prisma";
@@ -43,7 +44,6 @@ export class UserServices {
         };
       }
 
-      // Sanitize inputs
       const sanitizedEmail = this.sanitizeEmail(email);
       const sanitizedName = this.sanitizeInput(fullName);
 
@@ -76,7 +76,6 @@ export class UserServices {
         };
       }
 
-      // Prevent common passwords
       if (this.isCommonPassword(password)) {
         return {
           success: false,
@@ -105,14 +104,12 @@ export class UserServices {
         where: { email: sanitizedEmail }
       });
  
-         if (existingUser) {
-      // ✅ IMPROVED: Return specific message for development
-      // In production, you might want to keep it generic
-      return {
-        success: false,
-        message: "An account with this email already exists. Please login instead.",  // ← Specific message
-      };
-    }
+      if (existingUser) {
+        return {
+          success: false,
+          message: "An account with this email already exists. Please login instead.",
+        };
+      }
 
       // ===== SECURE AVATAR PROCESSING =====
       let avatarUrl: string | null = null;
@@ -123,7 +120,6 @@ export class UserServices {
             console.log("Processing secure avatar...");
             avatarUrl = await this.secureSaveBase64Image(avatarData, sanitizedEmail);
           } else if (avatarData.startsWith('http')) {
-            // Validate URL
             if (this.isValidUrl(avatarData)) {
               avatarUrl = avatarData;
             } else {
@@ -132,12 +128,11 @@ export class UserServices {
           }
         } catch (avatarError: any) {
           console.error("Avatar processing failed:", avatarError.message);
-          // Don't fail signup, just proceed without avatar
         }
       }
 
       // ===== SECURE PASSWORD HASHING =====
-      const passwordHashed = await hashedPassword(password, 12); // Increased rounds
+      const passwordHashed = await hashedPassword(password, 12);
 
       // ===== CREATE USER =====
       const user = await prisma.user.create({
@@ -149,14 +144,11 @@ export class UserServices {
           gender: genderEnum,
           role: UserRole.USER,
           roleStatus: UserRoleStatus.ACTIVE,
-          lastLoginAt: new Date() // Track last login
+          lastLoginAt: new Date()
         }
       });
 
-      // ===== GENERATE TOKEN =====
       const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
-
-      // Clear any failed attempts for this email
       failedLoginAttempts.delete(sanitizedEmail);
 
       return {
@@ -177,10 +169,7 @@ export class UserServices {
 
     } catch (e: any) {
       console.error("Signup error:", e);
-      
-      // Log security event
       this.logSecurityEvent('SIGNUP_ERROR', { email, error: e.message });
-      
       return {
         success: false,
         message: "Registration failed. Please try again later.",
@@ -189,112 +178,121 @@ export class UserServices {
     } 
   }
 
-// In user.auth.services.ts - update the login method
-
-static async login(email: string, password: string): Promise<UserLoginAuthTypes> {
-  try {
-    // ===== INPUT VALIDATION =====
-    if (!email || !password) {
-      return {
-        success: false,
-        message: "Email and password are required"
-      };
-    }
-
-    const sanitizedEmail = this.sanitizeEmail(email);
-
-    // ===== RATE LIMITING CHECK =====
-    if (this.isRateLimited(sanitizedEmail)) {
-      const attempts = failedLoginAttempts.get(sanitizedEmail);
-      const waitTime = Math.ceil((this.LOCKOUT_TIME - (Date.now() - (attempts?.lastAttempt?.getTime() || 0))) / 60000);
-      
-      return {
-        success: false,
-        message: `Too many failed attempts. Please try again in ${waitTime} minutes.`
-      };
-    }
-
-    // ===== FETCH USER =====
-    const user = await prisma.user.findUnique({
-      where: { email: sanitizedEmail }
-    });
-
-    // ===== CHECK IF EMAIL EXISTS =====
-    if (!user) {
-      this.recordFailedAttempt(sanitizedEmail);
-      return {
-        success: false,
-        message: "Email not found",  // ← Specific: email doesn't exist
-        field: "email"  
-      };
-    }
-
-    // ===== CHECK PASSWORD =====
-    const isValidPassword = await comparePassword(password, user.passwordHash);
-    
-    if (!isValidPassword) {
-      this.recordFailedAttempt(sanitizedEmail);
-      return {
-        success: false,
-        message: "Incorrect password",  // ← Specific: password is wrong
-        field: "password"  // ← Add field indicator
-      };
-    }
-
-    // ===== CHECK USER STATUS =====
-    if (user.roleStatus !== UserRoleStatus.ACTIVE) {
-      return {
-        success: false,
-        message: "Account is not active. Please contact support.",
-        field: "email"
-      };
-    }
-
-    // ===== GENERATE TOKEN =====
-    const userId = user.id as unknown as string;
-    const token = UserJwtUtils.generateToken(userId, user.email, user.role);
-
-    // ===== UPDATE LAST LOGIN =====
-    await prisma.user.update({
-      where: { id: userId },
-      data: { lastLoginAt: new Date() }
-    });
-
-    // ===== CLEAR FAILED ATTEMPTS =====
-    failedLoginAttempts.delete(sanitizedEmail);
-
-    return {
-      success: true,
-      message: "Login successful",
-      token,
-      user: {
-        id: userId,
-        fullName: user.fullName,
-        email: user.email,
-        avatarUrl: user.avatarUrl,
-        gender: user.gender as Gender | null,
-        role: user.role,
-        roleStatus: user.roleStatus
+  // ===== UPDATED LOGIN METHOD WITH REMAINING ATTEMPTS =====
+  static async login(email: string, password: string): Promise<UserLoginAuthTypes> {
+    try {
+      // ===== INPUT VALIDATION =====
+      if (!email || !password) {
+        return {
+          success: false,
+          message: "Email and password are required"
+        };
       }
-    };
 
-  } catch (e: any) {
-    console.error("Login error:", e);
-    
-    this.logSecurityEvent('LOGIN_ERROR', { email, error: e.message });
-    
-    return {
-      success: false,
-      message: "Login failed. Please try again later.",
-      error: process.env.NODE_ENV === 'development' ? e.message : undefined
-    };
-  }  
-}
+      const sanitizedEmail = this.sanitizeEmail(email);
+
+      // ===== RATE LIMITING CHECK =====
+      if (this.isRateLimited(sanitizedEmail)) {
+        const attempts = failedLoginAttempts.get(sanitizedEmail);
+        const waitTime = Math.ceil((this.LOCKOUT_TIME - (Date.now() - (attempts?.lastAttempt?.getTime() || 0))) / 60000);
+        
+        const remainingAttempts = 0;  // ← Add this
+        return {
+          success: false,
+          message: `Too many failed attempts. Please try again in ${waitTime} minutes.`,
+          isLocked: true,
+          lockoutMinutes: waitTime,
+            remainingAttempts: remainingAttempts
+        };
+      }
+
+      // ===== FETCH USER =====
+      const user = await prisma.user.findUnique({
+        where: { email: sanitizedEmail }
+      });
+
+      // ===== CHECK IF EMAIL EXISTS =====
+      if (!user) {
+        const attemptInfo = this.recordFailedAttempt(sanitizedEmail);
+        const remainingAttempts = Math.max(0, this.MAX_LOGIN_ATTEMPTS - (attemptInfo?.count || 1));
+        
+        return {
+          success: false,
+          message: "Email not found",
+          field: "email",
+          remainingAttempts: remainingAttempts
+        };
+      }
+
+      // ===== CHECK PASSWORD =====
+      const isValidPassword = await comparePassword(password, user.passwordHash);
+      
+      if (!isValidPassword) {
+        const attemptInfo = this.recordFailedAttempt(sanitizedEmail);
+        const remainingAttempts = Math.max(0, this.MAX_LOGIN_ATTEMPTS - (attemptInfo?.count || 1));
+        const isLocked = (attemptInfo?.count || 1) >= this.MAX_LOGIN_ATTEMPTS;
+        
+        return {
+          success: false,
+          message: isLocked ? "Account temporarily locked due to too many failed attempts" : "Incorrect password",
+          field: "password",
+          remainingAttempts: remainingAttempts,
+          isLocked: isLocked,
+          lockoutMinutes: isLocked ? Math.ceil(this.LOCKOUT_TIME / 60000) : undefined
+        };
+      }
+
+      // ===== CHECK USER STATUS =====
+      if (user.roleStatus !== UserRoleStatus.ACTIVE) {
+        return {
+          success: false,
+          message: "Account is not active. Please contact support.",
+          field: "email"
+        };
+      }
+
+      // ===== GENERATE TOKEN =====
+      const userId = user.id as unknown as string;
+      const token = UserJwtUtils.generateToken(userId, user.email, user.role);
+
+      // ===== UPDATE LAST LOGIN =====
+      await prisma.user.update({
+        where: { id: userId },
+        data: { lastLoginAt: new Date() }
+      });
+
+      // ===== CLEAR FAILED ATTEMPTS =====
+      failedLoginAttempts.delete(sanitizedEmail);
+
+      return {
+        success: true,
+        message: "Login successful",
+        token,
+        user: {
+          id: userId,
+          fullName: user.fullName,
+          email: user.email,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender as Gender | null,
+          role: user.role,
+          roleStatus: user.roleStatus
+        }
+      };
+
+    } catch (e: any) {
+      console.error("Login error:", e);
+      this.logSecurityEvent('LOGIN_ERROR', { email, error: e.message });
+      return {
+        success: false,
+        message: "Login failed. Please try again later.",
+        error: process.env.NODE_ENV === 'development' ? e.message : undefined
+      };
+    }  
+  }
 
   // ===== SECURE AVATAR SAVING =====
   private static async secureSaveBase64Image(base64String: string, email: string): Promise<string | null> {
     try {
-      // Validate base64 format
       const matches = base64String.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
       if (!matches || matches.length !== 3) {
         console.log("Invalid base64 format");
@@ -309,13 +307,11 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
         return null;
       }
 
-      // Validate image type
       if (!this.ALLOWED_IMAGE_TYPES.includes(imageType)) {
         console.log(`Invalid image type: ${imageType}`);
         return null;
       }
 
-      // Decode and validate size
       const imageBuffer = Buffer.from(base64Data, 'base64');
       
       if (imageBuffer.length > this.MAX_IMAGE_SIZE) {
@@ -323,24 +319,20 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
         return null;
       }
 
-      // Security: Scan for potential malware signatures (basic check)
       if (this.hasMalwareSignature(imageBuffer)) {
         console.log("Potential malware detected in image");
         return null;
       }
 
-      // Create secure directory with proper permissions
       const uploadsDir = path.join(__dirname, '../../uploads/avatars');
       if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o755 });
       }
 
-      // Generate secure filename
       const hash = crypto.createHash('sha256').update(email + Date.now() + crypto.randomBytes(16)).digest('hex');
       const filename = `${hash}.${imageType}`;
       const filePath = path.join(uploadsDir, filename);
 
-      // Write file with secure permissions
       fs.writeFileSync(filePath, imageBuffer, { mode: 0o644 });
       console.log("Avatar saved securely to:", filePath);
 
@@ -359,7 +351,6 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
   }
 
   private static sanitizeInput(input: string): string {
-    // Remove any potential XSS or injection characters
     return input.replace(/[<>\"'%;()&]/g, '').trim();
   }
 
@@ -374,24 +365,20 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
            /^[a-zA-Z\s\-']+$/.test(name);
   }
 
- private static isValidPassword(password: string): boolean {
-  if (password.length < this.PASSWORD_MIN_LENGTH || password.length > this.PASSWORD_MAX_LENGTH) {
-    return false;
+  private static isValidPassword(password: string): boolean {
+    if (password.length < this.PASSWORD_MIN_LENGTH || password.length > this.PASSWORD_MAX_LENGTH) {
+      return false;
+    }
+
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
+
+    return hasUpperCase && hasLowerCase && hasNumbers && hasSpecial;
   }
 
-  // At least one uppercase, one lowercase, one number, one special character
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumbers = /\d/.test(password);
-  
-  // ✅ FIXED: Include +, -, _, =, ;, ', /, \, [, ], etc.
-  const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
-
-  return hasUpperCase && hasLowerCase && hasNumbers && hasSpecial;
-}
-
   private static isCommonPassword(password: string): boolean {
-    // List of common passwords to block
     const commonPasswords = [
       'password123', '12345678', 'qwerty123', 'admin123', 
       'letmein', 'welcome', 'monkey', 'dragon', 'master',
@@ -410,8 +397,6 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
   }
 
   private static hasMalwareSignature(buffer: Buffer): boolean {
-    // Basic check for common malware signatures
-    // In production, use a proper malware detection service
     const suspiciousPatterns = [
       '<?php', '<script', 'eval(', 'base64_decode',
       '<?=', '<?xml', '<!DOCTYPE', '<?'
@@ -428,7 +413,6 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
     const now = Date.now();
     const timeSinceLastAttempt = now - attempt.lastAttempt.getTime();
 
-    // Reset if lockout period has passed
     if (timeSinceLastAttempt > this.LOCKOUT_TIME) {
       failedLoginAttempts.delete(email);
       return false;
@@ -437,22 +421,23 @@ static async login(email: string, password: string): Promise<UserLoginAuthTypes>
     return attempt.count >= this.MAX_LOGIN_ATTEMPTS;
   }
 
-  private static recordFailedAttempt(email: string): void {
+  // ✅ UPDATED: Returns the attempt info
+  private static recordFailedAttempt(email: string): { count: number; lastAttempt: Date } {
     const attempt = failedLoginAttempts.get(email) || { count: 0, lastAttempt: new Date() };
     attempt.count++;
     attempt.lastAttempt = new Date();
     failedLoginAttempts.set(email, attempt);
 
-    // Log security event
     this.logSecurityEvent('FAILED_LOGIN_ATTEMPT', { email, count: attempt.count });
+    
+    return attempt;
   }
 
   private static logSecurityEvent(event: string, data: any): void {
-    // In production, send to proper logging service (Sentry, LogDNA, etc.)
     console.log(`🔒 SECURITY EVENT [${event}]:`, {
       ...data,
       timestamp: new Date().toISOString(),
-      ip: 'REDACTED', // Would come from request
+      ip: 'REDACTED',
       userAgent: 'REDACTED'
     });
   }

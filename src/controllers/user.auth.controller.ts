@@ -1,4 +1,5 @@
-// controllers/user.auth.controller.ts - FULLY UPDATED with accessToken/refreshToken
+// controllers/user.auth.controller.ts - UPDATED with correct password validation
+
 import {Request,Response} from 'express';
 import { UserServices } from '../services/user.auth.services';
 import { UserRefreshToken } from '../services/user.create.refreshToken.services';
@@ -8,6 +9,32 @@ import { UserLogoutServices } from '../services/user.logout.services';
 import { UserAuthRequest } from '../middlewares/user.auth.middleware';
 import prisma from '../prisma';
 import bcrypt from 'bcryptjs';
+
+// Password validation helper (matching frontend)
+const validatePasswordStrength = (password: string): { isValid: boolean; message?: string } => {
+  if (!password) {
+    return { isValid: false, message: "Password is required" };
+  }
+  if (password.length < 8) {
+    return { isValid: false, message: "Password must be at least 8 characters" };
+  }
+  if (password.length > 128) {
+    return { isValid: false, message: "Password is too long (max 128 characters)" };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { isValid: false, message: "Password must contain at least one uppercase letter (A-Z)" };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { isValid: false, message: "Password must contain at least one lowercase letter (a-z)" };
+  }
+  if (!/[0-9]/.test(password)) {
+    return { isValid: false, message: "Password must contain at least one number (0-9)" };
+  }
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
+    return { isValid: false, message: "Password must contain at least one special character (!@#$%^&* etc.)" };
+  }
+  return { isValid: true };
+};
 
 export class UserAuthController{
  
@@ -83,70 +110,82 @@ export class UserAuthController{
     }
   }
 
-  // ===== LOGIN - Returns both tokens =====
-  static async login(req:Request, res:Response){
-    try{
-        const {email,password} = req.body;
+  static async login(req: Request, res: Response) {
+    try {
+      const { email, password } = req.body;
 
-        const result = await UserServices.login(email,password);
+      const result = await UserServices.login(email, password);
 
-        if(!result.success || !result.user ){
-            return res.status(401).json({
-                success:false,
-                message:result.message || "Authentication Failed"
-            }); 
-        }  
-        
-        const user = result.user;
-        const userRefreshToken = UserJwtUtils.generateRefreshToken(user.id, user.email, user.role);
-
-        // Set cookies (for web compatibility)
-        res.cookie('userToken', result.token, {
-            httpOnly:true,
-            secure:process.env.NODE_ENV === "production",
-            sameSite:"lax",
-            maxAge:7 * 24 * 60 * 60 * 1000,
-            path: '/'
+      // ✅ Handle failed login with all error details
+      if (!result.success) {
+        return res.status(401).json({
+          success: false,
+          message: result.message || "Authentication Failed",
+          field: result.field,
+          remainingAttempts: result.remainingAttempts,
+          isLocked: result.isLocked,
+          lockoutMinutes: result.lockoutMinutes
         });
+      }
 
-        res.cookie('userRefreshToken', userRefreshToken, {
-            httpOnly:true,
-            secure:process.env.NODE_ENV === "production",
-            sameSite:'lax',
-            maxAge: 30 * 24 * 60 * 60 * 1000,
-            path: '/'
+      // ✅ Ensure user exists
+      if (!result.user) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication Failed"
         });
-        
-        await UserRefreshToken.createRefreshToken(user.id, userRefreshToken);
+      }
 
-        // ✅ RETURN BOTH TOKENS for React Native
-        return res.json({
-            success:true,
-            message:result.message,
-            accessToken: result.token,      // ← Access token for API calls
-            refreshToken: userRefreshToken, // ← Refresh token for getting new access tokens
-            user:{
-                id:user.id,
-                fullName:user.fullName,
-                email:user.email,
-                avatarUrl:user.avatarUrl,
-                gender:user.gender,
-                role:user.role
-            }
-        });
+      const user = result.user;
+      const userRefreshToken = UserJwtUtils.generateRefreshToken(user.id, user.email, user.role);
 
-    } catch(e:any){
-        return res.status(500).json({
-            success:false,
-            message:e.message
-        });
+      // Set cookies (for web compatibility)
+      res.cookie('userToken', result.token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
+      res.cookie('userRefreshToken', userRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+
+      await UserRefreshToken.createRefreshToken(user.id, userRefreshToken);
+
+      // ✅ RETURN BOTH TOKENS for React Native
+      return res.json({
+        success: true,
+        message: result.message,
+        accessToken: result.token,
+        refreshToken: userRefreshToken,
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender,
+          role: user.role
+        }
+      });
+
+    } catch (e: any) {
+      console.error("Login error:", e);
+      return res.status(500).json({
+        success: false,
+        message: e.message || "Internal server error"
+      });
     }
   }
 
   // ===== REFRESH TOKEN - Returns new access token =====
   static async refreshToken(req:Request,res:Response){
     try{
-        // Check both cookies and Authorization header (for React Native)
         const authHeader = req.headers.authorization;
         const refreshTokenFromHeader = authHeader?.startsWith('Bearer ') 
           ? authHeader.substring(7) 
@@ -181,11 +220,10 @@ export class UserAuthController{
             path: '/'
         });
 
-        // ✅ RETURN NEW ACCESS TOKEN
         return res.json({
             success:true,
             message:"Token refreshed successfully",
-            accessToken: result.accessToken, // ← New access token
+            accessToken: result.accessToken,
             user:result.user
         });
 
@@ -357,7 +395,7 @@ export class UserAuthController{
     }
   }
 
-  // ===== CHANGE PASSWORD =====
+  // ===== CHANGE PASSWORD - UPDATED with proper validation =====
   static async changePassword(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -377,10 +415,12 @@ export class UserAuthController{
         });
       }
 
-      if (newPassword.length < 6) {
+      // ✅ UPDATED: Use the same password validation as signup
+      const passwordValidation = validatePasswordStrength(newPassword);
+      if (!passwordValidation.isValid) {
         return res.status(400).json({
           success: false,
-          message: "New password must be at least 6 characters"
+          message: passwordValidation.message
         });
       }
 
@@ -404,7 +444,7 @@ export class UserAuthController{
         });
       }
 
-      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      const newPasswordHash = await bcrypt.hash(newPassword, 12); // Use 12 rounds like signup
 
       await prisma.user.update({
         where: { id: userId },

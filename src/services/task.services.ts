@@ -7,7 +7,9 @@ import { SocketService } from "./socket.services";
 import { RotationHelpers } from "../helpers/rotation.helpers";
 export class TaskService { 
   
-// In task.services.ts - COMPLETE FIXED createTask method
+
+  // In task.services.ts - COMPLETE FIXED createTask method with UNIQUE POINTS validation
+
 static async createTask(
   userId: string,
   groupId: string,
@@ -57,8 +59,6 @@ static async createTask(
     }
 
     // ===== CREATION DAY LOCK =====
-    // The day the first task was created is the locked creation day.
-    // All future tasks must be created on that same day of the week.
     const existingTasks = await prisma.task.findMany({
       where: { groupId, isRecurring: true },
       orderBy: { createdAt: 'asc' },
@@ -88,6 +88,32 @@ static async createTask(
 
     // Total task points (to be distributed)
     const totalPoints = data.points !== undefined ? Math.max(1, Number(data.points)) : 1;
+
+    // ✅✅✅ UNIQUE POINTS VALIDATION FOR FAIR ROTATION ✅✅✅
+    if (data.isRecurring !== false) {
+      // Check if any existing recurring task has the same points
+      const existingTaskWithSamePoints = await prisma.task.findFirst({
+        where: {
+          groupId,
+          isRecurring: true,
+          points: totalPoints,
+          isDeleted: false
+        }
+      });
+      
+      if (existingTaskWithSamePoints) {
+        return { 
+          success: false, 
+          message: `❌ Points must be UNIQUE for fair rotation!\n\nTask "${existingTaskWithSamePoints.title}" already uses ${totalPoints} points.\n\nPlease use a different point value (1-10) that hasn't been used yet.` 
+        };
+      }
+      
+      // Also check if points are within 1-10 range
+      if (totalPoints < 1 || totalPoints > 10) {
+        return { success: false, message: "Points must be between 1 and 10" };
+      }
+    }
+    // ===== END UNIQUE POINTS VALIDATION =====
 
     // Validate execution frequency requirements
     if (data.executionFrequency === 'DAILY' && (!data.timeSlots || data.timeSlots.length === 0)) {
@@ -321,17 +347,15 @@ static async createTask(
           console.log(`   └─────────────────────────────────────────`);
           
           for (const timeSlot of createdSlots) {
-             // ✅ Use END time, not START time
-const timeParts = timeSlot.endTime.split(':');
-let hours = Number(timeParts[0]) || 18;
-const minutes = Number(timeParts[1]) || 0;
+            const timeParts = timeSlot.endTime.split(':');
+            let hours = Number(timeParts[0]) || 18;
+            const minutes = Number(timeParts[1]) || 0;
 
-// ✅ Convert PHT to UTC (subtract 8 hours)
-hours = hours - 8;
-if (hours < 0) hours += 24;
+            hours = hours - 8;
+            if (hours < 0) hours += 24;
 
-const slotDueDateUTC = new Date(dueDateUTC);
-slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+            const slotDueDateUTC = new Date(dueDateUTC);
+            slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
             
             const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
@@ -422,15 +446,14 @@ slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
             
             for (const timeSlot of createdSlots) {
               const timeParts = timeSlot.endTime.split(':');
-let hours = Number(timeParts[0]) || 18;
-const minutes = Number(timeParts[1]) || 0;
+              let hours = Number(timeParts[0]) || 18;
+              const minutes = Number(timeParts[1]) || 0;
 
-// ✅ Convert PHT to UTC (subtract 8 hours)
-hours = hours - 8;
-if (hours < 0) hours += 24;
+              hours = hours - 8;
+              if (hours < 0) hours += 24;
 
-const slotDueDateUTC = new Date(dueDateUTC);
-slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
+              const slotDueDateUTC = new Date(dueDateUTC);
+              slotDueDateUTC.setUTCHours(hours, minutes, 0, 0);
               
               const assignmentPoints = timeSlot.points !== null ? timeSlot.points : 0;
 
