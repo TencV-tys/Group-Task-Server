@@ -1,11 +1,12 @@
-// helpers/rotation.helpers.ts - UPDATED with inRotation support
+// helpers/rotation.helpers.ts - IMPROVED VERSION
+
 import prisma from "../prisma";
 
 export interface RotationAnalysis {
   totalMembers: number;
   activeMembers: number;
-  membersInRotation: number; // NEW
-  admins: number; // NEW
+  membersInRotation: number;
+  admins: number;
   totalTasks: number;
   recurringTasks: number;
   tasksPerMember: number;
@@ -16,8 +17,8 @@ export interface RotationAnalysis {
     name: string;
     assignedTasks: number;
     willGetTasksThisWeek: boolean;
-    inRotation: boolean; // NEW
-    role: string; // NEW
+    inRotation: boolean;
+    role: string;
   }>;
   warning: string | null;
   currentWeek: number;
@@ -31,7 +32,6 @@ export interface RotationAnalysis {
 export class RotationHelpers {
   
   static async analyzeGroupRotation(groupId: string): Promise<RotationAnalysis> {
-    // Get group info first (for creation date and current week)
     const group = await prisma.group.findUnique({ 
       where: { id: groupId },
       select: { 
@@ -40,7 +40,6 @@ export class RotationHelpers {
       }
     }); 
  
-    // ===== UPDATED: Get ALL active members with rotation status =====
     const allActiveMembers = await prisma.groupMember.findMany({
       where: { 
         groupId, 
@@ -57,20 +56,19 @@ export class RotationHelpers {
       orderBy: { rotationOrder: 'asc' }
     });
 
-    // Separate members who are in rotation vs admins
     const membersInRotation = allActiveMembers.filter(m => m.inRotation);
     const admins = allActiveMembers.filter(m => m.groupRole === "ADMIN");
 
-    // Get recurring tasks
     const recurringTasks = await prisma.task.findMany({
       where: { 
         groupId, 
-        isRecurring: true 
+        isRecurring: true,
+        isDeleted: false
       },
       orderBy: { rotationOrder: 'asc' }
     });
 
-    // ===== Calculate expected week based on earliest task creation =====
+    // ✅ FIXED: Use UTC for expected week calculation
     let earliestTaskCreatedAt: Date | null = null;
     let expectedWeek = 1;
     let needsRotation = false;
@@ -84,9 +82,15 @@ export class RotationHelpers {
         earliestTaskCreatedAt = taskDates[0];
 
         const now = new Date();
-        const daysSinceCreation = Math.floor(
-          (now.getTime() - earliestTaskCreatedAt.getTime()) / (1000 * 60 * 60 * 24)
+        // ✅ Use UTC for day calculation
+        const nowUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+        const earliestUTC = Date.UTC(
+          earliestTaskCreatedAt.getUTCFullYear(),
+          earliestTaskCreatedAt.getUTCMonth(),
+          earliestTaskCreatedAt.getUTCDate()
         );
+        
+        const daysSinceCreation = Math.floor((nowUTC - earliestUTC) / (1000 * 60 * 60 * 24));
         expectedWeek = Math.floor(daysSinceCreation / 7) + 1;
 
         const currentWeek = group?.currentRotationWeek || 1;
@@ -99,25 +103,23 @@ export class RotationHelpers {
     const membersInRotationCount = membersInRotation.length;
     const taskCount = recurringTasks.length;
     
-    // ===== UPDATED: Calculate tasks per member based on members in rotation =====
     const tasksPerMember = membersInRotationCount > 0 ? taskCount / membersInRotationCount : 0;
     const hasEnoughTasks = taskCount >= membersInRotationCount;
     const tasksNeeded = Math.max(0, membersInRotationCount - taskCount);
 
-    // ===== UPDATED: Analyze which members get tasks this week (only for members in rotation) =====
     const currentWeek = group?.currentRotationWeek || 1;
 
     const membersWithTasks = allActiveMembers.map(member => {
-      // Only members in rotation can get tasks
       let assignedTasks = 0;
       
       if (member.inRotation) {
         recurringTasks.forEach(task => {
-          const rotationMembers = parseRotationMembers(task.rotationMembers);
-          // Filter rotation members to only include those who are in rotation
+          const rotationMembers = RotationHelpers.parseRotationMembers(task.rotationMembers);
           const validRotationMembers = rotationMembers.filter((rm: any) => 
             membersInRotation.some(m => m.userId === rm.userId)
           );
+          
+          if (validRotationMembers.length === 0) return;
           
           const memberIndex = validRotationMembers.findIndex((m: any) => m.userId === member.userId);
           
@@ -141,7 +143,6 @@ export class RotationHelpers {
       };
     });
 
-    // ===== UPDATED: Generate warning message with rotation context =====
     let warning = null;
     if (membersInRotationCount === 0) {
       warning = "No members are set to receive tasks. Please add members to rotation.";
@@ -209,17 +210,18 @@ export class RotationHelpers {
     
     return "Rotation ready.";
   }
-}
 
-function parseRotationMembers(rotationMembers: any): any[] { 
-  if (!rotationMembers) return [];
-  if (Array.isArray(rotationMembers)) return rotationMembers;
-  if (typeof rotationMembers === 'string') {
-    try {
-      return JSON.parse(rotationMembers) || [];
-    } catch { 
-      return [];
+  // ✅ Made static and properly typed
+  static parseRotationMembers(rotationMembers: any): any[] { 
+    if (!rotationMembers) return [];
+    if (Array.isArray(rotationMembers)) return rotationMembers;
+    if (typeof rotationMembers === 'string') {
+      try {
+        return JSON.parse(rotationMembers) || [];
+      } catch { 
+        return [];
+      }
     }
+    return [];
   }
-  return [];
 }

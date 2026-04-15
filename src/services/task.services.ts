@@ -548,7 +548,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
         selectedDay: true
       }
     });
-
+ 
     // Create a map of assignmentId -> swap info
     const swapInfoMap = new Map();
     for (const swap of userSwapRequests) {
@@ -915,6 +915,12 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
             timeSlot: assignment.timeSlot,
             isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
             isHistorical: false,
+                // ✅ EXPLICITLY include these fields
+      expired: assignment.expired === true,  // Force boolean
+      partiallyExpired: assignment.partiallyExpired === true,
+      // ✅ Also include missedTimeSlotIds for multi-slot tasks
+      missedTimeSlotIds: (assignment as any).missedTimeSlotIds || [],
+      completedTimeSlotIds: (assignment as any).completedTimeSlotIds || [],
             acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
             swapRequestId: swapInfo?.swapRequestId || null,
             swappedFromId: swapInfo?.swappedFromId || null,

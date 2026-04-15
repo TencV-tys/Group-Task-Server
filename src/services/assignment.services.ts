@@ -7,10 +7,6 @@ import { SocketService } from './socket.services';
 
 export class AssignmentService {
 
-// services/assignment.services.ts - ADD MORE DETAILED LOGGING
-
-// In assignment.services.ts - completeAssignment method
-
 static async completeAssignment(
   assignmentId: string,
   userId: string,
@@ -51,6 +47,15 @@ static async completeAssignment(
     if (!assignment) {
       console.log('❌ Assignment not found');
       return { success: false, message: "Assignment not found" };
+    }
+
+    // ✅ Check if assignment is already expired/neglected
+    if (assignment.expired === true) {
+      console.log('❌ Assignment already expired/neglected');
+      return { 
+        success: false, 
+        message: "This assignment has already expired and cannot be completed." 
+      };
     }
 
     console.log(`✅ Assignment found - Task: ${assignment.task?.title}`);
@@ -135,11 +140,12 @@ static async completeAssignment(
         };
       }
       
+      // ✅ Check if this slot was already missed
       if (missedSlotIds.includes(targetTimeSlot.id)) {
         console.log(`❌ Slot already missed: ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}`);
         return { 
           success: false, 
-          message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was missed and cannot be completed` 
+          message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was already missed and cannot be completed` 
         };
       }
       
@@ -173,30 +179,35 @@ static async completeAssignment(
         submissionStatus: timeValidation.submissionStatus
       });
       
-       // In completeAssignment, where time validation fails (around line where you return error):
-
-if (!timeValidation.allowed) {
-  let errorMessage = "Cannot submit assignment at this time.";
-  
-  if (timeValidation.reason === 'Submission not open yet') {
-    errorMessage = `Submission opens at ${targetTimeSlot.endTime}. Please wait until then.`;
-  } else if (timeValidation.reason === 'Submission window closed') {
-    errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
-    
-    // ✅ ADD THIS - Immediately mark as neglected when window closes
-    await this.markAssignmentAsNeglected(assignmentId, userId);
-    errorMessage = `Submission window closed. This task has been marked as missed. -${slotPoints} points deducted.`;
-    
-  } else if (timeValidation.reason === 'Not due date') {
-    errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
-  }
-  
-  return { 
-    success: false, 
-    message: errorMessage,
-    validation: timeValidation
-  };
-}
+      // ✅ FIXED: Only mark as neglected on the due date
+      if (!timeValidation.allowed) {
+        let errorMessage = "Cannot submit assignment at this time.";
+        
+        if (timeValidation.reason === 'Submission not open yet') {
+          errorMessage = `Submission opens at ${targetTimeSlot.endTime}. Please wait until then.`;
+        } else if (timeValidation.reason === 'Submission window closed') {
+          errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
+          
+          // ✅ ONLY mark as neglected if it's actually the due date
+          const isDueDate = now.toDateString() === dueDate.toDateString();
+          
+          if (isDueDate) {
+            await this.markAssignmentAsNeglected(assignmentId, userId);
+            errorMessage = `Submission window closed. This task has been marked as missed. -${slotPoints} points deducted.`;
+          } else {
+            errorMessage = `Submission window closed. You can only submit on the due date: ${dueDate.toLocaleDateString()}.`;
+          }
+          
+        } else if (timeValidation.reason === 'Not due date') {
+          errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
+        }
+        
+        return { 
+          success: false, 
+          message: errorMessage,
+          validation: timeValidation
+        };
+      }
       
       // Check if late based on the time validation result
       isLate = timeValidation.willBePenalized || false;
@@ -240,7 +251,6 @@ if (!timeValidation.allowed) {
     }
 
     // ✅ FIXED: For multi-slot tasks, mark as ready for verification after EACH slot
-    // This ensures admin can verify each slot individually
     const shouldMarkForVerification = isMultiSlotTask ? true : allSlotsCompleted;
 
     // Update assignment
@@ -252,9 +262,8 @@ if (!timeValidation.allowed) {
       points: updatedPoints 
     };
     
-    // ✅ For multi-slot tasks, mark as pending verification after EACH slot completion
     if (shouldMarkForVerification) {
-      updateData.verified = null;  // Pending admin verification
+      updateData.verified = null;
     } else {
       updateData.verified = undefined;
     }
@@ -381,10 +390,6 @@ if (!timeValidation.allowed) {
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
- 
-
-
-// services/assignment.services.ts - FIXED verifyAssignment (ADD points on verification)
 
 // ========== VERIFY ASSIGNMENT ==========
 static async verifyAssignment(
@@ -1893,11 +1898,7 @@ static async getGroupNeglectedTasks(
   }
 }
 
-
-
 // ========== CHECK GROUP NEGLECTED ASSIGNMENTS (FOR CRON) ==========
-// In assignment.services.ts - UPDATE checkGroupNeglectedAssignments method
-
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({ 
@@ -1908,18 +1909,26 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     if (!group) return { count: 0, pointsNotAwarded: 0 };
 
     const now = new Date();
+    
+    // ✅ Calculate lookback period (7 days)
+    const lookbackDays = 7;
+    const lookbackStart = new Date(now);
+    lookbackStart.setUTCDate(now.getUTCDate() - lookbackDays);
+    lookbackStart.setUTCHours(0, 0, 0, 0);
+    
+    // ✅ ONLY get assignments that are NOT already expired or processed
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
         rotationWeek: group.currentRotationWeek,
         completed: false,
+        expired: false,
+        expiredAt: null,
+        dueDate: {
+          gte: lookbackStart,
+          lt: now
+        },
         AND: [
-          {
-            OR: [
-              { expired: true },
-              { dueDate: { lt: now } }
-            ]
-          },
           {
             OR: [
               { verified: false },
@@ -1967,6 +1976,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       return { count: 0, pointsNotAwarded: 0 };
     }
     
+    console.log(`📊 Checking ${validAssignments.length} assignments for neglect in group ${groupId}`);
+    
     let neglectedCount = 0;
     let totalPointsNotAwarded = 0;
 
@@ -1983,6 +1994,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     });
 
     for (const assignment of validAssignments) {
+      // ✅ SAFETY CHECK: Skip if already marked as expired
+      if (assignment.expired || assignment.expiredAt !== null) {
+        console.log(`⏭️ Skipping already expired assignment: ${assignment.id}`);
+        continue;
+      }
+
       const assignmentAny = assignment as any;
       const completedSlotIds: string[] = assignmentAny.completedTimeSlotIds || [];
       const missedSlotIds: string[] = assignmentAny.missedTimeSlotIds || [];
@@ -2004,22 +2021,23 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             pointsLost += slotPoints;
             totalPointsNotAwarded += slotPoints;
             
-            // ✅ DEDUCT POINTS FROM USER'S CUMULATIVE POINTS FOR MISSED SLOT
-            await prisma.groupMember.updateMany({
-              where: {
-                userId: assignment.userId,
-                groupId: groupId,
-                isActive: true
-              },
-              data: {
-                cumulativePoints: {
-                  decrement: slotPoints
+            // ✅ ONLY deduct if not already deducted
+            if (!missedSlotIds.includes(timeSlot.id)) {
+              await prisma.groupMember.updateMany({
+                where: {
+                  userId: assignment.userId,
+                  groupId: groupId,
+                  isActive: true
                 },
-                pointsUpdatedAt: new Date()
-              }
-            });
-            
-            console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${slotPoints} points for missing slot ${timeSlot.startTime}-${timeSlot.endTime}`);
+                data: {
+                  cumulativePoints: {
+                    decrement: slotPoints
+                  },
+                  pointsUpdatedAt: new Date()
+                }
+              });
+              console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${slotPoints} points for missing slot ${timeSlot.startTime}-${timeSlot.endTime}`);
+            }
           }
         }
         
@@ -2050,9 +2068,10 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 : `[MISSED SLOTS: ${missedSlots.map(s => `${s.startTime}-${s.endTime}`).join(', ')}]`,
               expired: allSlotsAccounted && completedSlotIds.length === 0,
               expiredAt: allSlotsAccounted && completedSlotIds.length === 0 ? now : undefined
-            } as any
+            }
           });
           
+          // Send notifications for missed slots
           for (const slot of missedSlots) {
             await UserNotificationService.createNotification({
               userId: assignment.userId,
@@ -2066,18 +2085,19 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 groupId,
                 slotId: slot.id,
                 slotTime: `${slot.startTime}-${slot.endTime}`,
-                slotLabel: slot.label,
+                slotLabel: slot.label || '',
                 pointsLost: slot.points || 0,
                 remainingPoints: totalRemainingPoints,
                 completedSlots: completedSlotIds.length,
                 missedSlots: newMissedSlotIds.length,
                 totalSlots: assignment.task!.timeSlots.length,
-                dueDate: assignment.dueDate,
-                detectedAt: now
+                dueDate: assignment.dueDate.toISOString(),
+                detectedAt: now.toISOString()
               }
             });
           }
           
+          // Notify admins
           for (const admin of admins) {
             await UserNotificationService.createNotification({
               userId: admin.userId,
@@ -2091,45 +2111,42 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 groupId,
                 userId: assignment.userId,
                 userName: assignment.user?.fullName || 'Unknown',
-                missedSlots: missedSlots.map(s => ({
-                  id: s.id,
-                  time: `${s.startTime}-${s.endTime}`,
-                  label: s.label,
-                  points: s.points
-                })),
                 pointsLost,
                 completedSlots: completedSlotIds.length,
                 totalSlots: assignment.task!.timeSlots.length,
-                dueDate: assignment.dueDate,
-                detectedAt: now
+                dueDate: assignment.dueDate.toISOString(),
+                detectedAt: now.toISOString()
               }
-            }); 
-          } 
+            });
+          }
         }
       } else {
         // Single time slot task
-        if (TimeHelpers.isAssignmentNeglected(assignment, now)) {
+        const isAlreadyNeglected = assignment.expired || assignment.expiredAt !== null;
+        
+        if (!isAlreadyNeglected && TimeHelpers.isAssignmentNeglected(assignment, now)) {
           neglectedCount++;
           
           const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
           totalPointsNotAwarded += pointsLost;
           
-          // ✅ DEDUCT POINTS FROM USER'S CUMULATIVE POINTS FOR MISSED TASK
-          await prisma.groupMember.updateMany({
-            where: {
-              userId: assignment.userId,
-              groupId: groupId,
-              isActive: true
-            },
-            data: {
-              cumulativePoints: {
-                decrement: pointsLost
+          // ✅ ONLY deduct if not already deducted
+          if (!assignment.expired) {
+            await prisma.groupMember.updateMany({
+              where: {
+                userId: assignment.userId,
+                groupId: groupId,
+                isActive: true
               },
-              pointsUpdatedAt: new Date()
-            }
-          });
-          
-          console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${pointsLost} points for missing task ${assignment.task!.title}`);
+              data: {
+                cumulativePoints: {
+                  decrement: pointsLost
+                },
+                pointsUpdatedAt: new Date()
+              }
+            });
+            console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${pointsLost} points for missing task ${assignment.task!.title}`);
+          }
           
           await prisma.assignment.update({
             where: { id: assignment.id },
@@ -2140,6 +2157,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             }
           });
           
+          // Send notification to user
           await UserNotificationService.createNotification({
             userId: assignment.userId,
             type: "TASK_MISSED",
@@ -2151,11 +2169,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               taskTitle: assignment.task!.title,
               groupId,
               pointsLost, 
-              dueDate: assignment.dueDate,
-              detectedAt: now
+              dueDate: assignment.dueDate.toISOString(),
+              detectedAt: now.toISOString()
             }
           });
           
+          // Notify admins
           for (const admin of admins) {
             await UserNotificationService.createNotification({
               userId: admin.userId,
@@ -2170,8 +2189,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 userId: assignment.userId,
                 userName: assignment.user?.fullName || 'Unknown',
                 pointsLost,
-                dueDate: assignment.dueDate,
-                detectedAt: now
+                dueDate: assignment.dueDate.toISOString(),
+                detectedAt: now.toISOString()
               }
             });
           }
@@ -2189,7 +2208,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
-
+ 
 // In assignment.services.ts - Add this method
 
 private static async markAssignmentAsNeglected(

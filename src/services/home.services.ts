@@ -1,6 +1,15 @@
 // services/home.services.ts - COMPLETE FIXED VERSION
 
 import prisma from "../prisma";
+import { Assignment, Task, TimeSlot } from '@prisma/client';
+
+// ✅ CORRECTED - Use actual Task model fields
+type AssignmentWithTaskAndTimeSlot = Assignment & {
+  task: (Pick<Task, 'id' | 'title' | 'points' | 'executionFrequency' | 'groupId'> & {
+    group: { id: string; name: string; } | null;
+  }) | null;
+  timeSlot: Pick<TimeSlot, 'id' | 'startTime' | 'endTime' | 'label' | 'points'> | null;
+};
 
 export class HomeServices {
 
@@ -50,7 +59,6 @@ export class HomeServices {
       });
 
       const groupsCount = userMemberships.length;
-
       const userInRotation = userMemberships.some(m => m.inRotation);
       const userIsAdmin = userMemberships.some(m => m.groupRole === "ADMIN");
       const groupsWhereUserInRotation = userMemberships.filter(m => m.inRotation).length;
@@ -58,15 +66,15 @@ export class HomeServices {
 
       const now = new Date();
 
-      // ✅ Use UTC for today's boundaries
-      const today = new Date(Date.UTC(
+      // ✅ Use UTC for all date calculations
+      const todayUTC = new Date(Date.UTC(
         now.getUTCFullYear(),
         now.getUTCMonth(),
         now.getUTCDate(),
         0, 0, 0, 0
       ));
 
-      // ✅ Use UTC for week start (Monday)
+      // ✅ Week starts on Monday (UTC)
       const currentUTCDay = now.getUTCDay(); // 0 = Sunday
       const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
       const currentWeekStart = new Date(Date.UTC(
@@ -76,51 +84,55 @@ export class HomeServices {
         0, 0, 0, 0
       ));
 
-      // ✅ Use UTC for week end (Sunday)
+      // ✅ Week ends on Sunday (UTC)
       const currentWeekEnd = new Date(currentWeekStart);
       currentWeekEnd.setUTCDate(currentWeekStart.getUTCDate() + 6);
       currentWeekEnd.setUTCHours(23, 59, 59, 999);
 
       console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
-      console.log(`📅 Today: ${today.toISOString()}`);
+      console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
+
+      // ✅ Get assignments with proper filtering for multi-slot tasks
+      const whereCondition: any = {
+        userId: userId,
+        completed: false,
+        expired: false,
+        taskId: { not: null }
+      };
+
+      if (userInRotation) {
+           whereCondition.NOT = { partiallyExpired: true };  
+      }
 
       const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
         where: {
-          userId: userId,
-          completed: false,
-          expired: false,
+          ...whereCondition,
           dueDate: {
-            gte: today,
+            gte: currentWeekStart,
             lte: currentWeekEnd
-          },
-          taskId: { not: null }
+          }
         }
       }) : 0;
 
-      console.log(`📊 Tasks due this week (from today): ${tasksDueThisWeek}`);
+      console.log(`📊 Tasks due this week: ${tasksDueThisWeek}`);
 
       const overdueTasks = userInRotation ? await prisma.assignment.count({
         where: {
-          userId: userId,
-          completed: false,
-          expired: false,
-          dueDate: { lt: today },
-          taskId: { not: null }
+          ...whereCondition,
+          dueDate: { lt: todayUTC }
         }
       }) : 0;
 
       console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
+      // ✅ Get current week assignments with all needed fields
       const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
         where: {
-          userId: userId,
-          completed: false,
-          expired: false,
+          ...whereCondition,
           dueDate: {
             gte: currentWeekStart,
             lte: currentWeekEnd
-          },
-          taskId: { not: null }
+          }
         },
         include: {
           task: {
@@ -128,8 +140,7 @@ export class HomeServices {
               id: true,
               title: true,
               points: true,
-              timeOfDay: true,
-              dayOfWeek: true,
+              executionFrequency: true,
               group: {
                 select: {
                   id: true,
@@ -137,19 +148,33 @@ export class HomeServices {
                 }
               }
             }
+          },
+          timeSlot: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              label: true,
+              points: true
+            }
           }
         },
         orderBy: { dueDate: 'asc' }
       }) : [];
 
-      const overdueAssignments = currentWeekAssignments.filter(
-        assignment => assignment.dueDate < today
+      // ✅ Cast to the extended type to fix TypeScript errors
+      const typedAssignments = currentWeekAssignments as unknown as AssignmentWithTaskAndTimeSlot[];
+
+      // ✅ Separate overdue and upcoming using UTC comparison
+      const overdueAssignments = typedAssignments.filter(
+        assignment => new Date(assignment.dueDate) < todayUTC
       );
       
-      const upcomingAssignmentsThisWeek = currentWeekAssignments.filter(
-        assignment => assignment.dueDate >= today
+      const upcomingAssignmentsThisWeek = typedAssignments.filter(
+        assignment => new Date(assignment.dueDate) >= todayUTC
       );
 
+      // ✅ Count completed tasks (including multi-slot)
       const completedTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
@@ -193,7 +218,7 @@ export class HomeServices {
 
       const groups = await Promise.all(userMemberships.map(async (member) => {
         const group = member.group;
-        const tasksForThisGroup = currentWeekAssignments.filter(
+        const tasksForThisGroup = typedAssignments.filter(
           assignment => assignment.task?.group?.id === group.id
         );
 
@@ -261,36 +286,56 @@ export class HomeServices {
           },
           currentWeekTasks: upcomingAssignmentsThisWeek
             .filter(assignment => assignment.task !== null)
-            .map(assignment => ({
-              id: assignment.id,
-              taskId: assignment.task!.id,
-              title: assignment.task!.title,
-              points: assignment.task!.points,
-              timeOfDay: assignment.task!.timeOfDay,
-              dayOfWeek: assignment.task!.dayOfWeek,
-              dueDate: assignment.dueDate,
-              completed: assignment.completed,
-              groupName: assignment.task!.group?.name || 'Unknown Group',
-              groupId: assignment.task!.group?.id,
-              isOverdue: false,
-              daysLeft: Math.ceil((assignment.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-            })),
+            .map(assignment => {
+              const dueDate = new Date(assignment.dueDate);
+              const timeSlot = assignment.timeSlot;
+              const isMultiSlot = assignment.task?.executionFrequency === 'DAILY' && 
+                                  assignment.task?.points !== assignment.points;
+              
+              return {
+                id: assignment.id,
+                taskId: assignment.task!.id,
+                title: assignment.task!.title,
+                points: assignment.points,
+                dueDate: assignment.dueDate,
+                completed: assignment.completed,
+                groupName: assignment.task!.group?.name || 'Unknown Group',
+                groupId: assignment.task!.group?.id,
+                isOverdue: false,
+                daysLeft: Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+                timeSlot: timeSlot ? {
+                  startTime: timeSlot.startTime,
+                  endTime: timeSlot.endTime,
+                  label: timeSlot.label
+                } : null,
+                isMultiSlot,
+                totalPointsPossible: assignment.task!.points
+              };
+            }),
           overdueTasks: overdueAssignments
             .filter(assignment => assignment.task !== null)
-            .map(assignment => ({
-              id: assignment.id,
-              taskId: assignment.task!.id,
-              title: assignment.task!.title,
-              points: assignment.task!.points,
-              timeOfDay: assignment.task!.timeOfDay,
-              dayOfWeek: assignment.task!.dayOfWeek,
-              dueDate: assignment.dueDate,
-              completed: assignment.completed,
-              groupName: assignment.task!.group?.name || 'Unknown Group',
-              groupId: assignment.task!.group?.id,
-              isOverdue: true,
-              daysOverdue: Math.floor((now.getTime() - assignment.dueDate.getTime()) / (1000 * 60 * 60 * 24))
-            })),
+            .map(assignment => {
+              const dueDate = new Date(assignment.dueDate);
+              const timeSlot = assignment.timeSlot;
+              
+              return {
+                id: assignment.id,
+                taskId: assignment.task!.id,
+                title: assignment.task!.title,
+                points: assignment.points,
+                dueDate: assignment.dueDate,
+                completed: assignment.completed,
+                groupName: assignment.task!.group?.name || 'Unknown Group',
+                groupId: assignment.task!.group?.id,
+                isOverdue: true,
+                daysOverdue: Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)),
+                timeSlot: timeSlot ? {
+                  startTime: timeSlot.startTime,
+                  endTime: timeSlot.endTime,
+                  label: timeSlot.label
+                } : null
+              };
+            }),
           groups: groups,
           recentActivity: recentActivity.map(activity => ({
             ...activity,
@@ -331,7 +376,6 @@ export class HomeServices {
 
       const now = new Date();
 
-      // ✅ Use UTC for week boundaries
       const currentUTCDay = now.getUTCDay();
       const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
 
@@ -346,10 +390,12 @@ export class HomeServices {
       weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
       weekEnd.setUTCHours(23, 59, 59, 999);
 
+      // ✅ Get completed assignments (verified only)
       const completedThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: true,
+          verified: true,
           completedAt: {
             gte: weekStart
           }
@@ -370,62 +416,62 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       }) : [];
 
-      const pendingThisWeek = inRotation ? await prisma.assignment.findMany({
+      // ✅ Get pending assignments with timeSlot included - FIXED
+      const pendingThisWeekRaw = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
-          OR: [
-            {
-              AND: [
-                { weekStart: { lte: now } },
-                { weekEnd: { gte: now } }
-              ]
-            },
-            {
-              dueDate: {
-                gte: weekStart,
-                lte: weekEnd
-              }
-            }
-          ]
+          expired: false,
+         NOT: { partiallyExpired: true },
+          dueDate: {
+            gte: weekStart,
+            lte: weekEnd
+          }
         },
         include: {
           task: {
             select: {
               title: true,
               points: true,
-              timeOfDay: true,
-              dayOfWeek: true
+              executionFrequency: true
+            }
+          },
+          timeSlot: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              label: true,
+              points: true
             }
           }
         }
       }) : [];
 
-      const totalPoints = completedThisWeek
-        .filter(assignment => assignment.verified === true)
-        .reduce((sum, assignment) => {
-          const points = assignment.task?.points || assignment.taskPoints || 0;
-          return sum + points;
-        }, 0);
+      // ✅ Cast to fix TypeScript errors
+      const pendingThisWeek = pendingThisWeekRaw as unknown as Array<Assignment & {
+        task: { title: string; points: number; executionFrequency: string } | null;
+        timeSlot: { id: string; startTime: string; endTime: string; label: string | null; points: number } | null;
+      }>;
+
+      const totalPoints = completedThisWeek.reduce((sum, assignment) => {
+        return sum + (assignment.points || 0);
+      }, 0);
 
       const byDay: Record<string, any> = {};
-      completedThisWeek
-        .filter(assignment => assignment.verified === true)
-        .forEach(assignment => {
-          if (assignment.completedAt) {
-            // ✅ Use UTC day for grouping
-            const day = assignment.completedAt.toLocaleDateString('en-US', { 
-              weekday: 'short', 
-              timeZone: 'UTC' 
-            });
-            if (!byDay[day]) {
-              byDay[day] = { count: 0, points: 0 };
-            }
-            byDay[day].count++;
-            const points = assignment.task?.points || assignment.taskPoints || 0;
-            byDay[day].points += points;
+      completedThisWeek.forEach(assignment => {
+        if (assignment.completedAt) {
+          const day = assignment.completedAt.toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            timeZone: 'UTC' 
+          });
+          if (!byDay[day]) {
+            byDay[day] = { count: 0, points: 0 };
           }
-        });
+          byDay[day].count++;
+          byDay[day].points += (assignment.points || 0);
+        }
+      });
 
       return {
         success: true,
@@ -442,7 +488,7 @@ export class HomeServices {
             .filter(item => item.task !== null)
             .map(item => ({
               title: item.task!.title,
-              points: item.task!.points,
+              points: item.points || 0,
               group: item.task!.group?.name || 'Unknown Group',
               completedAt: item.completedAt,
               verified: item.verified
@@ -451,10 +497,13 @@ export class HomeServices {
             .filter(item => item.task !== null)
             .map(item => ({
               title: item.task!.title,
-              points: item.task!.points,
-              timeOfDay: item.task!.timeOfDay,
-              dayOfWeek: item.task!.dayOfWeek,
-              dueDate: item.dueDate
+              points: item.points || 0,
+              dueDate: item.dueDate,
+              timeSlot: item.timeSlot ? {
+                startTime: item.timeSlot.startTime,
+                endTime: item.timeSlot.endTime,
+                label: item.timeSlot.label
+              } : null
             })),
           dailyStats: byDay
         }
@@ -469,7 +518,6 @@ export class HomeServices {
     }
   }
 
-  // ✅ Only verified assignments count for points
   private static async getWeeklyPoints(userId: string, weekStart: Date): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
@@ -480,19 +528,11 @@ export class HomeServices {
           completedAt: {
             gte: weekStart
           }
-        },
-        include: {
-          task: {
-            select: {
-              points: true
-            }
-          }
         }
       });
 
       return completedAssignments.reduce((sum, assignment) => {
-        const points = assignment.task?.points || assignment.taskPoints || 0;
-        return sum + points;
+        return sum + (assignment.points || 0);
       }, 0);
     } catch (error) {
       console.error("Error calculating weekly points:", error);
@@ -500,7 +540,6 @@ export class HomeServices {
     }
   }
 
-  // ✅ Only verified assignments count for total points
   private static async getTotalPoints(userId: string): Promise<number> {
     try {
       const completedAssignments = await prisma.assignment.findMany({
@@ -508,19 +547,11 @@ export class HomeServices {
           userId: userId,
           completed: true,
           verified: true
-        },
-        include: {
-          task: {
-            select: {
-              points: true
-            }
-          }
         }
       });
 
       return completedAssignments.reduce((sum, a) => {
-        const points = a.task?.points || a.taskPoints || 0;
-        return sum + points;
+        return sum + (a.points || 0);
       }, 0);
     } catch (error) {
       console.error("Error calculating total points:", error);
@@ -532,14 +563,19 @@ export class HomeServices {
     const icons: Record<string, string> = {
       'SUBMISSION_VERIFIED': 'check-circle',
       'SUBMISSION_REJECTED': 'close-circle',
+      'SUBMISSION_PENDING': 'clock',
       'TASK_ASSIGNED': 'clipboard-check',
       'TASK_COMPLETED': 'check',
+      'TASK_MISSED': 'alert',
+      'SLOT_MISSED': 'alert',
       'SWAP_REQUEST': 'swap-horizontal',
       'SWAP_ACCEPTED': 'handshake',
+      'SWAP_EXPIRED': 'clock',
       'POINTS_EARNED': 'star',
       'GROUP_INVITE': 'account-plus',
       'NEW_MEMBER': 'account-plus',
-      'FEEDBACK_RESPONSE': 'message-reply'
+      'FEEDBACK_RESPONSE': 'message-reply',
+      'NEGLECT_DETECTED': 'alert-circle'
     };
     return icons[type] || 'bell';
   }

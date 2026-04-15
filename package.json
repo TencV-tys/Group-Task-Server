@@ -48,6 +48,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^25.4.0",
+    "babel-plugin-transform-remove-console": "^6.9.4",
     "nodemon": "^3.1.11",
     "prisma": "^6.5.0",
     "ts-node": "^10.9.2",
