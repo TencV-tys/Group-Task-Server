@@ -9,62 +9,60 @@ import prisma from "../prisma";
 import { AdminLogoutServices } from '../services/admin.logout.services';
 export class AdminAuthController{
 
-   static async login(req:Request,res:Response){
-    try{
-          const {email,password} = req.body;
+    static async login(req: Request, res: Response) {
+    try {
+      const { email, password } = req.body;
 
-          const result = await AdminAuthServices.login(email,password);
+      const result = await AdminAuthServices.login(email, password);
 
-          if(!result.success || !result.admin){
-            return res.status(401).json({
-                success:false,
-                message:result.message
-            });
-          }
-          const admin = result.admin;
+      if (!result.success || !result.admin) {
+        return res.status(401).json({
+          success: false,
+          message: result.message
+        });
+      }
 
-          const adminRefreshToken = await AdminJwtUtils.generateRefreshToken(admin.id,admin.email,admin.role);
-              
-          await AdminRefreshToken.createAdminRefreshToken(admin.id,adminRefreshToken);
+      const admin = result.admin;
+      const adminRefreshToken = await AdminJwtUtils.generateRefreshToken(admin.id, admin.email, admin.role);
 
-          res.cookie('adminToken',result.token,{
-            httpOnly:true,
-            secure:process.env.NODE_ENV === "production",
-            sameSite:"strict",
-            maxAge:7 * 24 * 60 *60 * 1000
-          });
+      await AdminRefreshToken.createAdminRefreshToken(admin.id, adminRefreshToken);
 
-          res.cookie('adminRefreshToken',adminRefreshToken,{
-            httpOnly:true,
-            secure:process.env.NODE_ENV === "production",
-            sameSite:"strict",
-            maxAge: 30 * 24 * 60 * 60 * 1000 
-          });
+      res.cookie('adminToken', result.token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      });
 
-          return res.json({
-            success:true,
-            message:"Admin Login Successfully",
-            admin:{
-                id:admin.id,
-                fullName:admin.fullName,
-                email:admin.email,
-                role:admin.role,
-                isActive:admin.isActive,
-                lastLoginAt:admin.lastLoginAt
-            }
-          });
+      res.cookie('adminRefreshToken', adminRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 30 * 24 * 60 * 60 * 1000
+      });
 
+      // ✅ FIXED: Include token in the response body for React Native
+      return res.json({
+        success: true,
+        message: "Admin Login Successfully",
+        token: result.token,  // ← ADD THIS!
+        admin: {
+          id: admin.id,
+          fullName: admin.fullName,
+          email: admin.email,
+          role: admin.role,
+          isActive: admin.isActive,
+          lastLoginAt: admin.lastLoginAt
+        }
+      });
 
-
-
-    }catch(e:any){
-         return res.status(500).json({
-            success:false,
-            message:"Internal server error"
-         });
+    } catch (e: any) {
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
     }
-
-   }
+  }
 
    static async refreshToken(req:Request,res:Response){
     try{

@@ -9,96 +9,88 @@ import { UserNotificationService } from "./user.notification.services";
 export class AdminReportService {
   
   // ========== GET ALL REPORTS ==========
-  static async getReports(filters: {
-    status?: string;
-    type?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  } = {}) {
-    try {
-      const {
-        status,
-        type,
-        search,
-        page = 1,
-        limit = 20
-      } = filters;
+// ========== GET ALL REPORTS ==========
+static async getReports(filters: {
+  status?: string;
+  type?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+} = {}) {
+  try {
+    const { status, type, search, page = 1, limit = 20 } = filters;
+    const skip = (page - 1) * limit;
+    const where: any = {};
 
-      const skip = (page - 1) * limit;
-      const where: any = {};
+    if (status && status !== 'ALL') where.status = status;
+    if (type) where.type = type;
+    if (search) {
+      where.OR = [
+        { description: { contains: search, mode: 'insensitive' } },
+        { reporter: { fullName: { contains: search, mode: 'insensitive' } } },
+        { group: { name: { contains: search, mode: 'insensitive' } } }
+      ];
+    }
 
-      if (status) where.status = status;
-      if (type) where.type = type;
-      if (search) {
-        where.OR = [
-          { description: { contains: search, mode: 'insensitive' } },
-          { reporter: { fullName: { contains: search, mode: 'insensitive' } } },
-          { group: { name: { contains: search, mode: 'insensitive' } } }
-        ];
-      }
-
-      const [reports, total] = await Promise.all([
-        prisma.report.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { createdAt: 'desc' },
-          include: {
-            reporter: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-                avatarUrl: true
-              }
-            },
-            group: {
-              select: {
-                id: true,
-                name: true,
-                description: true,
-                avatarUrl: true,
-                _count: {
-                  select: { members: true, tasks: true }
-                }
-              }
-            },
-            resolver: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true
+    const [reports, total] = await Promise.all([
+      prisma.report.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          reporter: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              avatarUrl: true
+            }
+          },
+          group: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              avatarUrl: true,
+              _count: {
+                select: { members: true, tasks: true }
               }
             }
-          }
-        }),
-        prisma.report.count({ where })
-      ]);
-
-      return {
-        success: true,
-        message: "Reports retrieved successfully",
-        data: {
-          reports,
-          pagination: {
-            page,
-            limit,
-            total,
-            pages: Math.ceil(total / limit)
+          },
+          resolver: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
           }
         }
-      };
+      }),
+      prisma.report.count({ where })
+    ]);
 
-    } catch (error: any) {
-      console.error("❌ [REPORT] Error getting reports:", error);
-      return {
-        success: false,
-        message: error.message || "Failed to retrieve reports"
-      };
-    }
+    // ✅ FIXED: Return reports directly (not wrapped in data)
+    return {
+      success: true,
+      message: "Reports retrieved successfully",
+      reports,  // ← Direct access
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    };
+
+  } catch (error: any) {
+    console.error("❌ [REPORT] Error getting reports:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to retrieve reports"
+    };
   }
-
+}
   // ========== GET SINGLE REPORT ==========
   static async getReportById(reportId: string) {
     try {
@@ -388,45 +380,48 @@ export class AdminReportService {
   }
 
   // ========== GET REPORT STATISTICS ==========
-  static async getReportStats() {
-    try {
-      const [pending, reviewing, resolved, dismissed, total] = await Promise.all([
-        prisma.report.count({ where: { status: "PENDING" } }),
-        prisma.report.count({ where: { status: "REVIEWING" } }),
-        prisma.report.count({ where: { status: "RESOLVED" } }),
-        prisma.report.count({ where: { status: "DISMISSED" } }),
-        prisma.report.count()
-      ]);
+  // ========== GET REPORT STATISTICS ==========
+static async getReportStats() {
+  try {
+    const [pending, reviewing, resolved, dismissed, total] = await Promise.all([
+      prisma.report.count({ where: { status: "PENDING" } }),
+      prisma.report.count({ where: { status: "REVIEWING" } }),
+      prisma.report.count({ where: { status: "RESOLVED" } }),
+      prisma.report.count({ where: { status: "DISMISSED" } }),
+      prisma.report.count()
+    ]);
 
-      const byType = await prisma.report.groupBy({
-        by: ['type'],
-        _count: true
-      });
+    const byType = await prisma.report.groupBy({
+      by: ['type'],
+      _count: true
+    });
 
-      const typeStats: Record<string, number> = {};
-      byType.forEach(item => {
-        typeStats[item.type] = item._count;
-      });
-
-      return {
-        success: true,
-        message: "Report statistics retrieved",
-        data: {
+    // ✅ FIXED: Return statistics directly
+    return {
+      success: true,
+      message: "Report statistics retrieved",
+      statistics: {  // ← Direct access
+        overview: {
           total,
           pending,
           reviewing,
           resolved,
           dismissed,
-          byType: typeStats
-        }
-      };
+          resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0
+        },
+        byType: byType.map(item => ({
+          type: item.type,
+          count: item._count
+        }))
+      }
+    };
 
-    } catch (error: any) {
-      console.error("❌ [REPORT] Error getting stats:", error);
-      return {
-        success: false,
-        message: error.message || "Failed to retrieve statistics"
-      };
-    }
+  } catch (error: any) {
+    console.error("❌ [REPORT] Error getting stats:", error);
+    return {
+      success: false,
+      message: error.message || "Failed to retrieve statistics"
+    };
   }
+}
 }
