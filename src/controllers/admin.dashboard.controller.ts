@@ -1,4 +1,5 @@
-// controllers/admin.dashboard.controller.ts
+// controllers/admin.dashboard.controller.ts - COMPLETE FIXED
+
 import { Response } from "express";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
 import prisma from "../prisma";
@@ -16,11 +17,18 @@ export class AdminDashboardController {
         });
       }
 
-      // Get current date boundaries
+      // Date boundaries
       const now = new Date();
-      const today = new Date(now.setHours(0, 0, 0, 0));
-      const weekAgo = new Date(now.setDate(now.getDate() - 7));
-      const monthAgo = new Date(now.setMonth(now.getMonth() - 1));
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
+      
+      const weekAgo = new Date(now);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+      
+      const monthAgo = new Date(now);
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      monthAgo.setHours(0, 0, 0, 0);
 
       // Fetch all stats in parallel
       const [
@@ -29,7 +37,10 @@ export class AdminDashboardController {
         activeUsers,
         suspendedUsers,
         totalGroups,
-        groupsWithReports,
+        activeGroups,
+        suspendedGroups,
+        deletedGroups,
+        totalGroupMembers,
         totalFeedback,
         openFeedback,
         inProgressFeedback,
@@ -42,62 +53,84 @@ export class AdminDashboardController {
         unreadNotifications,
         totalNotifications,
         systemAdmins,
-        groupAdmins,
         auditLast24h,
         auditLast7d,
         auditLast30d,
         recentActivity
       ] = await Promise.all([
-        // Users
+        // USERS
         prisma.user.count(),
         prisma.user.count({ where: { createdAt: { gte: today } } }),
         prisma.user.count({ where: { roleStatus: 'ACTIVE' } }),
         prisma.user.count({ where: { roleStatus: 'SUSPENDED' } }),
         
-        // Groups
+        // GROUPS
         prisma.group.count(),
-        prisma.report.groupBy({
-          by: ['groupId'],
-          _count: true,
-          having: { groupId: { _count: { gt: 0 } } }
-        }).then(result => result.length),
+        prisma.group.count({ where: { status: 'ACTIVE', isDeleted: false } }),
+        prisma.group.count({ where: { status: 'SUSPENDED', isDeleted: false } }),
+        prisma.group.count({ where: { isDeleted: true } }),
+        prisma.groupMember.count({ where: { group: { isDeleted: false }, isActive: true } }),
         
-        // Feedback
+        // FEEDBACK
         prisma.feedback.count(),
         prisma.feedback.count({ where: { status: 'OPEN' } }),
         prisma.feedback.count({ where: { status: 'IN_PROGRESS' } }),
         prisma.feedback.count({ where: { status: 'RESOLVED' } }),
         
-        // Reports
+        // REPORTS
         prisma.report.count(),
         prisma.report.count({ where: { status: 'PENDING' } }),
         prisma.report.count({ where: { status: 'REVIEWING' } }),
         prisma.report.count({ where: { status: 'RESOLVED' } }),
         prisma.report.count({ where: { status: 'DISMISSED' } }),
         
-        // Notifications
+        // NOTIFICATIONS
         prisma.adminNotification.count({ where: { read: false } }),
         prisma.adminNotification.count(),
         
-        // Admins
+        // ADMINS
         prisma.systemAdmin.count(),
-        prisma.groupMember.count({ where: { groupRole: 'ADMIN' } }),
         
-        // Audit logs
+        // AUDIT LOGS
         prisma.adminAuditLog.count({ where: { createdAt: { gte: today } } }),
         prisma.adminAuditLog.count({ where: { createdAt: { gte: weekAgo } } }),
         prisma.adminAuditLog.count({ where: { createdAt: { gte: monthAgo } } }),
         
-        // Recent activity
+        // RECENT ACTIVITY
         prisma.adminAuditLog.findMany({
           take: 10,
           orderBy: { createdAt: 'desc' },
           include: {
-            admin: { select: { fullName: true } },
-            targetUser: { select: { fullName: true } }
+            admin: { select: { id: true, fullName: true, email: true } },
+            targetUser: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
           }
         })
       ]);
+
+      // Get group admins (distinct users who are admins of any active group)
+      const groupAdmins = await prisma.groupMember.groupBy({
+        by: ['userId'],
+        where: {
+          groupRole: 'ADMIN',
+          group: { isDeleted: false }
+        }
+      }).then(result => result.length);
+
+      // Get groups with reports (only active groups)
+      const groupsWithReports = await prisma.report.groupBy({
+        by: ['groupId'],
+        where: {
+          group: { isDeleted: false }
+        },
+        _count: true
+      }).then(result => result.length);
+
+      console.log('📊 Dashboard Stats:', {
+        users: { total: totalUsers, active: activeUsers },
+        groups: { total: totalGroups, active: activeGroups, suspended: suspendedGroups, deleted: deletedGroups },
+        members: totalGroupMembers,
+        groupAdmins
+      });
 
       return res.json({
         success: true,
@@ -110,8 +143,11 @@ export class AdminDashboardController {
           },
           groups: {
             total: totalGroups,
+            active: activeGroups,
+            suspended: suspendedGroups,
+            deleted: deletedGroups,
             groupsWithReports,
-            totalMembers: await prisma.groupMember.count()
+            totalMembers: totalGroupMembers
           },
           feedback: {
             total: totalFeedback,
@@ -147,7 +183,7 @@ export class AdminDashboardController {
       console.error("Error in getStats:", error);
       return res.status(500).json({
         success: false,
-        message: "Internal server error"
+        message: error.message || "Internal server error"
       });
     }
   }
