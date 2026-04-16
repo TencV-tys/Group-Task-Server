@@ -1,4 +1,4 @@
-// services/admin.groups.service.ts - COMPLETE WITH REAL-TIME EMISSIONS
+// services/admin.groups.service.ts - COMPLETE WITH COUNT-BASED THRESHOLDS
 
 import prisma from "../prisma";
 import { ReportType, ReportStatus, GroupStatus, Prisma } from "@prisma/client";
@@ -11,7 +11,7 @@ export interface GroupFilters {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
   minMembers?: 6;
-  maxMembers?: 6 | 7 | 8 | 9 | 10;
+  maxMembers?: 6 | 7 | 8 | 9 | 10; 
   createdAfter?: Date;
   createdBefore?: Date;
   status?: GroupStatus;
@@ -19,50 +19,11 @@ export interface GroupFilters {
   minReports?: number;
 }
 
-// Define which report types trigger which actions
-export const REPORT_ACTIONS = {
-  SUSPEND: {
-    triggers: [
-      ReportType.HARASSMENT,
-      ReportType.OFFENSIVE_BEHAVIOR
-    ] as ReportType[],
-    severity: 'HIGH',
-    message: 'Reports require immediate suspension'
-  },
-  SOFT_DELETE: {
-    triggers: [
-      ReportType.INAPPROPRIATE_CONTENT,
-      ReportType.SPAM,
-      ReportType.TASK_ABUSE
-    ] as ReportType[],
-    severity: 'MEDIUM',
-    message: 'Reports suggest soft deletion'
-  },
-  HARD_DELETE: {
-    triggers: [
-      ReportType.GROUP_MISUSE
-    ] as ReportType[],
-    severity: 'HIGH',
-    message: 'Reports require permanent deletion'
-  },
-  REVIEW: {
-    triggers: [
-      ReportType.OTHER
-    ] as ReportType[],
-    severity: 'LOW',
-    message: 'Reports require review'
-  }
-};
-
-// Thresholds for each report type
-const REPORT_THRESHOLDS: Record<ReportType, number> = {
-  [ReportType.INAPPROPRIATE_CONTENT]: 2,
-  [ReportType.HARASSMENT]: 1,
-  [ReportType.SPAM]: 3,
-  [ReportType.OFFENSIVE_BEHAVIOR]: 2,
-  [ReportType.TASK_ABUSE]: 2,
-  [ReportType.GROUP_MISUSE]: 2,
-  [ReportType.OTHER]: 3
+// ✅ SIMPLIFIED COUNT-BASED THRESHOLDS
+export const REPORT_COUNT_THRESHOLDS = {
+  SUSPEND: 3,      // 3-5 reports = SUSPEND
+  SOFT_DELETE: 6,  // 6-9 reports = SOFT_DELETE  
+  HARD_DELETE: 10  // 10+ reports = HARD_DELETE
 };
 
 export interface ReportAnalysis {
@@ -74,16 +35,13 @@ export interface ReportAnalysis {
   reportTypes: {
     type: ReportType;
     count: number;
-    threshold: number;
-    meetsThreshold: boolean;
   }[];
   availableActions: {
     action: 'SUSPEND' | 'SOFT_DELETE' | 'HARD_DELETE' | 'RESTORE' | 'REVIEW';
     reason: string;
     severity: string;
     canExecute: boolean;
-    reportTypes: ReportType[];
-    thresholdMet: boolean;
+    reportCount: number;
   }[];
   requiresImmediateAction: boolean;
 }
@@ -325,7 +283,7 @@ export class AdminGroupsService {
     }
   }
 
-  // ========== ANALYZE GROUP REPORTS ==========
+  // ========== ANALYZE GROUP REPORTS (COUNT-BASED) ==========
   static async analyzeGroupReports(groupId: string): Promise<{
     success: boolean;
     analysis?: ReportAnalysis;
@@ -359,93 +317,82 @@ export class AdminGroupsService {
         };
       }
 
+      const totalReportCount = group.reports.length;
+      
+      // Count reports by type (for display only)
       const reportCountByType = new Map<ReportType, number>();
       group.reports.forEach(report => {
         const count = reportCountByType.get(report.type as ReportType) || 0;
         reportCountByType.set(report.type as ReportType, count + 1);
       });
 
-      const reportTypes = Array.from(reportCountByType.entries()).map(([type, count]) => {
-        const threshold = REPORT_THRESHOLDS[type as ReportType] || 3;
-        return {
-          type: type as ReportType,
-          count,
-          threshold,
-          meetsThreshold: count >= threshold
-        };
-      });
+      const reportTypes = Array.from(reportCountByType.entries()).map(([type, count]) => ({
+        type: type as ReportType,
+        count
+      }));
 
+      // Determine available actions based on TOTAL report count
       const availableActions = [];
       
-      const suspendReports = reportTypes.filter(r => 
-        (REPORT_ACTIONS.SUSPEND.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
-      );
-      if (suspendReports.length > 0) {
-        availableActions.push({
-          action: 'SUSPEND' as const,
-          reason: REPORT_ACTIONS.SUSPEND.message,
-          severity: REPORT_ACTIONS.SUSPEND.severity,
-          canExecute: true,
-          reportTypes: suspendReports.map(r => r.type),
-          thresholdMet: true
-        });
-      }
-
-      const softDeleteReports = reportTypes.filter(r => 
-        (REPORT_ACTIONS.SOFT_DELETE.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
-      );
-      if (softDeleteReports.length > 0) {
-        availableActions.push({
-          action: 'SOFT_DELETE' as const,
-          reason: REPORT_ACTIONS.SOFT_DELETE.message,
-          severity: REPORT_ACTIONS.SOFT_DELETE.severity,
-          canExecute: true,
-          reportTypes: softDeleteReports.map(r => r.type),
-          thresholdMet: true
-        });
-      }
-
-      const hardDeleteReports = reportTypes.filter(r => 
-        (REPORT_ACTIONS.HARD_DELETE.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
-      );
-      if (hardDeleteReports.length > 0) {
-        availableActions.push({
-          action: 'HARD_DELETE' as const,
-          reason: REPORT_ACTIONS.HARD_DELETE.message,
-          severity: REPORT_ACTIONS.HARD_DELETE.severity,
-          canExecute: true,
-          reportTypes: hardDeleteReports.map(r => r.type),
-          thresholdMet: true
-        });
-      }
-
-      const reviewReports = reportTypes.filter(r => 
-        (REPORT_ACTIONS.REVIEW.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
-      );
-      if (reviewReports.length > 0) {
+      // REVIEW action for groups with reports but below suspend threshold (1-2 reports)
+      if (totalReportCount > 0 && totalReportCount < REPORT_COUNT_THRESHOLDS.SUSPEND) {
         availableActions.push({
           action: 'REVIEW' as const,
-          reason: REPORT_ACTIONS.REVIEW.message,
-          severity: REPORT_ACTIONS.REVIEW.severity,
+          reason: `This group has ${totalReportCount} report(s). Manual review recommended.`,
+          severity: 'LOW',
           canExecute: true,
-          reportTypes: reviewReports.map(r => r.type),
-          thresholdMet: true
+          reportCount: totalReportCount
+        });
+      }
+      
+      // SUSPEND action (3-5 reports)
+      if (totalReportCount >= REPORT_COUNT_THRESHOLDS.SUSPEND && 
+          totalReportCount < REPORT_COUNT_THRESHOLDS.SOFT_DELETE) {
+        availableActions.push({
+          action: 'SUSPEND' as const,
+          reason: `This group has received ${totalReportCount} report(s). Suspension is recommended.`,
+          severity: 'MEDIUM',
+          canExecute: true,
+          reportCount: totalReportCount
+        });
+      }
+      
+      // SOFT_DELETE action (6-9 reports)
+      if (totalReportCount >= REPORT_COUNT_THRESHOLDS.SOFT_DELETE && 
+          totalReportCount < REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
+        availableActions.push({
+          action: 'SOFT_DELETE' as const,
+          reason: `This group has received ${totalReportCount} report(s). Soft deletion is recommended.`,
+          severity: 'HIGH',
+          canExecute: true,
+          reportCount: totalReportCount
+        });
+      }
+      
+      // HARD_DELETE action (10+ reports)
+      if (totalReportCount >= REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
+        availableActions.push({
+          action: 'HARD_DELETE' as const,
+          reason: `This group has received ${totalReportCount} report(s). Permanent deletion is recommended.`,
+          severity: 'CRITICAL',
+          canExecute: true,
+          reportCount: totalReportCount
         });
       }
 
+      // RESTORE action for deleted groups
       if (group.isDeleted || group.status === GroupStatus.DELETED) {
         availableActions.push({
           action: 'RESTORE' as const,
           reason: 'Group is currently deleted. Restore to bring it back.',
           severity: 'LOW',
           canExecute: true,
-          reportTypes: [],
-          thresholdMet: true
+          reportCount: totalReportCount
         });
       }
 
       const requiresImmediateAction = availableActions.some(
-        a => a.severity === 'HIGH' && a.canExecute
+        a => a.severity === 'CRITICAL' || a.severity === 'HIGH'
       );
 
       return {
@@ -455,7 +402,7 @@ export class AdminGroupsService {
           groupName: group.name,
           groupStatus: group.status,
           isDeleted: group.isDeleted,
-          reportCount: group.reports.length,
+          reportCount: totalReportCount,
           reportTypes,
           availableActions,
           requiresImmediateAction
@@ -478,7 +425,23 @@ export class AdminGroupsService {
 
       const groupIds = groupsResult.groups.map(g => g.id);
 
+      // Get total report counts per group
       const reportCounts = await prisma.report.groupBy({
+        by: ['groupId'],
+        where: {
+          groupId: { in: groupIds },
+          status: { in: ['PENDING', 'REVIEWING'] }
+        },
+        _count: { id: true }
+      });
+
+      const reportCountMap = new Map<string, number>();
+      for (const row of reportCounts) {
+        reportCountMap.set(row.groupId, row._count.id);
+      }
+
+      // Get report counts by type for display
+      const reportTypeCounts = await prisma.report.groupBy({
         by: ['groupId', 'type'],
         where: {
           groupId: { in: groupIds },
@@ -487,46 +450,78 @@ export class AdminGroupsService {
         _count: { id: true }
       });
 
-      const reportMap = new Map<string, Map<string, number>>();
-      for (const row of reportCounts) {
-        if (!reportMap.has(row.groupId)) reportMap.set(row.groupId, new Map());
-        reportMap.get(row.groupId)!.set(row.type, row._count.id);
+      const reportTypeMap = new Map<string, Map<string, number>>();
+      for (const row of reportTypeCounts) {
+        if (!reportTypeMap.has(row.groupId)) reportTypeMap.set(row.groupId, new Map());
+        reportTypeMap.get(row.groupId)!.set(row.type, row._count.id);
       }
 
       const groupsWithAnalysis = groupsResult.groups.map(group => {
-        const typeCounts = reportMap.get(group.id) || new Map<string, number>();
+        const reportCount = reportCountMap.get(group.id) || 0;
+        const typeCounts = reportTypeMap.get(group.id) || new Map<string, number>();
+        
+        const reportTypes = Array.from(typeCounts.entries()).map(([type, count]) => ({
+          type: type as ReportType,
+          count
+        }));
 
-        const reportTypes = Array.from(typeCounts.entries()).map(([type, count]) => {
-          const threshold = REPORT_THRESHOLDS[type as ReportType] ?? 3;
-          return { type: type as ReportType, count, threshold, meetsThreshold: count >= threshold };
-        });
-
+        // Determine available actions based on TOTAL report count
         const availableActions: ReportAnalysis['availableActions'] = [];
-
-        for (const [actionKey, config] of Object.entries(REPORT_ACTIONS)) {
-          const matching = reportTypes.filter(r =>
-            (config.triggers as ReportType[]).includes(r.type) && r.meetsThreshold
-          );
-          if (matching.length > 0) {
-            availableActions.push({
-              action: actionKey as any,
-              reason: config.message,
-              severity: config.severity,
-              canExecute: true,
-              reportTypes: matching.map(r => r.type),
-              thresholdMet: true
-            });
-          }
+        
+        // REVIEW action (1-2 reports)
+        if (reportCount > 0 && reportCount < REPORT_COUNT_THRESHOLDS.SUSPEND) {
+          availableActions.push({
+            action: 'REVIEW',
+            reason: `${reportCount} report(s) received. Manual review recommended.`,
+            severity: 'LOW',
+            canExecute: true,
+            reportCount
+          });
+        }
+        
+        // SUSPEND action (3-5 reports)
+        if (reportCount >= REPORT_COUNT_THRESHOLDS.SUSPEND && 
+            reportCount < REPORT_COUNT_THRESHOLDS.SOFT_DELETE) {
+          availableActions.push({
+            action: 'SUSPEND',
+            reason: `${reportCount} report(s) received. Suspension recommended.`,
+            severity: 'MEDIUM',
+            canExecute: true,
+            reportCount
+          });
+        }
+        
+        // SOFT_DELETE action (6-9 reports)
+        if (reportCount >= REPORT_COUNT_THRESHOLDS.SOFT_DELETE && 
+            reportCount < REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
+          availableActions.push({
+            action: 'SOFT_DELETE',
+            reason: `${reportCount} report(s) received. Soft deletion recommended.`,
+            severity: 'HIGH',
+            canExecute: true,
+            reportCount
+          });
+        }
+        
+        // HARD_DELETE action (10+ reports)
+        if (reportCount >= REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
+          availableActions.push({
+            action: 'HARD_DELETE',
+            reason: `${reportCount} report(s) received. Permanent deletion recommended.`,
+            severity: 'CRITICAL',
+            canExecute: true,
+            reportCount
+          });
         }
 
+        // RESTORE action for deleted groups
         if (group.isDeleted || group.status === GroupStatus.DELETED) {
           availableActions.push({
             action: 'RESTORE',
-            reason: 'Group is currently deleted. Restore to bring it back.',
+            reason: 'Group is currently deleted.',
             severity: 'LOW',
             canExecute: true,
-            reportTypes: [],
-            thresholdMet: true
+            reportCount
           });
         }
 
@@ -535,10 +530,10 @@ export class AdminGroupsService {
           groupName: group.name,
           groupStatus: group.status,
           isDeleted: group.isDeleted,
-          reportCount: Array.from(typeCounts.values()).reduce((a, b) => a + b, 0),
+          reportCount,
           reportTypes,
           availableActions,
-          requiresImmediateAction: availableActions.some(a => a.severity === 'HIGH')
+          requiresImmediateAction: availableActions.some(a => a.severity === 'CRITICAL' || a.severity === 'HIGH')
         };
 
         return { ...group, reportAnalysis: analysis };
@@ -649,7 +644,6 @@ export class AdminGroupsService {
         timestamp: new Date()
       };
 
-      // Notify all group members
       const memberIds = group.members.map(m => m.userId);
       if (memberIds.length > 0) {
         await SocketService.emitBulkNotifications(
@@ -662,7 +656,6 @@ export class AdminGroupsService {
         );
       }
 
-      // Notify all admins
       const admins = await prisma.systemAdmin.findMany({
         where: { isActive: true },
         select: { id: true }
@@ -705,7 +698,6 @@ export class AdminGroupsService {
         timestamp: new Date()
       };
 
-      // Notify all group members
       const memberIds = group.members.map(m => m.userId);
       if (memberIds.length > 0) {
         await SocketService.emitBulkNotifications(
@@ -718,7 +710,6 @@ export class AdminGroupsService {
         );
       }
 
-      // Notify all admins
       const admins = await prisma.systemAdmin.findMany({
         where: { isActive: true },
         select: { id: true }
@@ -760,7 +751,6 @@ export class AdminGroupsService {
         timestamp: new Date()
       };
 
-      // Notify group creator
       await SocketService.emitNewNotification(
         group.createdById,
         `group_${groupId}_restored`,
@@ -770,7 +760,6 @@ export class AdminGroupsService {
         payload
       );
 
-      // Notify all admins
       const admins = await prisma.systemAdmin.findMany({
         where: { isActive: true },
         select: { id: true }
@@ -810,7 +799,6 @@ export class AdminGroupsService {
         timestamp: new Date()
       };
 
-      // Notify group creator
       await SocketService.emitNewNotification(
         group.createdById,
         `group_${groupId}_review`,
@@ -820,7 +808,6 @@ export class AdminGroupsService {
         payload
       );
 
-      // Notify all admins
       const admins = await prisma.systemAdmin.findMany({
         where: { isActive: true },
         select: { id: true }
