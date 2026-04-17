@@ -46,5 +46,9 @@ router.get(
   AuditLog('ADMIN_VIEW_AUDIT_LOG_DETAIL', (req) => req.params.logId as string), // 👈 ADD AUDIT WITH TARGET
   AdminAuditController.getAuditLog
 );
-
+router.delete(
+  '/:logId',
+  AdminAuthMiddleware,
+  AdminAuditController.deleteAuditLog
+);
 export default router;

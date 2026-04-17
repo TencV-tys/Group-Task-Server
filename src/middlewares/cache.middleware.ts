@@ -16,7 +16,7 @@ const MAX_CACHE_SIZE = 50; // ✅ Limit cache size for mobile memory
 
 // Cache stats for monitoring
 let cacheHits = 0;
-let cacheMisses = 0;
+let cacheMisses = 0; 
 
 // ✅ Clean up more frequently for mobile (every 5 minutes)
 setInterval(() => {

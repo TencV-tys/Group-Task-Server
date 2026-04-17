@@ -13,7 +13,7 @@ export class AdminAuditController {
 
       if (!adminId) {
         return res.status(401).json({
-          success: false,
+          success: false, 
           message: "Admin not authenticated"
         });
       }
@@ -116,4 +116,53 @@ export class AdminAuditController {
       });
     }
   }
+
+  // controllers/admin.audit.controller.ts - Update deleteAuditLog
+
+// ========== DELETE AUDIT LOG ==========
+static async deleteAuditLog(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    const { logId } = req.params as { logId: string };
+    const { adminId: bodyAdminId } = req.body; // ✅ Get from body if needed
+
+    if (!adminId && !bodyAdminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin not authenticated"
+      });
+    }
+
+    const actingAdminId = adminId || bodyAdminId;
+
+    if (!logId) {
+      return res.status(400).json({
+        success: false,
+        message: "Log ID is required"
+      });
+    }
+
+    const result = await AdminAuditService.deleteLog(logId, actingAdminId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message
+    });
+
+  } catch (error: any) {
+    console.error("Error in deleteAuditLog:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
 }
+
+} 

@@ -15,7 +15,7 @@ import {
   swapRequestLimiter,
   groupActivityLimiter,
   adminLimiter,
-  userNotificationLimiter,
+  userNotificationLimiter, 
   userFeedbackLimiter,
   userReportsLimiter,
   homeLimiter,
@@ -204,7 +204,7 @@ svr.get('/api/home', cacheMiddleware(30 * 1000));
 svr.get('/api/group', cacheMiddleware(30 * 1000));
 svr.get('/api/tasks', cacheMiddleware(20 * 1000));
 svr.get('/api/group-activity', cacheMiddleware(30 * 1000));
-svr.get('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
+//svr.get('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
 svr.get('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000));
 svr.get('/api/admin/groups', cacheMiddleware(2 * 60 * 1000));
 svr.get('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000));
