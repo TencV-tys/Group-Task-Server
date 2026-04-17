@@ -15,7 +15,7 @@ export class UserNotificationController {
       if (!userId) {
         return res.status(401).json({
           success: false,
-          message: "Not authenticated"
+          message: "Not authenticated" 
         });
       }
 
@@ -230,4 +230,38 @@ export class UserNotificationController {
       });
     }
   }
+
+  static async deleteAllNotifications(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated"
+      });
+    }
+
+    const result = await UserNotificationService.deleteAllNotifications(userId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message
+    });
+
+  } catch (error: any) {
+    console.error("Error in deleteAllNotifications:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
 }

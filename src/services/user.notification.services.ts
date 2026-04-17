@@ -292,4 +292,24 @@ private static async sendPushNotification(
       };
     }
   }
+
+  static async deleteAllNotifications(userId: string) {
+  try {
+    const result = await prisma.userNotification.deleteMany({
+      where: { userId }
+    });
+
+    return {
+      success: true,
+      message: `${result.count} notifications deleted successfully`
+    };
+  } catch (error: any) {
+    console.error("Error deleting all notifications:", error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
 }
+
+}  

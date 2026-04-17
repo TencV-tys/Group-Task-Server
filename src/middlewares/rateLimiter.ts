@@ -1,16 +1,16 @@
 // middlewares/rateLimiter.ts
 import rateLimit from 'express-rate-limit';
 
-// 3 hours in milliseconds
-const THREE_HOURS = 60 * 60 * 3000; // 10,800,000 ms = 3 hours
+// 1 hour in milliseconds
+const ONE = 60 * 60 * 1000; // 10,800,000 ms = 3 hours
 
 // Strict limiter for authentication routes
 export const authLimiter = rateLimit({
-  windowMs: THREE_HOURS,
+  windowMs: ONE,
   max: 50,
   message: { 
     success: false,
-    message: 'Too many authentication attempts, please try again after 3 hours'
+    message: 'Too many authentication attempts, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -19,11 +19,11 @@ export const authLimiter = rateLimit({
 
 // File upload limiter
 export const uploadLimiter = rateLimit({
-  windowMs: THREE_HOURS,
+  windowMs: ONE,
   max: 50,
   message: {
     success: false,
-    message: 'Too many upload attempts, please try again after 3 hours'
+    message: 'Too many upload attempts, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -31,11 +31,11 @@ export const uploadLimiter = rateLimit({
 
 // Task operations limiter
 export const taskLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 200,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many task operations, please try again after 3 hours'
+    message: 'Too many task operations, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -43,11 +43,11 @@ export const taskLimiter = rateLimit({
 
 // Password reset limiter (keep strict)
 export const passwordResetLimiter = rateLimit({
-  windowMs: THREE_HOURS,
+  windowMs: ONE,
   max: 5,
   message: {
     success: false,
-    message: 'Too many password reset attempts, please try again after 3 hours'
+    message: 'Too many password reset attempts, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -55,11 +55,11 @@ export const passwordResetLimiter = rateLimit({
 
 // Swap request limiter
 export const swapRequestLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300, // bump from 100 to 300
+  windowMs: ONE,
+  max: 500, // bump from 100 to 300
   message: {
     success: false,
-    message: 'Too many swap requests, please try again after 3 hours'
+    message: 'Too many swap requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -67,11 +67,11 @@ export const swapRequestLimiter = rateLimit({
 });
 // Group activity limiter
 export const groupActivityLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many activity requests, please try again after 3 hours'
+    message: 'Too many activity requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -79,11 +79,11 @@ export const groupActivityLimiter = rateLimit({
 
 // Group routes limiter
 export const groupLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many group requests, please try again after 3 hours'
+    message: 'Too many group requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -91,11 +91,11 @@ export const groupLimiter = rateLimit({
 
 // User notifications limiter
 export const userNotificationLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 200,
+  windowMs: ONE,
+  max: 300,
   message: {
     success: false,
-    message: 'Too many notification requests, please try again after 3 hours'
+    message: 'Too many notification requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -103,11 +103,11 @@ export const userNotificationLimiter = rateLimit({
 
 // User feedback limiter
 export const userFeedbackLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 100,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many feedback submissions, please try again after 3 hours'
+    message: 'Too many feedback submissions, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -115,11 +115,11 @@ export const userFeedbackLimiter = rateLimit({
 
 // User reports limiter
 export const userReportsLimiter = rateLimit({
-  windowMs: THREE_HOURS,
+  windowMs: ONE,
   max: 50,
   message: {
     success: false,
-    message: 'Too many report submissions, please try again after 3 hours'
+    message: 'Too many report submissions, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -127,11 +127,11 @@ export const userReportsLimiter = rateLimit({
 
 // Home page data limiter
 export const homeLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many requests, please try again after 3 hours'
+    message: 'Too many requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -139,11 +139,11 @@ export const homeLimiter = rateLimit({
 
 // Assignment operations limiter
 export const assignmentLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 200,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many assignment operations, please try again after 3 hours'
+    message: 'Too many assignment operations, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -152,11 +152,11 @@ export const assignmentLimiter = rateLimit({
 // Admin routes limiter
 // Admin routes limiter with CORS headers
 export const adminLimiter = rateLimit({
-  windowMs: THREE_HOURS,
+  windowMs: ONE,
   max: 500,
   message: {
     success: false,
-    message: 'Too many admin requests, please try again after 3 hours'
+    message: 'Too many admin requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -178,33 +178,33 @@ export const adminLimiter = rateLimit({
 
 // Keep these for backward compatibility if needed
 export const auditLogLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many audit log requests, please try again after 3 hours'
+    message: 'Too many audit log requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 export const reportsLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs: ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many report requests, please try again after 3 hours'
+    message: 'Too many report requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 export const feedbackLimiter = rateLimit({
-  windowMs: THREE_HOURS,
-  max: 300,
+  windowMs:ONE,
+  max: 500,
   message: {
     success: false,
-    message: 'Too many feedback requests, please try again after 3 hours'
+    message: 'Too many feedback requests, please try again after 1 hour'
   },
   standardHeaders: true,
   legacyHeaders: false,

@@ -1,3 +1,4 @@
+// routes/user.notification.routes.ts - FULL CORRECT VERSION
 import { Router } from "express";
 import { UserNotificationController } from "../controllers/user.notification.controller";
 import { UserAuthMiddleware } from "../middlewares/user.auth.middleware";
@@ -7,22 +8,15 @@ const router = Router();
 // All routes require authentication
 router.use(UserAuthMiddleware);
 
-// Get all notifications
+// ========== SPECIFIC ROUTES (no parameters) ==========
 router.get('/', UserNotificationController.getMyNotifications);
-
-// Get unread count
 router.get('/unread-count', UserNotificationController.getUnreadCount);
-
-// ✅ Register push token (NEW)
 router.post('/register-push-token', UserNotificationController.registerPushToken);
-
-// Mark as read
-router.patch('/:notificationId/read', UserNotificationController.markAsRead);
-
-// Mark all as read
 router.patch('/mark-all-read', UserNotificationController.markAllAsRead);
+router.delete('/delete-all', UserNotificationController.deleteAllNotifications);  // ✅ SPECIFIC FIRST
 
-// Delete notification
+// ========== PARAMETER ROUTES (with :id) ==========
+router.patch('/:notificationId/read', UserNotificationController.markAsRead);
 router.delete('/:notificationId', UserNotificationController.deleteNotification);
 
 export default router;

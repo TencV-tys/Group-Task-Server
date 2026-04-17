@@ -12,11 +12,11 @@ import {
   AssignmentVerifiedPayload,
   SwapRequestedPayload,
   SwapRespondedPayload, 
-  GroupMemberJoinedPayload,
+  GroupMemberJoinedPayload, 
   GroupMemberLeftPayload,
   GroupMemberRoleChangedPayload,
   RotationCompletedPayload, 
-  NotificationNewPayload,
+  NotificationNewPayload, 
   AssignmentCreatedPayload,
   GroupCreatedPayload
 } from '../socket/events';
@@ -969,4 +969,45 @@ static async emitAssignmentPendingVerification(
       console.error('SocketService.emitReportStatusChangedToAdmins error:', error);
     }
   }
+
+  // services/socket.services.ts - ADD THESE METHODS
+
+// ========== FEEDBACK EVENTS FOR USERS (Real-time for submitter) ==========
+
+static async emitFeedbackCreatedForUser(userId: string, feedback: any) {
+  try {
+    emitToUser(userId, 'feedback:user:created', {
+      ...feedback,
+      isOwn: true,
+      event: 'created'
+    });
+    console.log(`📢 Emitted feedback created event to user ${userId}`);
+  } catch (error) {
+    console.error('SocketService.emitFeedbackCreatedForUser error:', error);
+  }
+}
+
+static async emitFeedbackUpdatedForUser(userId: string, feedback: any) {
+  try {
+    emitToUser(userId, 'feedback:user:updated', {
+      ...feedback,
+      event: 'updated'
+    });
+    console.log(`📢 Emitted feedback updated event to user ${userId}`);
+  } catch (error) {
+    console.error('SocketService.emitFeedbackUpdatedForUser error:', error);
+  }
+}
+
+static async emitFeedbackDeletedForUser(userId: string, feedbackId: string) {
+  try {
+    emitToUser(userId, 'feedback:user:deleted', { 
+      feedbackId,
+      event: 'deleted' 
+    });
+    console.log(`📢 Emitted feedback deleted event to user ${userId}`);
+  } catch (error) {
+    console.error('SocketService.emitFeedbackDeletedForUser error:', error);
+  }
+}
 }
