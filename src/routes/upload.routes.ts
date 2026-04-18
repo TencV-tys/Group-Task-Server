@@ -1,4 +1,4 @@
-// src/routes/upload.routes.ts - CLOUDINARY VERSION
+// src/routes/upload.routes.ts - ADD PUBLIC ROUTE
 
 import { UserAuthMiddleware } from './../middlewares/user.auth.middleware';
 import express from 'express';
@@ -7,7 +7,14 @@ import { singleUpload, photoUpload, groupAvatarUpload } from '../utils/multer';
 
 const router = express.Router();
 
-// User avatar upload (Cloudinary)
+// ✅ PUBLIC ROUTE - No authentication (for signup)
+router.post(
+  '/avatar/cloudinary',
+  singleUpload,
+  UploadController.uploadAvatarCloudinaryPublic
+);
+
+// Protected routes (require authentication)
 router.post(
   '/avatar',
   UserAuthMiddleware,

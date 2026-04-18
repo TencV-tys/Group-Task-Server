@@ -27,8 +27,8 @@ export class UploadController {
   static deleteOldFile(oldUrl: string | null): void {
     if (!oldUrl) return;
     
-    try {
-      const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+    try { 
+      const baseUrl = `http://${process.env.WIFI_IP}:5000` || 'http://localhost:5000';
       
       // Check if URL contains our base URL
       if (oldUrl.includes(baseUrl)) {
@@ -804,6 +804,46 @@ static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
   } catch (error: any) {
     console.error('Cloudinary task photo upload error:', error);
     return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+// src/controllers/uploadController.ts - ADD THIS PUBLIC METHOD
+
+// Public Cloudinary avatar upload (for signup - NO AUTH REQUIRED)
+static async uploadAvatarCloudinaryPublic(req: Request, res: Response) {
+  try {
+    console.log('📤 Public Cloudinary avatar upload request (signup)');
+    
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No file uploaded' 
+      });
+    }
+
+    // Get Cloudinary URL
+    let fileUrl = req.file.path;
+    
+    // Clean URL if needed
+    if (fileUrl.includes('/user-avatars/user-avatars/')) {
+      fileUrl = fileUrl.replace('/user-avatars/user-avatars/', '/user-avatars/');
+      console.log('🔧 Fixed duplicate folder in URL:', fileUrl);
+    }
+
+    console.log('✅ Avatar uploaded to Cloudinary (public):', fileUrl);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Avatar uploaded successfully',
+      data: { avatarUrl: fileUrl }
+    });
+
+  } catch (error: any) {
+    console.error('❌ Public Cloudinary avatar upload error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to upload avatar' 
+    });
   }
 }
 }

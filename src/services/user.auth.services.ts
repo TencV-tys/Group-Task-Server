@@ -24,159 +24,161 @@ export class UserServices {
   private static readonly ALLOWED_IMAGE_TYPES = ['jpeg', 'jpg', 'png', 'gif', 'webp'];
   private static readonly MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 
-  // ===== SECURE SIGNUP =====
-  static async signup(
-    email: string,
-    fullName: string,
-    password: string,
-    confirmPassword: string,
-    avatarData?: string | null,
-    gender?: string | null
-  ): Promise<UserSignUpAuthTypes> {
-    try {
-      console.log("UserServices.signup called");
+  
+  // services/user.auth.services.ts - UPDATE signup method
 
-      // ===== INPUT SANITIZATION & VALIDATION =====
-      if (!email || !password || !confirmPassword || !fullName) {
-        return {
-          success: false,
-          message: "All fields are required"
-        };
-      }
+static async signup(
+  email: string,
+  fullName: string,
+  password: string,
+  confirmPassword: string,
+  avatarUrl?: string | null,  // ✅ Change from avatarData to avatarUrl
+  gender?: string | null
+): Promise<UserSignUpAuthTypes> {
+  try {
+    console.log("UserServices.signup called");
 
-      const sanitizedEmail = this.sanitizeEmail(email);
-      const sanitizedName = this.sanitizeInput(fullName);
-
-      if (!this.isValidEmail(sanitizedEmail)) {
-        return {
-          success: false,
-          message: "Invalid email format"
-        };
-      }
-
-      if (!this.isValidName(sanitizedName)) {
-        return {
-          success: false,
-          message: `Full name must be between ${this.NAME_MIN_LENGTH} and ${this.NAME_MAX_LENGTH} characters and contain only letters, spaces, and basic punctuation`
-        };
-      }
-
-      // ===== PASSWORD SECURITY =====
-      if (!this.isValidPassword(password)) {
-        return {
-          success: false,
-          message: `Password must be at least ${this.PASSWORD_MIN_LENGTH} characters and contain at least one uppercase letter, one lowercase letter, one number, and one special character`
-        };
-      }
-
-      if (password !== confirmPassword) {
-        return {
-          success: false,
-          message: "Passwords do not match"
-        };
-      }
-
-      if (this.isCommonPassword(password)) {
-        return {
-          success: false,
-          message: "This password is too common. Please choose a stronger password"
-        };
-      }
-
-      // ===== GENDER VALIDATION =====
-      let genderEnum: Gender | null = null;
-      if (gender) {
-        const upperGender = gender.toUpperCase();
-        const validGenders = Object.values(Gender) as string[];
-        
-        if (validGenders.includes(upperGender)) {
-          genderEnum = upperGender as Gender;
-        } else {
-          return {
-            success: false,
-            message: `Invalid gender. Must be one of: ${validGenders.join(', ')}`
-          };
-        }
-      }
-
-      // ===== CHECK EXISTING USER =====
-      const existingUser = await prisma.user.findUnique({
-        where: { email: sanitizedEmail }
-      });
- 
-      if (existingUser) {
-        return {
-          success: false,
-          message: "An account with this email already exists. Please login instead.",
-        };
-      }
-
-      // ===== SECURE AVATAR PROCESSING =====
-      let avatarUrl: string | null = null;
-      
-      if (avatarData) {
-        try {
-          if (avatarData.startsWith('data:image')) {
-            console.log("Processing secure avatar...");
-            avatarUrl = await this.secureSaveBase64Image(avatarData, sanitizedEmail);
-          } else if (avatarData.startsWith('http')) {
-            if (this.isValidUrl(avatarData)) {
-              avatarUrl = avatarData;
-            } else {
-              console.log("Invalid URL format");
-            }
-          }
-        } catch (avatarError: any) {
-          console.error("Avatar processing failed:", avatarError.message);
-        }
-      }
-
-      // ===== SECURE PASSWORD HASHING =====
-      const passwordHashed = await hashedPassword(password, 12);
-
-      // ===== CREATE USER =====
-      const user = await prisma.user.create({
-        data: {
-          fullName: sanitizedName,
-          email: sanitizedEmail,
-          passwordHash: passwordHashed,
-          avatarUrl: avatarUrl,
-          gender: genderEnum,
-          role: UserRole.USER,
-          roleStatus: UserRoleStatus.ACTIVE,
-          lastLoginAt: new Date()
-        }
-      });
-
-      const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
-      failedLoginAttempts.delete(sanitizedEmail);
-
-      return {
-        success: true,
-        message: "Registration successful",
-        token,
-        user: {
-          id: user.id,
-          fullName: user.fullName,
-          email: user.email,
-          passwordHash: user.passwordHash,
-          avatarUrl: user.avatarUrl,
-          gender: user.gender as Gender | null,
-          role: user.role,
-          roleStatus: user.roleStatus
-        }
-      };
-
-    } catch (e: any) {
-      console.error("Signup error:", e);
-      this.logSecurityEvent('SIGNUP_ERROR', { email, error: e.message });
+    // ===== INPUT SANITIZATION & VALIDATION =====
+    if (!email || !password || !confirmPassword || !fullName) {
       return {
         success: false,
-        message: "Registration failed. Please try again later.",
-        error: process.env.NODE_ENV === 'development' ? e.message : undefined
+        message: "All fields are required"
       };
-    } 
-  }
+    }
+
+    const sanitizedEmail = this.sanitizeEmail(email);
+    const sanitizedName = this.sanitizeInput(fullName);
+
+    if (!this.isValidEmail(sanitizedEmail)) {
+      return {
+        success: false,
+        message: "Invalid email format"
+      };
+    }
+
+    if (!this.isValidName(sanitizedName)) {
+      return {
+        success: false,
+        message: `Full name must be between ${this.NAME_MIN_LENGTH} and ${this.NAME_MAX_LENGTH} characters and contain only letters, spaces, and basic punctuation`
+      };
+    }
+
+    // ===== PASSWORD SECURITY =====
+    if (!this.isValidPassword(password)) {
+      return {
+        success: false,
+        message: `Password must be at least ${this.PASSWORD_MIN_LENGTH} characters and contain at least one uppercase letter, one lowercase letter, one number, and one special character`
+      };
+    }
+
+    if (password !== confirmPassword) {
+      return {
+        success: false,
+        message: "Passwords do not match"
+      };
+    }
+
+    if (this.isCommonPassword(password)) {
+      return {
+        success: false,
+        message: "This password is too common. Please choose a stronger password"
+      };
+    }
+
+    // ===== GENDER VALIDATION =====
+    let genderEnum: Gender | null = null;
+    if (gender) {
+      const upperGender = gender.toUpperCase();
+      const validGenders = Object.values(Gender) as string[];
+      
+      if (validGenders.includes(upperGender)) {
+        genderEnum = upperGender as Gender;
+      } else {
+        return {
+          success: false,
+          message: `Invalid gender. Must be one of: ${validGenders.join(', ')}`
+        };
+      }
+    }
+
+    // ===== CHECK EXISTING USER =====
+    const existingUser = await prisma.user.findUnique({
+      where: { email: sanitizedEmail }
+    });
+ 
+    if (existingUser) {
+      return {
+        success: false,
+        message: "An account with this email already exists. Please login instead.",
+      };
+    }
+
+    // ✅ Validate Cloudinary URL if provided
+    let validatedAvatarUrl: string | null = null;
+    if (avatarUrl) {
+      if (this.isValidCloudinaryUrl(avatarUrl)) {
+        validatedAvatarUrl = avatarUrl;
+      } else {
+        console.log("Invalid Cloudinary URL provided, ignoring");
+      }
+    }
+
+    // ===== SECURE PASSWORD HASHING =====
+    const passwordHashed = await hashedPassword(password, 12);
+
+    // ===== CREATE USER =====
+    const user = await prisma.user.create({
+      data: {
+        fullName: sanitizedName,
+        email: sanitizedEmail,
+        passwordHash: passwordHashed,
+        avatarUrl: validatedAvatarUrl,  // ✅ Save Cloudinary URL
+        gender: genderEnum,
+        role: UserRole.USER,
+        roleStatus: UserRoleStatus.ACTIVE,
+        lastLoginAt: new Date()
+      }
+    });
+
+    const token = UserJwtUtils.generateToken(user.id, user.email, user.role);
+    failedLoginAttempts.delete(sanitizedEmail);
+
+    return {
+      success: true,
+      message: "Registration successful",
+      token,
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        passwordHash: user.passwordHash,
+        avatarUrl: user.avatarUrl,
+        gender: user.gender as Gender | null,
+        role: user.role,
+        roleStatus: user.roleStatus
+      }
+    };
+
+  } catch (e: any) {
+    console.error("Signup error:", e);
+    this.logSecurityEvent('SIGNUP_ERROR', { email, error: e.message });
+    return {
+      success: false,
+      message: "Registration failed. Please try again later.",
+      error: process.env.NODE_ENV === 'development' ? e.message : undefined
+    };
+  } 
+}
+
+// Add helper method to validate Cloudinary URL
+private static isValidCloudinaryUrl(url: string): boolean {
+  if (!url) return false;
+  // Check if it's a Cloudinary URL
+  const isCloudinary = url.includes('res.cloudinary.com');
+  // Or a valid HTTPS URL
+  const isValidUrl = url.startsWith('https://') || url.startsWith('http://localhost');
+  return isCloudinary || isValidUrl;
+}
 
   // ===== UPDATED LOGIN METHOD WITH REMAINING ATTEMPTS =====
   static async login(email: string, password: string): Promise<UserLoginAuthTypes> {

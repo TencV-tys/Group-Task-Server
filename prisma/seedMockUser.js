@@ -15,8 +15,8 @@ async function main() {
     { email: 'alex.brown@example.com', fullName: 'Alex Brown', gender: 'OTHER' },
   ];
 
-  const hashedPassword = await bcrypt.hash('password123', 10);
-  const groupCode = 'HSOGLB';
+  const hashedPassword = await bcrypt.hash('Password@123', 10);
+  const groupCode = 'ZDN5VN';
   
   // Create users
   for (const userData of mockUsers) {
@@ -115,7 +115,7 @@ async function main() {
   console.log(`👥 Total users in group: ${allUsers.length}`);
   console.log(`\n🔑 Login credentials:`);
   mockUsers.forEach(user => {
-    console.log(`   ${user.email} / password123`);
+    console.log(`   ${user.email} / ${data.passwordHash}`);
   });
 }
 
