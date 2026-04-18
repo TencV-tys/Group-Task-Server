@@ -41,12 +41,14 @@ export class UserAuthController{
   // ===== SIGNUP - Returns both tokens =====
   static async signup(req: Request, res: Response) {
     try {
-        console.log("=== CONTROLLER SIGNUP ===");
-        console.log("Request body:", req.body);
+       
         
         const { fullName, email, password, confirmPassword, avatarUrl, avatarBase64, gender } = req.body;
-         
+
+  
         const avatarData = avatarBase64 || avatarUrl;
+  
+
         console.log("Calling UserServices.signup...");
         const result = await UserServices.signup(email, fullName, password, confirmPassword, avatarData, gender);
         
