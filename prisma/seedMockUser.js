@@ -16,7 +16,7 @@ async function main() {
   ];
 
   const hashedPassword = await bcrypt.hash('password123', 10);
-  const groupCode = 'H916XL';
+  const groupCode = 'HSOGLB';
   
   // Create users
   for (const userData of mockUsers) {

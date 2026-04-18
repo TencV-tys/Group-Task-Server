@@ -413,12 +413,12 @@ async function markMissedTimeSlots() {
       if (completedSlotIds.includes(timeSlot.id)) continue;
       if (missedSlotIds.includes(timeSlot.id)) continue;
       
-      // ✅ FIXED: Parse END time and convert PHT to UTC (same as task.services.ts)
+      // Parse END time and convert PHT to UTC
       const endParts = timeSlot.endTime.split(':');
       let endHour = parseInt(endParts[0] || '0', 10);
       const endMinute = parseInt(endParts[1] || '0', 10);
       
-      // ✅ Convert PHT to UTC (subtract 8 hours) - SAME AS task.services.ts
+      // Convert PHT to UTC (subtract 8 hours)
       endHour = endHour - 8;
       if (endHour < 0) endHour += 24;
       
@@ -428,8 +428,12 @@ async function markMissedTimeSlots() {
       // Grace period ends 30 minutes after slot end time
       const gracePeriodEnd = new Date(slotEndTime.getTime() + 30 * 60000);
       
-      // If current time is past grace period, mark as missed
-      if (now > gracePeriodEnd) {
+      // ✅ Add 1 minute buffer to prevent marking at exact grace period end
+      const bufferMs = 60000; // 1 minute buffer
+      const adjustedNow = new Date(now.getTime() - bufferMs);
+      
+      // If adjusted time is past grace period, mark as missed
+      if (adjustedNow > gracePeriodEnd) {
         newlyMissedSlots.push({
           ...timeSlot,
           pointsLost: timeSlot.points || 0
@@ -441,7 +445,7 @@ async function markMissedTimeSlots() {
       const newMissedSlotIds = [...missedSlotIds, ...newlyMissedSlots.map(s => s.id)];
       const allSlotsAccounted = (completedSlotIds.length + newMissedSlotIds.length) === timeSlots.length;
       
-      // Calculate remaining points
+      // Calculate remaining points (only from uncompleted + unmissed slots)
       const remainingPoints = timeSlots
         .filter(slot => !newMissedSlotIds.includes(slot.id) && !completedSlotIds.includes(slot.id))
         .reduce((sum, slot) => sum + (slot.points || 0), 0);
@@ -450,7 +454,7 @@ async function markMissedTimeSlots() {
       totalPointsLost += pointsLostThisBatch;
       totalMissedSlots += newlyMissedSlots.length;
       
-      // ✅ DEDUCT POINTS FROM USER
+      // ✅ DEDUCT ONLY THE MISSED SLOT POINTS
       await prisma.groupMember.updateMany({
         where: {
           userId: assignment.userId,
@@ -459,11 +463,13 @@ async function markMissedTimeSlots() {
         },
         data: {
           cumulativePoints: {
-            decrement: pointsLostThisBatch
+            decrement: pointsLostThisBatch  // ✅ Only missed slot points
           },
           pointsUpdatedAt: new Date()
         }
       });
+      
+      console.log(`💰💰💰 [POINTS DEDUCTED] User ${assignment.userId} lost -${pointsLostThisBatch} points for missing ${newlyMissedSlots.length} slot(s)`);
       
       await prisma.assignment.update({
         where: { id: assignment.id },
@@ -495,20 +501,22 @@ async function markMissedTimeSlots() {
       
       // Send notifications for each missed slot
       for (const slot of newlyMissedSlots) {
+        const slotPointsValue = slot.pointsLost || 0;
+        
         // Notify user
         await UserNotificationService.createNotification({
           userId: assignment.userId,
           type: "SLOT_MISSED",
           title: "⏰ Time Slot Missed",
-          message: `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slot.pointsLost || 0} points.`,
+          message: `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slotPointsValue} points.`,
           data: {
             assignmentId: assignment.id,
             taskId: assignment.taskId,
             taskTitle: assignment.task!.title,
             slotId: slot.id,
             slotTime: `${slot.startTime}-${slot.endTime}`,
-            slotLabel: slot.label,
-            pointsLost: slot.pointsLost || 0,
+            slotLabel: slot.label || '',
+            pointsLost: slotPointsValue,
             remainingPoints,
             completedSlots: completedSlotIds.length,
             missedSlots: newMissedSlotIds.length,
@@ -518,13 +526,13 @@ async function markMissedTimeSlots() {
           }
         });
         
-        // ✅ Notify admins
+        // Notify admins
         for (const admin of admins) {
           await UserNotificationService.createNotification({
             userId: admin.userId,
             type: "NEGLECT_DETECTED",
             title: "⚠️ Time Slot Missed",
-            message: `${assignment.user?.fullName || 'Unknown'} missed the ${slot.startTime}-${slot.endTime} slot for "${assignment.task!.title}" - ${slot.pointsLost || 0} points deducted`,
+            message: `${assignment.user?.fullName || 'Unknown'} missed the ${slot.startTime}-${slot.endTime} slot for "${assignment.task!.title}" - ${slotPointsValue} points deducted`,
             data: {
               assignmentId: assignment.id,
               taskId: assignment.taskId,
@@ -533,8 +541,8 @@ async function markMissedTimeSlots() {
               userName: assignment.user?.fullName || 'Unknown',
               slotId: slot.id,
               slotTime: `${slot.startTime}-${slot.endTime}`,
-              slotLabel: slot.label,
-              pointsLost: slot.pointsLost || 0,
+              slotLabel: slot.label || '',
+              pointsLost: slotPointsValue,
               dueDate: assignment.dueDate,
               detectedAt: now
             }

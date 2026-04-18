@@ -632,10 +632,26 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   // Only check for today's assignments
   if (dueDateUTC !== todayUTC) return false;
   
-  // ✅ FIXED: dueDate is already in UTC, so just add 30 minutes grace period
-  const gracePeriodEnd = new Date(dueDate.getTime() + 30 * 60000);
+  // ✅ Parse END time and convert PHT to UTC
+  const endParts = timeSlot.endTime.split(':');
+  let endHour = parseInt(endParts[0] || '0', 10);
+  const endMinute = parseInt(endParts[1] || '0', 10);
   
-  if (now > gracePeriodEnd) {
+  // Convert PHT to UTC (subtract 8 hours)
+  endHour = endHour - 8;
+  if (endHour < 0) endHour += 24;
+  
+  const endTimeUTC = new Date(dueDate);
+  endTimeUTC.setUTCHours(endHour, endMinute, 0, 0);
+  
+  // Grace period ends 30 minutes after end time
+  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+  
+  // ✅ Add 1 minute buffer to prevent marking at exact grace period end
+  const bufferMs = 60000; // 1 minute buffer
+  const adjustedNow = new Date(now.getTime() - bufferMs);
+  
+  if (adjustedNow > gracePeriodEnd) {
     const assignmentAny = assignment as any;
     const existingMissedSlotsRaw = assignmentAny.missedTimeSlotIds;
     let existingMissedSlotIds: string[] = [];
@@ -656,7 +672,7 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   }
   
   return false;
-} 
+}
  
 static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
   try {
@@ -2010,6 +2026,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         let pointsLost = 0;
         
         for (const timeSlot of assignment.task!.timeSlots) {
+          // Skip already completed or missed slots
           if (completedSlotIds.includes(timeSlot.id)) continue;
           if (missedSlotIds.includes(timeSlot.id)) continue;
           
@@ -2017,7 +2034,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           
           if (isSlotNeglected) {
             missedSlots.push(timeSlot);
-            const slotPoints = timeSlot.points || assignment.points;
+            // ✅ USE THE TIME SLOT'S OWN POINTS, NOT THE ASSIGNMENT'S TOTAL POINTS
+            const slotPoints = timeSlot.points || 0;
             pointsLost += slotPoints;
             totalPointsNotAwarded += slotPoints;
             
@@ -2031,7 +2049,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 },
                 data: {
                   cumulativePoints: {
-                    decrement: slotPoints
+                    decrement: slotPoints  // ✅ Deduct only this slot's points
                   },
                   pointsUpdatedAt: new Date()
                 }
@@ -2046,6 +2064,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           
           const newMissedSlotIds = [...missedSlotIds, ...missedSlots.map(s => s.id)];
           
+          // ✅ Calculate remaining points correctly (only from uncompleted + unmissed slots)
           const remainingPoints = assignment.task!.timeSlots
             .filter(slot => !newMissedSlotIds.includes(slot.id) && !completedSlotIds.includes(slot.id))
             .reduce((sum, slot) => sum + (slot.points || 0), 0);
@@ -2061,7 +2080,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             where: { id: assignment.id },
             data: {
               missedTimeSlotIds: newMissedSlotIds,
-              points: totalRemainingPoints,
+              points: totalRemainingPoints,  // ✅ This is the sum of completed + remaining points
               partiallyExpired: newMissedSlotIds.length > 0 && !allSlotsAccounted,
               notes: assignment.notes 
                 ? `${assignment.notes}\n[MISSED SLOTS: ${missedSlots.map(s => `${s.startTime}-${s.endTime}`).join(', ')}]`
@@ -2073,11 +2092,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           
           // Send notifications for missed slots
           for (const slot of missedSlots) {
+            const slotPointsValue = slot.points || 0;
             await UserNotificationService.createNotification({
               userId: assignment.userId,
               type: "SLOT_MISSED",
               title: "⏰ Time Slot Missed",
-              message: `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slot.points || 0} points.`,
+              message: `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slotPointsValue} points.`,
               data: {
                 assignmentId: assignment.id,
                 taskId: assignment.taskId,
@@ -2086,7 +2106,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 slotId: slot.id,
                 slotTime: `${slot.startTime}-${slot.endTime}`,
                 slotLabel: slot.label || '',
-                pointsLost: slot.points || 0,
+                pointsLost: slotPointsValue,
                 remainingPoints: totalRemainingPoints,
                 completedSlots: completedSlotIds.length,
                 missedSlots: newMissedSlotIds.length,
@@ -2124,7 +2144,11 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         // Single time slot task
         const isAlreadyNeglected = assignment.expired || assignment.expiredAt !== null;
         
-        if (!isAlreadyNeglected && TimeHelpers.isAssignmentNeglected(assignment, now)) {
+        // ✅ Add 1 minute buffer for single slot tasks
+        const bufferMs = 60000;
+        const adjustedNow = new Date(now.getTime() - bufferMs);
+        
+        if (!isAlreadyNeglected && TimeHelpers.isAssignmentNeglected(assignment, adjustedNow)) {
           neglectedCount++;
           
           const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
@@ -2196,11 +2220,11 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           }
         }
       }
-    }
+    } 
 
     return { 
       count: neglectedCount, 
-      pointsNotAwarded: totalPointsNotAwarded
+      pointsNotAwarded: totalPointsNotAwarded 
     };
     
   } catch (error) {
