@@ -527,8 +527,6 @@ static async createTask(
   }
 }
 
-// In task.services.ts - COMPLETELY UPDATED getGroupTasks with swap info for ALL tasks
-
 static async getGroupTasks(groupId: string, userId: string, week?: number) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -553,7 +551,13 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // ✅ GET ALL ACCEPTED SWAP REQUESTS FOR THIS GROUP (for admin to see all swapped tasks)
+    console.log(`\n🔍🔍🔍 [getGroupTasks] START 🔍🔍🔍`);
+    console.log(`📦 Group ID: ${groupId}`);
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`📅 Target Week: ${targetWeek}`);
+    console.log(`========================================\n`);
+
+    // ✅ GET ALL ACCEPTED SWAP REQUESTS FOR THIS GROUP
     const groupSwapRequests = await prisma.swapRequest.findMany({
       where: {
         status: 'ACCEPTED',
@@ -573,43 +577,136 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
       }
     });
  
+    console.log(`📊 Found ${groupSwapRequests.length} accepted swap requests for this group\n`);
+
     // Create a map of assignmentId -> swap info for ALL swaps in the group
     const swapInfoMap = new Map();
+    
     for (const swap of groupSwapRequests) {
-      let swappedFromName = 'another member';
-      let swappedFromId = swap.requestedBy;
+      console.log(`--- Processing Swap Request: ${swap.id} ---`);
+      console.log(`   Assignment ID: ${swap.assignmentId}`);
+      console.log(`   Requested By: ${swap.requestedBy}`);
+      console.log(`   Accepted By: ${swap.acceptedBy}`);
+      console.log(`   Scope: ${swap.scope}`);
+      console.log(`   Selected Day: ${swap.selectedDay}`);
       
-      // Show who originally had the task (the person who gave it away)
+      // Get names for both requester and acceptor
+      let requesterName = 'another member';
+      let acceptorName = 'another member';
+      
+      if (swap.requestedBy) {
+        const requester = await prisma.user.findUnique({
+          where: { id: swap.requestedBy },
+          select: { fullName: true }
+        });
+        if (requester?.fullName) {
+          requesterName = requester.fullName;
+          console.log(`   Requester Name: ${requesterName}`);
+        }
+      }
+      
       if (swap.acceptedBy) {
         const acceptor = await prisma.user.findUnique({
           where: { id: swap.acceptedBy },
           select: { fullName: true }
         });
         if (acceptor?.fullName) {
-          swappedFromName = acceptor.fullName;
-          swappedFromId = swap.acceptedBy;
-        }
-      } else if (swap.requestedBy) {
-        const requester = await prisma.user.findUnique({
-          where: { id: swap.requestedBy },
-          select: { fullName: true }
-        });
-        if (requester?.fullName) {
-          swappedFromName = requester.fullName;
+          acceptorName = acceptor.fullName;
+          console.log(`   Acceptor Name: ${acceptorName}`);
         }
       }
       
+      // Get the original task ID from the requester's assignment
+      const originalAssignment = await prisma.assignment.findUnique({
+        where: { id: swap.assignmentId },
+        select: { taskId: true }
+      });
+      const originalTaskId = originalAssignment?.taskId;
+      console.log(`   Requester's Task ID: ${originalTaskId}`);
+      
+      // ✅ 1. Mark the requester's original assignment
       swapInfoMap.set(swap.assignmentId, {
         acquiredViaSwap: true,
         swapRequestId: swap.id,
-        swappedFromId: swappedFromId,
-        swappedFromName: swappedFromName,
+        swappedFromId: swap.requestedBy,
+        swappedFromName: requesterName,
+        swappedToId: swap.acceptedBy,
+        swappedToName: acceptorName,
         swapScope: swap.scope,
         swapDay: swap.selectedDay
       });
+      console.log(`   ✅ Marked requester's assignment ${swap.assignmentId} (taskId: ${originalTaskId}) as swapped (${requesterName} → ${acceptorName})`);
+      
+      // ✅ 2. For week swap, mark the acceptor's ORIGINAL tasks (the ones they gave away)
+      if (swap.scope === 'week' && swap.acceptedBy) {
+        console.log(`\n   📌 Processing WEEK swap - finding acceptor's original tasks...`);
+        
+        // Get ALL assignments the acceptor has for this week (their original tasks)
+        const acceptorAssignments = await prisma.assignment.findMany({
+          where: {
+            userId: swap.acceptedBy,
+            rotationWeek: targetWeek
+          },
+          select: { id: true, taskId: true },
+          distinct: ['taskId']
+        });
+        
+        console.log(`   Found ${acceptorAssignments.length} distinct tasks for acceptor ${acceptorName}`);
+        
+        for (const accAssign of acceptorAssignments) {
+          // Skip if this is the same task as the requester's original (already marked)
+          if (accAssign.taskId === originalTaskId) {
+            console.log(`   ⏭️ Skipping task ${accAssign.taskId} (same as requester's original)`);
+            continue;
+          }
+          
+          if (!swapInfoMap.has(accAssign.id)) {
+            console.log(`   ✅ Marking acceptor's original task ${accAssign.taskId} as swapped (now belongs to requester ${requesterName})`);
+            swapInfoMap.set(accAssign.id, {
+              acquiredViaSwap: true,
+              swapRequestId: swap.id,
+              swappedFromId: swap.acceptedBy,
+              swappedFromName: acceptorName,
+              swappedToId: swap.requestedBy,
+              swappedToName: requesterName,
+              swapScope: swap.scope,
+              swapDay: swap.selectedDay
+            });
+          }
+        }
+      } else if (swap.scope === 'day' && swap.acceptedBy && swap.selectedDay) {
+        console.log(`\n   📌 Processing DAY swap - finding acceptor's assignment for day ${swap.selectedDay}...`);
+        
+        // For day swap, find the acceptor's assignment on that specific day
+        const acceptorDayAssignment = await prisma.assignment.findFirst({
+          where: {
+            userId: swap.acceptedBy,
+            rotationWeek: targetWeek,
+            assignmentDay: swap.selectedDay as any
+          },
+          select: { id: true, taskId: true }
+        });
+        
+        if (acceptorDayAssignment && !swapInfoMap.has(acceptorDayAssignment.id)) {
+          console.log(`   ✅ Marking acceptor's day assignment ${acceptorDayAssignment.id} (taskId: ${acceptorDayAssignment.taskId}) as swapped`);
+          swapInfoMap.set(acceptorDayAssignment.id, {
+            acquiredViaSwap: true,
+            swapRequestId: swap.id,
+            swappedFromId: swap.acceptedBy,
+            swappedFromName: acceptorName,
+            swappedToId: swap.requestedBy,
+            swappedToName: requesterName,
+            swapScope: swap.scope,
+            swapDay: swap.selectedDay
+          });
+        }
+      }
+      
+      console.log(`\n`);
     }
 
-    console.log(`🔍 [getGroupTasks] Found ${groupSwapRequests.length} swap requests for this group`);
+    console.log(`📊 Total assignments marked as swapped: ${swapInfoMap.size}`);
+    console.log(`   Swapped assignment IDs: ${Array.from(swapInfoMap.keys()).join(', ')}\n`);
 
     const tasks = await prisma.task.findMany({
       where: { groupId, isDeleted: false },
@@ -646,17 +743,22 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
       orderBy: [{ rotationOrder: 'asc' }, { createdAt: 'desc' }]
     });
 
+    console.log(`📊 Found ${tasks.length} tasks for this group\n`);
+
     const formattedTasks = tasks.map(task => {
       const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
       const userAssignment = task.assignments.find(a => a.userId === userId);
       
-      // ✅ Check if ANY assignment for this task was acquired via swap
+      // Check if ANY assignment for this task was acquired via swap
       let taskLevelSwapInfo = null;
       let assignmentSwapInfo = null;
       
       // First check if the current user's assignment is swapped
       if (userAssignment) {
         assignmentSwapInfo = swapInfoMap.get(userAssignment.id);
+        if (assignmentSwapInfo) {
+          console.log(`   🔄 User's assignment for task "${task.title}" is swapped (from: ${assignmentSwapInfo.swappedFromName} → ${assignmentSwapInfo.swappedToName})`);
+        }
       }
       
       // Also check if any other assignment in this task is swapped (for admin view)
@@ -664,6 +766,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
         const swapInfo = swapInfoMap.get(assignment.id);
         if (swapInfo) {
           taskLevelSwapInfo = swapInfo;
+          console.log(`   🔄 Found swapped assignment for task "${task.title}" (from: ${swapInfo.swappedFromName} → ${swapInfo.swappedToName})`);
           break;
         }
       }
@@ -676,7 +779,7 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
         isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow
       }));
       
-      return {
+      const result = {
         id: task.id,
         title: task.title,
         description: task.description,
@@ -706,17 +809,28 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
         isAssignedToUser: !!userAssignment,
         rotationMembers: rotationMembers,
         totalAssignments: task.assignments.length,
-        // ✅ ADD SWAP INFO AT TASK LEVEL for admin view
+        // ✅ SWAP INFO AT TASK LEVEL for admin view
         acquiredViaSwap: finalSwapInfo?.acquiredViaSwap || false,
         swappedFromName: finalSwapInfo?.swappedFromName || null,
+        swappedToName: finalSwapInfo?.swappedToName || null,
         swapScope: finalSwapInfo?.swapScope || null,
         swapDay: finalSwapInfo?.swapDay || null,
         swapRequestId: finalSwapInfo?.swapRequestId || null
       };
+      
+      if (result.acquiredViaSwap) {
+        console.log(`   ✅ TASK "${task.title}" is marked as swapped (from: ${result.swappedFromName})`);
+      }
+      
+      return result;
     });
 
     const swappedTasksCount = formattedTasks.filter(t => t.acquiredViaSwap).length;
-    console.log(`🔍 [getGroupTasks] Found ${swappedTasksCount} swapped tasks in this group`);
+    console.log(`\n✅ [getGroupTasks] COMPLETE:`);
+    console.log(`   Total tasks: ${formattedTasks.length}`);
+    console.log(`   Swapped tasks: ${swappedTasksCount}`);
+    console.log(`   Swapped task titles: ${formattedTasks.filter(t => t.acquiredViaSwap).map(t => t.title).join(', ')}`);
+    console.log(`🔍🔍🔍 [getGroupTasks] END 🔍🔍🔍\n`);
 
     return {
       success: true,
@@ -735,10 +849,11 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     };
 
   } catch (error: any) {
-    console.error("TaskService.getGroupTasks error:", error);
+    console.error("❌ TaskService.getGroupTasks error:", error);
     return { success: false, message: error.message || "Error retrieving tasks" };
   }
 }
+
 
 static async getUserTasks(groupId: string, userId: string, week?: number) {
   try {

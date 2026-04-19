@@ -5,11 +5,10 @@ import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { AssignmentService } from "../services/assignment.services";
 import { TimeHelpers } from "../helpers/time.helpers";
 import prisma from "../prisma";
- 
+  
 export class AssignmentController {
   
-  // controllers/assignment.controller.ts - ADD MORE DETAILED LOGS
-// controllers/assignment.controller.ts - FIXED completeAssignment method
+// controllers/assignment.controller.ts - COMPLETELY UPDATED completeAssignment
 
 static async completeAssignment(req: UserAuthRequest, res: Response) {
   console.log('\n📸🔵 ========== [completeAssignment] ==========');
@@ -17,7 +16,8 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
   console.log('   👤 User ID:', req.user?.id);
   console.log('   📸 File present:', !!(req as any).file);
   console.log('   📝 Notes body:', req.body.notes);
-  console.log('   ⏰ timeSlotId body:', req.body.timeSlotId);  // ✅ ADD THIS LOG
+  console.log('   ⏰ timeSlotId body:', req.body.timeSlotId);
+  console.log('   🖼️ photoUrl body:', req.body.photoUrl);
   
   try {
     const userId = req.user?.id;
@@ -26,9 +26,15 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
     let photoUrl = undefined; 
     const file = (req as any).file;
     
-    if (file) {
+    // ✅ PRIORITY 1: Check if photoUrl came from JSON body (Cloudinary URL)
+    if (req.body.photoUrl) {
+      photoUrl = req.body.photoUrl;
+      console.log("   ✅ Photo URL from JSON body (Cloudinary):", photoUrl);
+    } 
+    // ✅ PRIORITY 2: Check if file was uploaded locally
+    else if (file) {
       photoUrl = `/uploads/task-photos/${file.filename}`;
-      console.log("   ✅ Photo uploaded:", photoUrl);
+      console.log("   ✅ Photo uploaded locally:", photoUrl);
       console.log("   📁 File details:", {
         filename: file.filename,
         size: file.size,
@@ -36,26 +42,15 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
         path: file.path,
         destination: file.destination
       });
-      
-      // Check if file exists on disk
-      const fs = require('fs');
-      const fullPath = file.path;
-      if (fs.existsSync(fullPath)) {
-        console.log("   ✅ File exists on disk at:", fullPath);
-        const stats = fs.statSync(fullPath);
-        console.log("   📁 File size on disk:", stats.size, "bytes");
-      } else {
-        console.log("   ❌ File NOT found on disk at:", fullPath);
-      }
     } else {
-      console.log("   ⚠️ No file uploaded");
+      console.log("   ⚠️ No photo provided");
     }
 
     const notes = req.body.notes;
-    const timeSlotId = req.body.timeSlotId;  // ✅ GET timeSlotId from request body
+    const timeSlotId = req.body.timeSlotId;
     
     console.log("   📝 Notes received:", notes || '(none)');
-    console.log("   ⏰ timeSlotId received:", timeSlotId || '(none)');  // ✅ LOG timeSlotId
+    console.log("   ⏰ timeSlotId received:", timeSlotId || '(none)');
 
     if (!userId) {
       console.log("   ❌ No user ID in request");
@@ -75,7 +70,7 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
 
     console.log("   🔄 Calling AssignmentService.completeAssignment...");
     console.log("   📦 Data being passed:", {
-      photoUrl,
+      photoUrl: photoUrl || '(none)',
       notes: notes || undefined,
       timeSlotId: timeSlotId || undefined
     });
@@ -84,9 +79,9 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
       assignmentId,
       userId,
       { 
-        photoUrl,
+        photoUrl: photoUrl,
         notes: notes || undefined,
-        timeSlotId: timeSlotId || undefined  // ✅ ADD timeSlotId
+        timeSlotId: timeSlotId || undefined
       }
     );
 
