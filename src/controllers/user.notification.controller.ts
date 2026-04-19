@@ -179,57 +179,72 @@ export class UserNotificationController {
     }
   }
 
-  // ✅ ADD THIS NEW METHOD - Register push token
   static async registerPushToken(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { expoPushToken, deviceType } = req.body;
+  try {
+    const userId = req.user?.id;
+    const { expoPushToken, deviceType } = req.body;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated"
-        });
-      }
+    if (!userId || !expoPushToken) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
 
-      if (!expoPushToken) {
-        return res.status(400).json({
-          success: false,
-          message: "Expo push token is required"
-        });
-      }
+    // ✅ Check if user exists first
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
 
-      // Upsert the device token
-      await prisma.userDevice.upsert({
-        where: { expoPushToken },
-        update: {
-          userId,
-          deviceType: deviceType || 'unknown',
-          isActive: true,
-          lastUsedAt: new Date()
-        },
-        create: {
-          userId,
-          expoPushToken,
-          deviceType: deviceType || 'unknown',
-          isActive: true
-        }
-      });
-
-      console.log(`📱 Push token registered for user ${userId}`);
-
-      return res.status(200).json({
-        success: true,
-        message: "Push token registered successfully"
-      });
-    } catch (error: any) {
-      console.error("Error registering push token:", error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || "Failed to register push token"
+    if (!user) {
+      console.error(`❌ User ${userId} not found in database`);
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found. Please log in again.",
+        code: "USER_NOT_FOUND"
       });
     }
+
+    console.log(`✅ User verified: ${user.id} (${user.email})`);
+
+    // ✅ Use connect pattern with error handling
+    const result = await prisma.userDevice.upsert({
+      where: { expoPushToken },
+      update: {
+        userId: user.id,  // ← SIMPLER: use userId directly instead of connect
+        deviceType: deviceType || 'unknown',
+        isActive: true,
+        lastUsedAt: new Date()
+      },
+      create: {
+        userId: user.id,  // ← SIMPLER: use userId directly
+        expoPushToken,
+        deviceType: deviceType || 'unknown',
+        isActive: true
+      }
+    });
+
+    console.log(`📱 Push token registered for user ${user.id}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Push token registered successfully"
+    });
+    
+  } catch (error: any) {
+    console.error("Error registering push token:", error);
+    
+    // Better error messages
+    if (error.code === 'P2003') {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user account. Please log out and log in again."
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to register push token"
+    });
   }
+}
 
   static async deleteAllNotifications(req: UserAuthRequest, res: Response) {
   try {
