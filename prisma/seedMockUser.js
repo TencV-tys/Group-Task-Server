@@ -16,7 +16,7 @@ async function main() {
   ];
 
   const hashedPassword = await bcrypt.hash('Password@123', 10);
-  const groupCode = 'ZDN5VN';
+  const groupCode ='W726OU';
   
   // Create users
   for (const userData of mockUsers) {
@@ -115,7 +115,7 @@ async function main() {
   console.log(`👥 Total users in group: ${allUsers.length}`);
   console.log(`\n🔑 Login credentials:`);
   mockUsers.forEach(user => {
-    console.log(`   ${user.email} / ${data.passwordHash}`);
+    console.log(`   ${user.email} / ${passwordHash}`);
   });
 }
 

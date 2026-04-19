@@ -1,4 +1,4 @@
-// cron/rotateGroupTask.cron.ts - FIXED with safe property access
+// cron/rotateGroupTask.cron.ts - UPDATED with new rotation logic
 
 import cron from 'node-cron';
 import { TaskService } from '../services/task.services';
@@ -13,9 +13,9 @@ export class CronService {
     // Run every day at 00:01 AM
     cron.schedule('1 0 * * *', async () => {
       console.log(`[${new Date().toISOString()}] 🔄 Running rotation check`);
-      
+       
       try {
-        // Get all groups with tasks - ORDER tasks by creation date
+        // Get all groups with tasks
         const groups = await prisma.group.findMany({
           include: {
             tasks: {
@@ -83,102 +83,58 @@ export class CronService {
           if (shouldRotate) {
             console.log(`   🔄 Processing group rotation...`);
             
-            // Calculate total points for each task
-            const tasksWithPoints = group.tasks.map(task => {
-              const totalPoints = task.timeSlots?.reduce((sum, slot) => sum + (slot.points || 0), 0) || task.points || 0;
-              return { ...task, totalPoints };
+            // Find an admin to perform rotation
+            const admin = await prisma.groupMember.findFirst({
+              where: { 
+                groupId: group.id, 
+                groupRole: "ADMIN",
+                isActive: true
+              },
+              select: { userId: true }
             });
-
-            // Sort tasks by points (highest to lowest)
-            const sortedTasks = [...tasksWithPoints].sort((a, b) => b.totalPoints - a.totalPoints);
             
-            // Sort only members in rotation by cumulative points
-            const sortedMembers = [...membersInRotation].sort((a, b) => a.cumulativePoints - b.cumulativePoints);
-
-            console.log(`   📊 Fair Rotation Analysis:`);
-            console.log(`      Members in rotation (lowest points first):`, 
-              sortedMembers.map(m => `${m.user.fullName} (${m.cumulativePoints}pts)`));
-            console.log(`      Tasks (highest points first):`, 
-              sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
-
-            // Separate tasks into assigned and unassigned
-            const assignedTasks = sortedTasks.filter(task => !!task.currentAssignee);
-            const unassignedTasks = sortedTasks.filter(task => !task.currentAssignee);
-
-            console.log(`   📋 Assigned tasks: ${assignedTasks.length}`);
-            console.log(`   📭 Unassigned tasks: ${unassignedTasks.length}`);
-
-            // Log unassigned tasks (they won't rotate)
-            if (unassignedTasks.length > 0) {
-              console.log(`   ⏸️ Skipping unassigned tasks:`);
-              unassignedTasks.forEach(task => {
-                console.log(`      • ${task.title} (created ${new Date(task.createdAt).toLocaleDateString()})`);
-              });
+            if (!admin) {
+              console.log(`   ⚠️ No admin found for group ${group.name || group.id}`);
+              continue;
             }
 
-            // Only rotate tasks that have assigned members
-            if (assignedTasks.length > 0 && sortedMembers.length > 0) {
-              console.log(`   🔄 Rotating ${assignedTasks.length} assigned tasks with fair algorithm...`);
+            // ✅ Use the NEW rotateGroupTasks function (it handles everything internally)
+            const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
+             
+            if (result.success) {
+              console.log(`   ✅ Rotated successfully to week ${result.newWeek}`);
               
-              try {
-                // Find an admin to perform rotation
-                const admin = await prisma.groupMember.findFirst({
-                  where: { 
-                    groupId: group.id, 
-                    groupRole: "ADMIN",
-                    isActive: true
-                  },
-                  select: { userId: true }
-                });
-                
-                if (!admin) {
-                  console.log(`   ⚠️ No admin found for group ${group.name || group.id}`);
-                  continue;
-                }
-
-                // Use rotateGroupTasks
-                const result = await TaskService.rotateGroupTasks(group.id, admin.userId);
-                 
-                if (result.success) {
-                  console.log(`   ✅ Rotated ${assignedTasks.length} tasks successfully`);
-                  
-                  // ✅ Safe emission with optional chaining
-                  if (result.newWeek && result.weekStart && result.weekEnd) {
-                    await SocketService.emitRotationCompleted(
-                      group.id,
-                      result.newWeek,
-                      result.rotatedTasks || [],
-                      result.weekStart,
-                      result.weekEnd
-                    );
-                    console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
-                  }
-                  
-                  // ✅ Safe logging with null checks
-                  console.log(`   📊 Rotation Results:`);
-                  console.log(`      New Week: ${result.newWeek}`);
-                  console.log(`      Week Start: ${result.weekStart ? result.weekStart.toLocaleDateString() : 'N/A'}`);
-                  console.log(`      Week End: ${result.weekEnd ? result.weekEnd.toLocaleDateString() : 'N/A'}`);
-                  
-                  if (result.rotatedTasks && result.rotatedTasks.length > 0) {
-                    console.log(`      Tasks rotated:`);
-                    result.rotatedTasks.forEach((task: any, idx: number) => {
-                      console.log(`         ${idx + 1}. ${task.taskTitle} → ${task.newAssigneeName}`);
-                    });
-                  }
-                  
-                  if (result.note) {
-                    console.log(`      ℹ️ Note: ${result.note}`);
-                  }
-                  
-                } else {
-                  console.log(`   ❌ Rotation failed: ${result.message}`);
-                }
-              } catch (error) {
-                console.error(`   ❌ Error rotating group:`, error);
+              // Emit socket event
+              if (result.newWeek && result.weekStart && result.weekEnd) {
+                await SocketService.emitRotationCompleted(
+                  group.id,
+                  result.newWeek,
+                  result.rotatedTasks || [],
+                  result.weekStart,
+                  result.weekEnd
+                );
+                console.log(`   📢 Emitted real-time rotation event for group ${group.id}`);
               }
+              
+              // Log results
+              console.log(`   📊 Rotation Results:`);
+              console.log(`      New Week: ${result.newWeek}`);
+              console.log(`      Week Start: ${result.weekStart ? result.weekStart.toLocaleDateString() : 'N/A'}`);
+              console.log(`      Week End: ${result.weekEnd ? result.weekEnd.toLocaleDateString() : 'N/A'}`);
+              
+              if (result.rotatedTasks && result.rotatedTasks.length > 0) {
+                console.log(`      Tasks rotated:`);
+                result.rotatedTasks.forEach((task: any, idx: number) => {
+                  console.log(`         ${idx + 1}. ${task.taskTitle} (${task.taskPoints} pts) → ${task.newAssigneeName}`);
+                });
+              }
+              
+              if (result.note) {
+                console.log(`      ℹ️ Note: ${result.note}`);
+              }
+              
             } else {
-              console.log(`   ℹ️ No assigned tasks to rotate or no members in rotation`);
+              console.log(`   ❌ Rotation failed: ${result.message}`);
             }
           } else {
             console.log(`   ✅ Group is at correct week ${group.currentRotationWeek}`);
@@ -191,7 +147,7 @@ export class CronService {
       timezone: "Asia/Manila"
     });
 
-    console.log('✅ Rotation cron initialized (using earliest task creation date)');
+    console.log('✅ Rotation cron initialized (using pure member rotation)');
   }
 
   // Check if group should rotate based on earliest task creation date

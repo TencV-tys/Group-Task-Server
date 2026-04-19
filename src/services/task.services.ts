@@ -484,7 +484,7 @@ static async createTask(
           console.log(`⚠️ WARNING: No selected days for weekly task!`);
         }
       }
-
+ 
       console.log(`🔵🔵🔵 [CREATE TASK] Completed assignments creation 🔵🔵🔵`);
     }
 
@@ -527,7 +527,7 @@ static async createTask(
   }
 }
 
- // In task.services.ts - Add swap info to getGroupTasks
+// In task.services.ts - COMPLETELY UPDATED getGroupTasks with swap info for ALL tasks
 
 static async getGroupTasks(groupId: string, userId: string, week?: number) {
   try {
@@ -553,30 +553,43 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // ✅ ADD THIS: Get swap info for the current user
-    // Get all accepted swap requests where this user was the acceptor
-    const userSwapRequests = await prisma.swapRequest.findMany({
+    // ✅ GET ALL ACCEPTED SWAP REQUESTS FOR THIS GROUP (for admin to see all swapped tasks)
+    const groupSwapRequests = await prisma.swapRequest.findMany({
       where: {
-        OR: [
-          { acceptedBy: userId },
-          { targetUserId: userId, status: 'ACCEPTED' }
-        ],
-        status: 'ACCEPTED'
+        status: 'ACCEPTED',
+        assignment: {
+          task: {
+            groupId: groupId
+          }
+        }
       },
       select: {
         id: true,
         assignmentId: true,
         requestedBy: true,
+        acceptedBy: true,
         scope: true,
         selectedDay: true
       }
     });
  
-    // Create a map of assignmentId -> swap info
+    // Create a map of assignmentId -> swap info for ALL swaps in the group
     const swapInfoMap = new Map();
-    for (const swap of userSwapRequests) {
+    for (const swap of groupSwapRequests) {
       let swappedFromName = 'another member';
-      if (swap.requestedBy) {
+      let swappedFromId = swap.requestedBy;
+      
+      // Show who originally had the task (the person who gave it away)
+      if (swap.acceptedBy) {
+        const acceptor = await prisma.user.findUnique({
+          where: { id: swap.acceptedBy },
+          select: { fullName: true }
+        });
+        if (acceptor?.fullName) {
+          swappedFromName = acceptor.fullName;
+          swappedFromId = swap.acceptedBy;
+        }
+      } else if (swap.requestedBy) {
         const requester = await prisma.user.findUnique({
           where: { id: swap.requestedBy },
           select: { fullName: true }
@@ -589,12 +602,14 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
       swapInfoMap.set(swap.assignmentId, {
         acquiredViaSwap: true,
         swapRequestId: swap.id,
-        swappedFromId: swap.requestedBy,
+        swappedFromId: swappedFromId,
         swappedFromName: swappedFromName,
         swapScope: swap.scope,
         swapDay: swap.selectedDay
       });
     }
+
+    console.log(`🔍 [getGroupTasks] Found ${groupSwapRequests.length} swap requests for this group`);
 
     const tasks = await prisma.task.findMany({
       where: { groupId, isDeleted: false },
@@ -635,11 +650,26 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
       const rotationMembers = TaskHelpers.safeJsonParse<any>(task.rotationMembers as any);
       const userAssignment = task.assignments.find(a => a.userId === userId);
       
-      // ✅ Check if this user's assignment was acquired via swap
-      let swapInfo = null;
+      // ✅ Check if ANY assignment for this task was acquired via swap
+      let taskLevelSwapInfo = null;
+      let assignmentSwapInfo = null;
+      
+      // First check if the current user's assignment is swapped
       if (userAssignment) {
-        swapInfo = swapInfoMap.get(userAssignment.id);
+        assignmentSwapInfo = swapInfoMap.get(userAssignment.id);
       }
+      
+      // Also check if any other assignment in this task is swapped (for admin view)
+      for (const assignment of task.assignments) {
+        const swapInfo = swapInfoMap.get(assignment.id);
+        if (swapInfo) {
+          taskLevelSwapInfo = swapInfo;
+          break;
+        }
+      }
+      
+      // Use user's swap info first, otherwise use task-level swap info
+      const finalSwapInfo = assignmentSwapInfo || taskLevelSwapInfo;
       
       const assignmentsWithDueInfo = task.assignments.map(assignment => ({
         ...assignment,
@@ -666,26 +696,27 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
         assignments: assignmentsWithDueInfo,
         userAssignment: userAssignment ? {
           ...userAssignment,
-          // ✅ ADD SWAP INFO
-          acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
-          swappedFromId: swapInfo?.swappedFromId || null,
-          swappedFromName: swapInfo?.swappedFromName || null,
-          swapScope: swapInfo?.swapScope || null,
-          swapDay: swapInfo?.swapDay || null,
-          swapRequestId: swapInfo?.swapRequestId || null
+          acquiredViaSwap: assignmentSwapInfo?.acquiredViaSwap || false,
+          swappedFromId: assignmentSwapInfo?.swappedFromId || null,
+          swappedFromName: assignmentSwapInfo?.swappedFromName || null,
+          swapScope: assignmentSwapInfo?.swapScope || null,
+          swapDay: assignmentSwapInfo?.swapDay || null,
+          swapRequestId: assignmentSwapInfo?.swapRequestId || null
         } : null,
         isAssignedToUser: !!userAssignment,
         rotationMembers: rotationMembers,
         totalAssignments: task.assignments.length,
-        // ✅ ADD SWAP INFO AT TASK LEVEL TOO
-        acquiredViaSwap: swapInfo?.acquiredViaSwap || false,
-        swappedFromName: swapInfo?.swappedFromName || null,
-        swapScope: swapInfo?.swapScope || null,
-        swapDay: swapInfo?.swapDay || null
+        // ✅ ADD SWAP INFO AT TASK LEVEL for admin view
+        acquiredViaSwap: finalSwapInfo?.acquiredViaSwap || false,
+        swappedFromName: finalSwapInfo?.swappedFromName || null,
+        swapScope: finalSwapInfo?.swapScope || null,
+        swapDay: finalSwapInfo?.swapDay || null,
+        swapRequestId: finalSwapInfo?.swapRequestId || null
       };
     });
 
-    console.log(`🔍 [getGroupTasks] Found ${formattedTasks.filter(t => t.acquiredViaSwap).length} swapped tasks for user ${userId}`);
+    const swappedTasksCount = formattedTasks.filter(t => t.acquiredViaSwap).length;
+    console.log(`🔍 [getGroupTasks] Found ${swappedTasksCount} swapped tasks in this group`);
 
     return {
       success: true,
@@ -708,8 +739,6 @@ static async getGroupTasks(groupId: string, userId: string, week?: number) {
     return { success: false, message: error.message || "Error retrieving tasks" };
   }
 }
-
-// In task.services.ts - COMPLETELY REWRITTEN getUserTasks with correct swap detection
 
 static async getUserTasks(groupId: string, userId: string, week?: number) {
   try {
@@ -1505,9 +1534,8 @@ return {
     }
   }
 
- // services/task.services.ts - FIXED rotateGroupTasks (REMOVE points addition)
+  // services/task.services.ts - COMPLETELY REWRITTEN rotateGroupTasks with null checks
 
-// Rotate group tasks - UPDATED with expired field handling (NO POINTS ADDED HERE)
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -1544,7 +1572,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     console.log(`✅ Marked ${expiredCount.count} incomplete assignments from week ${previousWeek} as expired`);
 
-    // Get all recurring tasks with their points
+    // STEP 2: Get all recurring tasks sorted by points (HIGHEST to LOWEST)
     const tasks = await prisma.task.findMany({
       where: { 
         groupId, 
@@ -1562,15 +1590,28 @@ static async rotateGroupTasks(groupId: string, userId: string) {
             points: true
           }
         }
-      },
-      orderBy: { rotationOrder: 'asc' }
+      }
     });
 
     if (tasks.length === 0) {
       return { success: false, message: "No recurring tasks to rotate" };
     }
 
-    // Get all active members that are in rotation (EXCLUDE ADMINS)
+    // Calculate total points for each task and sort HIGHEST to LOWEST
+    const tasksWithPoints = tasks.map(task => {
+      const totalPoints = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+      return {
+        ...task,
+        totalPoints: totalPoints || task.points || 0
+      };
+    }).sort((a, b) => b.totalPoints - a.totalPoints);
+
+    console.log('📊 Tasks sorted by points (highest to lowest):');
+    tasksWithPoints.forEach((t, idx) => {
+      console.log(`   ${idx + 1}. ${t.title} - ${t.totalPoints} pts`);
+    });
+
+    // STEP 3: Get all active members in rotation
     const members = await prisma.groupMember.findMany({
       where: { 
         groupId, 
@@ -1586,46 +1627,70 @@ static async rotateGroupTasks(groupId: string, userId: string) {
           } 
         } 
       },
-      orderBy: { 
-        cumulativePoints: 'asc' 
-      }
+      orderBy: { rotationOrder: 'asc' }
     });
 
     if (members.length === 0) {
       return { success: false, message: "No active members in rotation" };
     }
 
-    // Calculate total points for each task (sum of all time slots)
-    const tasksWithTotalPoints = tasks.map(task => {
-      const totalPoints = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
-      return {
-        ...task,
-        totalPoints: totalPoints || task.points || 0
-      };
+    // STEP 4: Get current week's assignments to know who had which task
+    const currentAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek
+      },
+      include: {
+        task: true,
+        user: true
+      }
     });
 
-    // Sort tasks by total points (HIGHEST to LOWEST)
-    const sortedTasks = [...tasksWithTotalPoints].sort((a, b) => b.totalPoints - a.totalPoints);
+    // Create a map of taskId -> current assignee
+    const taskToCurrentAssignee = new Map();
+    currentAssignments.forEach(assignment => {
+      if (assignment.taskId && assignment.userId) {
+        taskToCurrentAssignee.set(assignment.taskId, assignment.userId);
+      }
+    });
 
-    console.log('🔄 FAIR ROTATION ALGORITHM:');
-    console.log('Members in rotation (lowest points first):', members.map(m => `${m.user?.fullName || 'Unknown'} (${m.cumulativePoints}pts)`));
-    console.log('Tasks (highest points first):', sortedTasks.map(t => `${t.title} (${t.totalPoints}pts)`));
-
+    // STEP 5: Determine the new assignment using MEMBER POSITION ROTATION
     const newWeek = group.currentRotationWeek + 1;
     const { weekStart, weekEnd } = TaskHelpers.getWeekBoundaries(1);
     const rotatedTasks = [];
 
-    // FAIR ASSIGNMENT: Lowest points member gets highest points task
+    // Calculate rotation offset based on week number
+    const rotationOffset = newWeek % members.length;
+    
+    console.log(`\n🔄 ROTATION CALCULATION:`);
+    console.log(`   Current Week: ${group.currentRotationWeek}`);
+    console.log(`   New Week: ${newWeek}`);
+    console.log(`   Members count: ${members.length}`);
+    console.log(`   Rotation offset: ${rotationOffset}`);
+
+    // Assign tasks based on rotated member positions
     for (let i = 0; i < members.length; i++) {
       const member = members[i];
-      const task = sortedTasks[i];
+      if (!member || !member.user) {
+        console.warn(`Skipping member at index ${i}: member or user data missing`);
+        continue;
+      }
       
-      if (!task || !member) {
-        console.warn(`Skipping assignment at index ${i}: member or task missing`);
+      // Calculate which position this member gets (rotate based on offset)
+      const positionIndex = (i + rotationOffset) % tasksWithPoints.length;
+      const task = tasksWithPoints[positionIndex];
+      
+      if (!task) {
+        console.warn(`Skipping assignment at index ${i}: task missing`);
         continue;
       }
 
-      console.log(`Assigning ${member.user?.fullName || 'Unknown'} (${member.cumulativePoints}pts) → ${task.title} (${task.totalPoints}pts)`);
+      const previousAssignee = taskToCurrentAssignee.get(task.id);
+      const hadPrevious = previousAssignee === member.userId;
+
+      console.log(`\n   Member ${member.user.fullName} (rotationOrder: ${member.rotationOrder})`);
+      console.log(`      → Position ${positionIndex + 1}: ${task.title} (${task.totalPoints} pts)`);
+      console.log(`      Previously had this task: ${hadPrevious ? 'Yes' : 'No'}`);
 
       // Update task with new assignee
       await prisma.task.update({
@@ -1653,43 +1718,42 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       }];
 
       // Create new assignments based on task frequency
-    if (task.executionFrequency === 'DAILY') {
-  for (let day = 0; day < 7; day++) {
-    const dueDate = new Date(weekStart);
-    dueDate.setUTCDate(dueDate.getUTCDate() + day);  // ✅ UTC
-    
-    for (const timeSlot of timeSlots) {
-       // ✅ Use END time, not START time
-const timeParts = timeSlot.endTime.split(':');
-let hours = Number(timeParts[0]) || 0;
-const minutes = Number(timeParts[1]) || 0;
+      if (task.executionFrequency === 'DAILY') {
+        for (let day = 0; day < 7; day++) {
+          const dueDate = new Date(weekStart);
+          dueDate.setUTCDate(dueDate.getUTCDate() + day);
+          
+          for (const timeSlot of timeSlots) {
+            const timeParts = timeSlot.endTime.split(':');
+            let hours = Number(timeParts[0]) || 0;
+            const minutes = Number(timeParts[1]) || 0;
 
-// ✅ Convert PHT to UTC (subtract 8 hours)
-hours = hours - 8;
-if (hours < 0) hours += 24;
+            hours = hours - 8;
+            if (hours < 0) hours += 24;
 
-const slotDueDate = new Date(dueDate);
-slotDueDate.setUTCHours(hours, minutes, 0, 0);
+            const slotDueDate = new Date(dueDate);
+            slotDueDate.setUTCHours(hours, minutes, 0, 0);
 
-      await prisma.assignment.create({
-        data: {
-          taskId: task.id,
-          userId: member.userId,
-          dueDate: slotDueDate,
-          points: timeSlot.points || task.totalPoints,
-          rotationWeek: newWeek,
-          weekStart,
-          weekEnd,
-          assignmentDay: TaskHelpers.getDayOfWeekFromIndex(day),
-          completed: false,
-          expired: false,
-          verified: null,
-          ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: member.userId,
+                dueDate: slotDueDate,
+                points: timeSlot.points || task.totalPoints,
+                rotationWeek: newWeek,
+                weekStart,
+                weekEnd,
+                assignmentDay: TaskHelpers.getDayOfWeekFromIndex(day),
+                completed: false,
+                expired: false,
+                verified: null,
+                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+              }
+            });
+          }
         }
-      });
-    }
-  }
-}else if (task.executionFrequency === 'WEEKLY') {
+      } 
+      else if (task.executionFrequency === 'WEEKLY') {
         let selectedDays: DayOfWeek[] = [];
         
         if (task.selectedDays) {
@@ -1707,46 +1771,40 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
         if (selectedDays.length === 0) {
           selectedDays = ['MONDAY'];
         }
-        for (const day of selectedDays) {
-  const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
-  
-  for (const timeSlot of timeSlots) {
-    
-    // ✅ Use END time, not START time
-const timeParts = timeSlot.endTime.split(':');
-let hours = Number(timeParts[0]) || 0;
-const minutes = Number(timeParts[1]) || 0;
-
-// ✅ Convert PHT to UTC (subtract 8 hours)
-hours = hours - 8;
-if (hours < 0) hours += 24;
-
-const slotDueDate = new Date(baseDueDate);
-slotDueDate.setUTCHours(hours, minutes, 0, 0);
-    
-    await prisma.assignment.create({
-      data: {
-        taskId: task.id,
-        userId: member.userId,
-        dueDate: slotDueDate,
-        points: timeSlot.points || task.totalPoints,
-        rotationWeek: newWeek,
-        weekStart,
-        weekEnd,
-        assignmentDay: day,
-        completed: false,
-        expired: false,
-        verified: null,
-        ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
-      }
-    });
-  }
-}
         
-      }
+        for (const day of selectedDays) {
+          const baseDueDate = TaskHelpers.calculateDueDate(day, weekStart);
+          
+          for (const timeSlot of timeSlots) {
+            const timeParts = timeSlot.endTime.split(':');
+            let hours = Number(timeParts[0]) || 0;
+            const minutes = Number(timeParts[1]) || 0;
 
-      // ✅ REMOVED: Points are NOT added here anymore!
-      // Points will be added when admin VERIFIES the submission
+            hours = hours - 8;
+            if (hours < 0) hours += 24;
+
+            const slotDueDate = new Date(baseDueDate);
+            slotDueDate.setUTCHours(hours, minutes, 0, 0);
+            
+            await prisma.assignment.create({
+              data: {
+                taskId: task.id,
+                userId: member.userId,
+                dueDate: slotDueDate,
+                points: timeSlot.points || task.totalPoints,
+                rotationWeek: newWeek,
+                weekStart,
+                weekEnd,
+                assignmentDay: day,
+                completed: false,
+                expired: false,
+                verified: null,
+                ...(timeSlot.id ? { timeSlotId: timeSlot.id } : {})
+              }
+            });
+          }
+        }
+      }
 
       rotatedTasks.push({
         taskId: task.id,
@@ -1754,10 +1812,10 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
         taskPoints: task.totalPoints,
         previousAssignee: task.currentAssignee,
         newAssignee: member.userId,
-        newAssigneeName: member.user?.fullName || 'Unknown'
+        newAssigneeName: member.user.fullName || 'Unknown'
       });
     }
- 
+
     // Update group rotation week
     await prisma.group.update({
       where: { id: groupId },
@@ -1767,6 +1825,9 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
       }
     });
 
+    console.log(`\n✅ Rotation completed for week ${newWeek}`);
+    console.log(`   Rotated ${rotatedTasks.length} tasks`);
+
     return {
       success: true,
       message: `Rotated ${rotatedTasks.length} tasks to week ${newWeek}`,
@@ -1774,7 +1835,7 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
       newWeek,
       weekStart,
       weekEnd,
-      note: "Points will be awarded only after admin verification"
+      note: "Members rotated positions. Tasks stay in fixed point order."
     };
 
   } catch (error: any) {
@@ -1782,6 +1843,7 @@ slotDueDate.setUTCHours(hours, minutes, 0, 0);
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
+
 
 
 // In task.services.ts - COMPLETELY REPLACE getRotationSchedule
