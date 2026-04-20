@@ -18,7 +18,7 @@ export const initNeglectDetectionCron = () => {
       } else {
         console.log(`❌ Neglect detection error: ${result.message}`);
       }
-    } catch (error) {
+    } catch (error) { 
       console.error('❌ Error in neglect detection cron job:', error);
     }
   });

@@ -216,8 +216,8 @@ static async completeAssignment(
             now.getUTCDate() === dueDate.getUTCDate();
           
           if (isDueDate) {
-            await this.markAssignmentAsNeglected(assignmentId, userId);
-            errorMessage = `Submission window closed. This task has been marked as missed. -${slotPoints} points deducted.`;
+                // ✅ Don't mark as neglected here - let the cron job handle it
+      errorMessage = `Submission window closed. You missed the submission window for this task.`;
           } else {
             errorMessage = `Submission window closed. You can only submit on the due date: ${dueDate.toISOString().split('T')[0]}.`;
           }
@@ -835,6 +835,13 @@ if (filters.status) {
     case 'rejected':
       // ✅ FIX: Only show assignments with verified = false
       where.verified = false;
+      break;
+          case 'neglected':  // ✅ ADD THIS CASE
+      where.OR = [
+        { expired: true },
+        { partiallyExpired: true }
+      ];
+      where.completed = false;
       break;
   }
 }
@@ -1633,6 +1640,12 @@ static async getUserAssignments(
           ];
           console.log(`   ✅ Filter: pending (completed = false, expired = false, partiallyExpired = false/null)`);
           break;
+              case 'pending_verification':  // ✅ ADD THIS CASE
+      where.photoUrl = { not: null };
+      where.verified = null;
+      where.completed = false;
+      console.log(`   ✅ Filter: pending_verification (has photo, awaiting admin)`);
+      break;
         case 'completed':
           where.completed = true;
           where.verified = null;
@@ -1797,19 +1810,9 @@ static async getUserAssignments(
   }
 }
 
-// ============================================================
-// FIXED FUNCTIONS — drop these into assignment.services.ts
-// ============================================================
-
-// ----------------------------------------------------------------
-// 1. isTimeSlotNeglected
-//    FIX: buffer was subtracting from now (triggering EARLIER),
-//         should add buffer to grace end (trigger LATER).
-//         Also normalised missedSlotIds reading — no more JSON.parse
-//         inside when caller already passes a plain assignment object.
-// ----------------------------------------------------------------
 private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): boolean {
   if (assignment.completed) return false;
+  if (assignment.photoUrl) return false;  // Has submission, don't mark as neglected
 
   // Already tracked as missed — skip
   const existingMissedSlotIds: string[] = Array.isArray(assignment.missedTimeSlotIds)
@@ -1823,46 +1826,100 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
     : [];
   if (existingCompletedSlotIds.includes(timeSlot.id)) return false;
 
-  // ✅ Already submitted (photo present, pending verification) — skip
-  if (assignment.photoUrl) return false;
-
   const dueDate = new Date(assignment.dueDate);
-  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
-  const todayUTC   = Date.UTC(now.getUTCFullYear(),    now.getUTCMonth(),    now.getUTCDate());
-
+  
   // Only check assignments due TODAY
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+
   if (dueDateUTC !== todayUTC) return false;
 
   // Parse end time (stored in PHT / UTC+8) → convert to UTC
   const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
-  let endHour   = parseInt(endHourRaw || '0', 10);
-  const endMin  = parseInt(endMinRaw  || '0', 10);
+  let endHour = parseInt(endHourRaw || '0', 10);
+  const endMin = parseInt(endMinRaw || '0', 10);
 
+  // PHT (UTC+8) to UTC
   endHour = endHour - 8;
   if (endHour < 0) endHour += 24;
 
   const endTimeUTC = new Date(dueDate);
   endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
 
-  // Grace period = endTime + 30 min
-  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60_000);
+  // Grace period = endTime + 30 minutes
+  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
 
-  // ✅ FIX: add 1-min buffer AFTER grace end so we don't fire at the exact boundary
-  const bufferMs = 60_000;
+  // ✅ FIX: Add buffer AFTER grace period to give completeAssignment priority
+  // This buffer allows the user to submit exactly at the grace period boundary
+  const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
   const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
 
-  return now > effectiveDeadline;
+  const isNeglected = now > effectiveDeadline;
+  
+  console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime}:`);
+  console.log(`      endTimeUTC=${endTimeUTC.toISOString()}`);
+  console.log(`      gracePeriodEnd=${gracePeriodEnd.toISOString()}`);
+  console.log(`      effectiveDeadline=${effectiveDeadline.toISOString()}`);
+  console.log(`      now=${now.toISOString()}`);
+  console.log(`      isNeglected=${isNeglected}`);
+  
+  return isNeglected;
 }
 
+// In assignment.services.ts - FIXED isSingleSlotNeglected
 
-// ----------------------------------------------------------------
-// 2. checkGroupNeglectedAssignments
-//    FIX: exclude assignments that have photoUrl (submitted, pending
-//         verification). Use a dedicated `processedByNeglectCron`
-//         boolean field instead of fragile notes string matching.
-//         Re-read missedSlotIds from the DB update result so
-//         within-loop iterations don't double-process.
-// ----------------------------------------------------------------
+private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
+  if (assignment.completed) return false;
+  if (assignment.photoUrl) return false;  // Has submission, don't mark as neglected
+  if (assignment.expired) return false;
+  
+  const dueDate = new Date(assignment.dueDate);
+  
+  // Only check assignments due TODAY
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  
+  if (dueDateUTC !== todayUTC) return false;
+  
+  if (!assignment.timeSlot) {
+    // No time slot - due date is end of day UTC
+    const endOfDayUTC = new Date(dueDate);
+    endOfDayUTC.setUTCHours(23, 59, 59, 999);
+    const gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
+    // ✅ FIX: Use same logic as isTimeSlotNeglected
+    const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
+    const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
+    return now > effectiveDeadline;
+  }
+  
+  // Parse end time (stored in PHT / UTC+8) → convert to UTC
+  const [endHourRaw, endMinRaw] = assignment.timeSlot.endTime.split(':');
+  let endHour = parseInt(endHourRaw || '0', 10);
+  const endMin = parseInt(endMinRaw || '0', 10);
+  
+  // PHT (UTC+8) to UTC
+  endHour = endHour - 8;
+  if (endHour < 0) endHour += 24;
+  
+  const endTimeUTC = new Date(dueDate);
+  endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+  
+  // Grace period = endTime + 30 minutes
+  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+  
+  // ✅ FIX: Use SAME buffer as isTimeSlotNeglected (2 minutes)
+  const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
+  const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
+  
+  const isNeglected = now > effectiveDeadline;
+  
+  console.log(`   ⏰ Single slot check: endTime=${endTimeUTC.toISOString()}, graceEnd=${gracePeriodEnd.toISOString()}, effectiveDeadline=${effectiveDeadline.toISOString()}, now=${now.toISOString()}, isNeglected=${isNeglected}`);
+  
+  return isNeglected;
+}
+ 
+// In assignment.services.ts - FIXED checkGroupNeglectedAssignments
+
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({
@@ -1873,12 +1930,11 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     if (!group) return { count: 0, pointsNotAwarded: 0 };
 
     const now = new Date();
+    
+    // Get current UTC date
+    const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
-    const lookbackDays = 7;
-    const lookbackStart = new Date(now);
-    lookbackStart.setUTCDate(now.getUTCDate() - lookbackDays);
-    lookbackStart.setUTCHours(0, 0, 0, 0);
-
+    // ✅ FIX: Only check assignments due TODAY
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -1886,11 +1942,10 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         completed: false,
         expired: false,
         expiredAt: null,
-        // ✅ FIX: skip assignments that already have a photo (submitted, awaiting verification)
-        photoUrl: null,
+        photoUrl: null,  // Only assignments without submission
         dueDate: {
-          gte: lookbackStart,
-          lt: now
+          gte: todayUTC,
+          lt: tomorrowUTC  // Only today's assignments
         },
         AND: [
           {
@@ -1922,6 +1977,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     if (validAssignments.length === 0) return { count: 0, pointsNotAwarded: 0 };
 
     console.log(`📊 Checking ${validAssignments.length} assignments for neglect in group ${groupId}`);
+    console.log(`⏱️ Current time (UTC): ${now.toISOString()}`);
 
     let neglectedCount = 0;
     let totalPointsNotAwarded = 0;
@@ -1932,8 +1988,11 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     });
 
     for (const assignment of validAssignments) {
+      console.log(`\n🔍 Checking assignment: ${assignment.task!.title}`);
+      console.log(`   Due date: ${assignment.dueDate.toISOString()}`);
+      console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+      
       const assignmentAny = assignment as any;
-      // ✅ FIX: read arrays directly — Prisma returns them as arrays already
       const completedSlotIds: string[] = Array.isArray(assignmentAny.completedTimeSlotIds)
         ? assignmentAny.completedTimeSlotIds : [];
       const missedSlotIds: string[] = Array.isArray(assignmentAny.missedTimeSlotIds)
@@ -1946,13 +2005,24 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
         for (const timeSlot of assignment.task!.timeSlots) {
           // Skip already accounted slots
-          if (completedSlotIds.includes(timeSlot.id)) continue;
-          if (missedSlotIds.includes(timeSlot.id)) continue;
+          if (completedSlotIds.includes(timeSlot.id)) {
+            console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already COMPLETED, skipping`);
+            continue;
+          }
+          if (missedSlotIds.includes(timeSlot.id)) {
+            console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already MISSED, skipping`);
+            continue;
+          }
 
-          // Pass the already-resolved arrays into the helper
-          const augmented = { ...assignmentAny, missedTimeSlotIds: missedSlotIds, completedTimeSlotIds: completedSlotIds };
-          if (!this.isTimeSlotNeglected(augmented, timeSlot, now)) continue;
+          // ✅ FIX: Check if slot is actually neglected (AFTER grace period)
+          const isNeglected = this.isTimeSlotNeglected(assignment, timeSlot, now);
+          
+          if (!isNeglected) {
+            console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime} STILL ACTIVE (within grace period)`);
+            continue;
+          }
 
+          console.log(`   ❌ Slot ${timeSlot.startTime}-${timeSlot.endTime} is NEGLECTED!`);
           newlyMissedSlots.push(timeSlot);
           const slotPts = timeSlot.points || 0;
           pointsLost += slotPts;
@@ -2036,13 +2106,27 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               }
             });
           }
+        } else {
+          console.log(`   ✅ No slots neglected yet for assignment ${assignment.task!.title}`);
         }
 
       // ---- Single-slot task ----
       } else {
-        if (assignment.expired || assignment.expiredAt !== null) continue;
-        if (!TimeHelpers.isAssignmentNeglected(assignment, now)) continue;
+        // ✅ FIX: Check if assignment is actually neglected AFTER full grace period
+        const isNeglected = this.isSingleSlotNeglected(assignment, now);
+        
+        if (!isNeglected) {
+          console.log(`   ⏰ Assignment ${assignment.task!.title} STILL ACTIVE (within grace period)`);
+          continue;
+        }
+        
+        if (assignment.expired || assignment.expiredAt !== null) {
+          console.log(`   ⏭️ Assignment already expired, skipping`);
+          continue;
+        }
 
+        console.log(`   ❌ Assignment ${assignment.task!.title} is NEGLECTED!`);
+        
         neglectedCount++;
         const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
         totalPointsNotAwarded += pointsLost;
@@ -2102,6 +2186,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       }
     }
 
+    console.log(`\n📊 Neglect detection summary for group ${groupId}: ${neglectedCount} assignments marked as neglected`);
     return { count: neglectedCount, pointsNotAwarded: totalPointsNotAwarded };
 
   } catch (error) {
@@ -2109,7 +2194,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
-
 
 
 // ----------------------------------------------------------------
@@ -2164,7 +2248,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
     const DEDUP_WINDOW_MS = 35 * 60_000;
 
     for (const assignment of validAssignments) {
-      // Skip admins
+      // Skip admins 
       const groupAdmins = adminUserIdsByGroup[assignment.task!.groupId] || new Set();
       if (groupAdmins.has(assignment.userId)) {
         console.log(`⏭️ Skipping admin: ${assignment.user?.fullName}`);
