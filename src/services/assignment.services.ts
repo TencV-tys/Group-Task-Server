@@ -5,7 +5,21 @@ import { TimeHelpers } from "../helpers/time.helpers";
 import { UserNotificationService } from "./user.notification.services";
 import { SocketService } from './socket.services';
 
+
 export class AssignmentService {
+private static getUTCToday(): { todayUTC: Date; tomorrowUTC: Date } {
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0, 0
+  ));
+  const tomorrowUTC = new Date(todayUTC);
+  tomorrowUTC.setUTCDate(todayUTC.getUTCDate() + 1);
+  return { todayUTC, tomorrowUTC };
+}
+
 
 static async completeAssignment(
   assignmentId: string,
@@ -87,13 +101,20 @@ static async completeAssignment(
     
     console.log(`⏰ Current time: ${now.toISOString()}`);
     console.log(`⏰ Due date: ${dueDate.toISOString()}`);
-    console.log(`📅 Same day? ${now.toDateString() === dueDate.toDateString()}`);
     
-    if (now.toDateString() !== dueDate.toDateString()) {
-      console.log(`❌ Wrong day - Due: ${dueDate.toLocaleDateString()}, Today: ${now.toLocaleDateString()}`);
+    // ✅ FIXED: Use UTC comparison instead of toDateString()
+    const isSameDayUTC = 
+      now.getUTCFullYear() === dueDate.getUTCFullYear() &&
+      now.getUTCMonth() === dueDate.getUTCMonth() &&
+      now.getUTCDate() === dueDate.getUTCDate();
+    
+    console.log(`📅 Same day (UTC)? ${isSameDayUTC}`);
+    
+    if (!isSameDayUTC) {
+      console.log(`❌ Wrong day - Due UTC: ${dueDate.toISOString()}, Today UTC: ${now.toISOString()}`);
       return { 
         success: false, 
-        message: `Cannot complete assignment on this date. It's due on ${dueDate.toLocaleDateString()}`
+        message: `Cannot complete assignment on this date. It's due on ${dueDate.toISOString().split('T')[0]}`
       };
     }
 
@@ -179,7 +200,7 @@ static async completeAssignment(
         submissionStatus: timeValidation.submissionStatus
       });
       
-      // ✅ FIXED: Only mark as neglected on the due date
+      // ✅ FIXED: Only mark as neglected on the due date using UTC comparison
       if (!timeValidation.allowed) {
         let errorMessage = "Cannot submit assignment at this time.";
         
@@ -188,18 +209,21 @@ static async completeAssignment(
         } else if (timeValidation.reason === 'Submission window closed') {
           errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
           
-          // ✅ ONLY mark as neglected if it's actually the due date
-          const isDueDate = now.toDateString() === dueDate.toDateString();
+          // ✅ FIXED: Use UTC comparison for due date check
+          const isDueDate = 
+            now.getUTCFullYear() === dueDate.getUTCFullYear() &&
+            now.getUTCMonth() === dueDate.getUTCMonth() &&
+            now.getUTCDate() === dueDate.getUTCDate();
           
           if (isDueDate) {
             await this.markAssignmentAsNeglected(assignmentId, userId);
             errorMessage = `Submission window closed. This task has been marked as missed. -${slotPoints} points deducted.`;
           } else {
-            errorMessage = `Submission window closed. You can only submit on the due date: ${dueDate.toLocaleDateString()}.`;
+            errorMessage = `Submission window closed. You can only submit on the due date: ${dueDate.toISOString().split('T')[0]}.`;
           }
           
         } else if (timeValidation.reason === 'Not due date') {
-          errorMessage = `This assignment is due on ${dueDate.toLocaleDateString()}. Please complete it on that day.`;
+          errorMessage = `This assignment is due on ${dueDate.toISOString().split('T')[0]}. Please complete it on that day.`;
         }
         
         return { 
@@ -674,8 +698,12 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   return false;
 }
  
+
 static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
   try {
+    // ✅ Track processed slots in this execution to prevent duplicates
+    const processedSlotsThisRun = new Set<string>();
+    
     const now = new Date();
     
     // ✅ Convert to PHT for comparison since slot times are stored in PHT (UTC+8)
@@ -690,6 +718,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
     const tomorrow = new Date(today);
     tomorrow.setUTCDate(today.getUTCDate() + 1);
 
+    // Get all assignments due today that aren't completed
     const assignments = await prisma.assignment.findMany({
       where: {
         completed: false,
@@ -702,7 +731,10 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
         user: true,
         task: { 
           include: { 
-            group: true 
+            group: true,
+            timeSlots: {
+              orderBy: { sortOrder: 'asc' }
+            }
           } 
         },
         timeSlot: true
@@ -713,93 +745,172 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
     let remindersSent = 0;
 
     for (const assignment of validAssignments) {
-      if (!assignment.timeSlot) continue;
-
-      // ✅ Slot times are in PHT so compare directly with PHT current time
-      const startParts = assignment.timeSlot.startTime.split(':');
-      const startHour = parseInt(startParts[0] || '0', 10);
-      const startMinute = parseInt(startParts[1] || '0', 10);
-      
-      if (isNaN(startHour) || isNaN(startMinute)) continue;
-      
-      const startInMinutes = startHour * 60 + startMinute;
-      const timeUntilStart = startInMinutes - currentInMinutes;
-      
-      // Send reminder if task starts within 60 minutes
-      if (timeUntilStart > 0 && timeUntilStart <= 60) {
-        const existingReminder = await prisma.userNotification.findFirst({
-          where: {
-            userId: assignment.userId,
-            type: "TASK_REMINDER",
-            createdAt: { gte: new Date(Date.now() - 30 * 60000) }
-          }
-        });
-
-        if (!existingReminder) {
-          await UserNotificationService.createNotification({
-            userId: assignment.userId,
-            type: "TASK_REMINDER",
-            title: "⏰ Task Starting Soon",
-            message: `"${assignment.task!.title}" starts at ${assignment.timeSlot.startTime} (in ${timeUntilStart} minutes)`,
-            data: {
-              assignmentId: assignment.id,
-              taskId: assignment.task!.id,
-              taskTitle: assignment.task!.title,
-              groupId: assignment.task!.groupId,
-              groupName: assignment.task!.group?.name || 'Group',
-              startTime: assignment.timeSlot.startTime,
-              endTime: assignment.timeSlot.endTime,
-              minutesUntilStart: timeUntilStart,
-              dueDate: assignment.dueDate
-            }
-          });
-          remindersSent++;
+      // ✅ SKIP ADMIN USERS
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId: assignment.userId,
+          groupId: assignment.task!.groupId,
+          groupRole: "ADMIN"
         }
+      });
+      
+      if (membership) {
+        console.log(`⏭️ Skipping reminder for admin user: ${assignment.user?.fullName} (${assignment.userId})`);
+        continue;
       }
-
-      // ✅ Check submission window using PHT time
-      const endParts = assignment.timeSlot.endTime.split(':');
-      const endHour = parseInt(endParts[0] || '0', 10);
-      const endMinute = parseInt(endParts[1] || '0', 10);
       
-      if (isNaN(endHour) || isNaN(endMinute)) continue;
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
       
-      const endInMinutes = endHour * 60 + endMinute;
-      const submissionStartInMinutes = endInMinutes - 0;  // opens AT end time
-      const graceEndInMinutes = endInMinutes + 30;        // closes 30 mins after end
-
-      if (currentInMinutes >= submissionStartInMinutes && currentInMinutes <= graceEndInMinutes) {
-        const existingActive = await prisma.userNotification.findFirst({
-          where: {
-            userId: assignment.userId,
-            type: "TASK_ACTIVE",
-            createdAt: { gte: new Date(Date.now() - 15 * 60000) }
-          }
-        });
-
-        if (!existingActive) {
-          const timeLeft = graceEndInMinutes - currentInMinutes;
-          await UserNotificationService.createNotification({
-            userId: assignment.userId,
-            type: "TASK_ACTIVE",
-            title: "🔔 Ready to Submit",
-            message: `"${assignment.task!.title}" can now be submitted (${timeLeft} minutes left)`,
-            data: {
-              assignmentId: assignment.id,
-              taskId: assignment.task!.id,
-              taskTitle: assignment.task!.title,
-              groupId: assignment.task!.groupId,
-              groupName: assignment.task!.group?.name || 'Group',
-              endTime: assignment.timeSlot.endTime,
-              timeLeft,
-              dueDate: assignment.dueDate
+      // ✅ Get all time slots for this task
+      const allTimeSlots = assignment.task!.timeSlots || [];
+      
+      // If no time slots, use the assignment's time slot (single slot task)
+      let timeSlotsToCheck = [];
+      if (allTimeSlots.length > 0) {
+        timeSlotsToCheck = allTimeSlots;
+      } else if (assignment.timeSlot) {
+        timeSlotsToCheck = [assignment.timeSlot];
+      } else {
+        continue;
+      }
+      
+      // ✅ Check each time slot individually
+      for (const timeSlot of timeSlotsToCheck) {
+        // Skip already completed or missed slots
+        if (completedSlotIds.includes(timeSlot.id)) continue;
+        if (missedSlotIds.includes(timeSlot.id)) continue;
+        
+        // ✅ Skip if already processed in this run
+        const slotKey = `${assignment.id}_${timeSlot.id}`;
+        if (processedSlotsThisRun.has(slotKey)) {
+          console.log(`⏭️ Skipping duplicate slot ${slotKey} already processed this run`);
+          continue;
+        }
+        
+        // Parse start time (in PHT)
+        const startParts = timeSlot.startTime.split(':');
+        const startHour = parseInt(startParts[0] || '0', 10);
+        const startMinute = parseInt(startParts[1] || '0', 10);
+        
+        if (isNaN(startHour) || isNaN(startMinute)) continue;
+        
+        const startInMinutes = startHour * 60 + startMinute;
+        const timeUntilStart = startInMinutes - currentInMinutes;
+        
+        // ✅ Send reminder if task starts within 60 minutes
+        if (timeUntilStart > 0 && timeUntilStart <= 60) {
+          // ✅ FIXED: Check for existing reminder using proper Prisma JSON query
+          const existingReminder = await prisma.userNotification.findFirst({
+            where: {
+              userId: assignment.userId,
+              type: "TASK_REMINDER",
+              createdAt: { gte: new Date(Date.now() - 30 * 60000) },
+              // ✅ Use JSON extract with dot notation
+              data: {
+                path: "$.slotId",
+                equals: timeSlot.id
+              }
             }
           });
-          remindersSent++;
+
+          if (!existingReminder) {
+            // ✅ Mark as processed in this run
+            processedSlotsThisRun.add(slotKey);
+            
+            await UserNotificationService.createNotification({
+              userId: assignment.userId,
+              type: "TASK_REMINDER",
+              title: "⏰ Task Starting Soon",
+              message: `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}starts at ${timeSlot.startTime} (in ${timeUntilStart} minutes)`,
+              data: {
+                assignmentId: assignment.id,
+                taskId: assignment.task!.id,
+                taskTitle: assignment.task!.title,
+                groupId: assignment.task!.groupId,
+                groupName: assignment.task!.group?.name || 'Group',
+                slotId: timeSlot.id,
+                startTime: timeSlot.startTime,
+                endTime: timeSlot.endTime,
+                label: timeSlot.label,
+                points: timeSlot.points,
+                minutesUntilStart: timeUntilStart,
+                dueDate: assignment.dueDate
+              }
+            });
+            remindersSent++;
+            console.log(`📢 Sent reminder for ${assignment.task!.title} - ${timeSlot.startTime}-${timeSlot.endTime} (${timeUntilStart} min until start) to user ${assignment.user?.fullName}`);
+          }
+        }
+        
+        // ✅ Check submission window for this slot
+        const endParts = timeSlot.endTime.split(':');
+        const endHour = parseInt(endParts[0] || '0', 10);
+        const endMinute = parseInt(endParts[1] || '0', 10);
+        
+        if (isNaN(endHour) || isNaN(endMinute)) continue;
+        
+        const endInMinutes = endHour * 60 + endMinute;
+        const submissionStartInMinutes = endInMinutes;  // opens AT end time
+        const graceEndInMinutes = endInMinutes + 30;     // closes 30 mins after end
+        
+        // Check if currently in submission window
+        if (currentInMinutes >= submissionStartInMinutes && currentInMinutes <= graceEndInMinutes) {
+          // ✅ FIXED: Check for existing active reminder using proper Prisma JSON query
+          const existingActive = await prisma.userNotification.findFirst({
+            where: {
+              userId: assignment.userId,
+              type: "TASK_ACTIVE",
+              createdAt: { gte: new Date(Date.now() - 15 * 60000) },
+              // ✅ Use JSON extract with dot notation
+              data: {
+                path: "$.slotId",
+                equals: timeSlot.id
+              }
+            }
+          });
+
+          if (!existingActive) {
+            // ✅ Mark as processed in this run (different type)
+            const activeKey = `${assignment.id}_${timeSlot.id}_active`;
+            if (!processedSlotsThisRun.has(activeKey)) {
+              processedSlotsThisRun.add(activeKey);
+              
+              const timeLeft = graceEndInMinutes - currentInMinutes;
+              const isLate = currentInMinutes > (endInMinutes + 25);
+              
+              await UserNotificationService.createNotification({
+                userId: assignment.userId,
+                type: "TASK_ACTIVE",
+                title: isLate ? "⚠️ Late Submission Window" : "🔔 Ready to Submit",
+                message: isLate
+                  ? `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}submission window closing soon! ${timeLeft} minutes left. Points will be reduced.`
+                  : `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}can now be submitted (${timeLeft} minutes left)`,
+                data: {
+                  assignmentId: assignment.id,
+                  taskId: assignment.task!.id,
+                  taskTitle: assignment.task!.title,
+                  groupId: assignment.task!.groupId,
+                  groupName: assignment.task!.group?.name || 'Group',
+                  slotId: timeSlot.id,
+                  startTime: timeSlot.startTime,
+                  endTime: timeSlot.endTime,
+                  label: timeSlot.label,
+                  points: timeSlot.points,
+                  timeLeft,
+                  isLate,
+                  dueDate: assignment.dueDate
+                }
+              });
+              remindersSent++;
+              console.log(`📢 Sent active reminder for ${assignment.task!.title} - ${timeSlot.startTime}-${timeSlot.endTime} (${timeLeft} min left, late: ${isLate}) to user ${assignment.user?.fullName}`);
+            }
+          }
         }
       }
     }
 
+    console.log(`✅ Sent ${remindersSent} task reminders`);
     return { success: true, remindersSent };
     
   } catch (error: any) {
@@ -938,364 +1049,6 @@ static async getAssignmentDetails(assignmentId: string, userId: string) {
   }
 }
   
-  // In assignment.services.ts - FIXED getUserAssignments with proper fields
-
-static async getUserAssignments( 
-  userId: string,
-  filters: {
-    status?: string;
-    week?: number;
-    limit: number;
-    offset: number;
-  }
-) {
-  try {
-    console.log('🔍🔍🔍 [getUserAssignments] START 🔍🔍🔍');
-    console.log(`👤 User ID: ${userId}`);
-    console.log(`📋 Filters:`, filters);
-    
-    const where: any = { 
-      userId,
-      taskId: { not: null }
-    };
-    
-    console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
-
-    // FIXED: For 'pending' status, exclude expired and partially expired tasks
-    if (filters.status) {
-      switch (filters.status) {
-        case 'pending':
-          where.completed = false;
-          where.expired = false;  // EXCLUDE fully expired
-          // For pending, show only active tasks (not expired, not partially expired with no future)
-          where.OR = [
-            { partiallyExpired: false },
-            { partiallyExpired: null }
-          ];
-          console.log(`   ✅ Filter: pending (completed = false, expired = false, partiallyExpired = false/null)`);
-          break;
-        case 'completed':
-          where.completed = true;
-          where.verified = null;
-          console.log(`   ✅ Filter: completed (completed = true, verified = null)`);
-          break;
-        case 'verified':
-          where.completed = true;
-          where.verified = true;
-          console.log(`   ✅ Filter: verified (completed = true, verified = true)`);
-          break;
-        case 'rejected':
-          where.completed = true;
-          where.verified = false;
-          console.log(`   ✅ Filter: rejected (completed = true, verified = false)`);
-          break;
-      }
-    }
-
-    if (filters.week !== undefined) {
-      where.rotationWeek = filters.week;
-      console.log(`   ✅ Filter: week = ${filters.week}`);
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    console.log(`📅 Today: ${today.toISOString()}`);
-    console.log(`📅 Tomorrow: ${tomorrow.toISOString()}`);
-
-    console.log(`🔍 Executing Prisma query...`);
-    const [assignments, total] = await Promise.all([
-      prisma.assignment.findMany({
-        where,
-        include: {
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              executionFrequency: true,
-              timeSlots: {
-                select: {
-                  id: true,
-                  startTime: true,
-                  endTime: true,
-                  label: true,
-                  points: true
-                }
-              },
-              group: { select: { id: true, name: true } }
-            }
-          },
-          timeSlot: true
-        },
-        orderBy: { dueDate: 'asc' },
-        take: filters.limit,
-        skip: filters.offset
-      }),
-      prisma.assignment.count({ where })
-    ]);
-
-    console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
-
-    const validAssignments = assignments.filter(a => a.task !== null);
-    console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
-    
-    const formattedAssignments = validAssignments.map(assignment => {
-      const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
-      const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
-      
-      // Safely get the arrays (they might be null or undefined)
-      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
-      
-      return {
-        id: assignment.id,
-        taskId: assignment.taskId,
-        taskTitle: assignment.task!.title,
-        group: assignment.task!.group,
-        points: assignment.points,
-        completed: assignment.completed,
-        verified: assignment.verified,
-        verificationStatus,
-        photoUrl: assignment.photoUrl,
-        notes: assignment.notes,
-        adminNotes: assignment.adminNotes,
-        dueDate: assignment.dueDate,
-        completedAt: assignment.completedAt,
-        timeUntilDue,
-        timeSlot: assignment.timeSlot,
-        rotationWeek: assignment.rotationWeek,
-        isDueToday: assignment.dueDate >= today && assignment.dueDate < tomorrow,
-        isHistorical: false,
-        expired: assignment.expired || false,
-        partiallyExpired: assignment.partiallyExpired || false,
-        missedTimeSlotIds: missedSlotIds,
-        completedTimeSlotIds: completedSlotIds,
-        timeSlots: assignment.task!.timeSlots || []
-      };
-    });
-
-    const historicalWhere: any = {
-      userId,
-      taskId: null,
-      taskTitle: { not: null },
-      ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
-    };
-
-    const historicalAssignments = await prisma.assignment.findMany({
-      where: historicalWhere,
-      include: {
-        timeSlot: true
-      },
-      orderBy: { dueDate: 'asc' }
-    });
-
-    console.log(`📚 Historical assignments (deleted tasks): ${historicalAssignments.length}`);
-
-    const formattedHistorical = historicalAssignments.map(assignment => ({
-      id: assignment.id,
-      taskId: null,
-      taskTitle: assignment.taskTitle || "Deleted Task",
-      group: { id: '', name: 'Deleted Group' },
-      points: assignment.taskPoints || assignment.points,
-      completed: assignment.completed,
-      verified: assignment.verified,
-      verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
-      photoUrl: assignment.photoUrl,
-      notes: assignment.notes,
-      adminNotes: assignment.adminNotes,
-      dueDate: assignment.dueDate,
-      completedAt: assignment.completedAt,
-      timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
-      timeSlot: assignment.timeSlot,
-      rotationWeek: assignment.rotationWeek,
-      isDueToday: false,
-      isHistorical: true,
-      expired: false,
-      partiallyExpired: false,
-      missedTimeSlotIds: [],
-      completedTimeSlotIds: [],
-      timeSlots: []
-    })); 
-
-    const allAssignments = [...formattedAssignments, ...formattedHistorical];
-    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
-    console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
-
-    return {
-      success: true,
-      message: "Assignments retrieved successfully",
-      assignments: allAssignments,
-      total: validAssignments.length + historicalAssignments.length,
-      filters,
-      currentDate: { today, tomorrow }
-    };
-
-  } catch (error: any) {
-    console.error('❌❌❌ [getUserAssignments] ERROR ❌❌❌');
-    console.error(error);
-    return { success: false, message: error.message || "Error retrieving assignments" };
-  }
-}
-
-// ========== GET TODAY'S ASSIGNMENTS ==========
-static async getTodayAssignments(
-  userId: string,
-  filters?: {
-    groupId?: string;
-  }
-) {
-  try {
-    console.log('🔍🔍🔍 [getTodayAssignments] START 🔍🔍🔍');
-    console.log(`👤 User ID: ${userId}`);
-    console.log(`🎯 Group filter:`, filters?.groupId || 'none');
-    
-    const now = new Date();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    // First, get all assignments for this user
-    const userAssignmentsResult = await this.getUserAssignments(userId, {
-      limit: 100,
-      offset: 0
-    });
-    
-    if (!userAssignmentsResult.success) {
-      return {
-        success: false,
-        data: { assignments: [], currentTime: now, total: 0 },
-        message: userAssignmentsResult.message
-      };
-    }
-    
-    const allAssignments = userAssignmentsResult.assignments || [];
-    
-    // ✅ FIXED: Filter active pending assignments only
-    const todayAssignments = allAssignments.filter((assignment: any) => {
-      // ❌ Skip completed assignments
-      if (assignment.completed) {
-        console.log(`⏭️ Skipping COMPLETED assignment: ${assignment.taskTitle} (${assignment.id})`);
-        return false;
-      }
-      
-      // ❌ Skip VERIFIED assignments (already earned points)
-      if (assignment.verified === true) {
-        console.log(`⏭️ Skipping VERIFIED assignment: ${assignment.taskTitle} (${assignment.id})`);
-        return false;
-      }
-      
-      // ❌ Skip EXPIRED assignments
-      if (assignment.expired === true) {
-        console.log(`⏭️ Skipping EXPIRED assignment: ${assignment.taskTitle} (${assignment.id})`);
-        return false;
-      }
-       
-      // ❌ Skip partially expired assignments with no remaining slots
-      if (assignment.partiallyExpired === true) {
-        const remainingSlots = assignment.timeSlots?.filter((slot: any) => 
-          !assignment.completedTimeSlotIds?.includes(slot.id) && 
-          !assignment.missedTimeSlotIds?.includes(slot.id)
-        );
-        if (!remainingSlots || remainingSlots.length === 0) {
-          console.log(`⏭️ Skipping PARTIALLY EXPIRED with no remaining slots: ${assignment.taskTitle} (${assignment.id})`);
-          return false;
-        }
-      } 
-       
-      // Check due date
-      if (!assignment.dueDate) {
-        console.log(`⏭️ Skipping assignment without due date: ${assignment.taskTitle} (${assignment.id})`);
-        return false;
-      }
-      
-      const dueDate = new Date(assignment.dueDate);
-      const isDueToday = dueDate >= today && dueDate < tomorrow;
-      
-      // Filter by group if specified
-      const belongsToGroup = !filters?.groupId || assignment.group?.id === filters.groupId;
-      
-      if (isDueToday) {
-        console.log(`✅ Active pending assignment due today: ${assignment.taskTitle} (${assignment.id})`);
-        console.log(`   Due date: ${dueDate.toLocaleString()}`);
-        console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
-        console.log(`   Completed: ${assignment.completed}, Verified: ${assignment.verified}, Expired: ${assignment.expired}`);
-      }
-      
-      return isDueToday && belongsToGroup;
-    });
-    
-    console.log(`📋 Found ${todayAssignments.length} active pending assignments due today`);
-    
-    // Transform to TodayAssignment format with time validation
-    const assignmentsWithTimeInfo = todayAssignments.map((assignment: any) => {
-      const assignmentForValidation = {
-        ...assignment,
-        timeSlot: assignment.timeSlot,
-        points: assignment.points,
-        dueDate: assignment.dueDate
-      };
-      
-      const validation = TimeHelpers.canSubmitAssignment(assignmentForValidation, now);
-      
-      console.log(`📝 Assignment: ${assignment.taskTitle}`, {
-        timeSlot: assignment.timeSlot ? `${assignment.timeSlot.startTime}-${assignment.timeSlot.endTime}` : 'none',
-        currentTime: now.toLocaleTimeString(),
-        canSubmit: validation.allowed,
-        reason: validation.reason,
-        submissionStatus: validation.submissionStatus,
-        willBePenalized: validation.willBePenalized,
-        timeLeft: validation.timeLeft
-      });
-      
-      return {
-        id: assignment.id,
-        taskId: assignment.taskId,
-        taskTitle: assignment.taskTitle,
-        taskPoints: assignment.points,
-        group: assignment.group,
-        dueDate: assignment.dueDate,
-        canSubmit: validation.allowed,
-        timeLeft: validation.timeLeft,
-        timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
-        reason: validation.reason,
-        timeSlot: assignment.timeSlot,
-        willBePenalized: validation.willBePenalized,
-        finalPoints: validation.finalPoints,
-        submissionStatus: validation.submissionStatus
-      };
-    });
-    
-    console.log(`✅ Final active pending assignments count: ${assignmentsWithTimeInfo.length}`);
-    console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
-    
-    return {
-      success: true,
-      message: "Today's active pending assignments retrieved",
-      data: {
-        assignments: assignmentsWithTimeInfo,
-        currentTime: now,
-        total: assignmentsWithTimeInfo.length
-      }
-    };
-    
-  } catch (error: any) {
-    console.error('❌❌❌ [getTodayAssignments] ERROR ❌❌❌');
-    console.error(error);
-    return {
-      success: false,
-      message: error.message || "Error retrieving today's assignments",
-      data: {
-        assignments: [],
-        currentTime: new Date(),
-        total: 0
-      }  
-    };
-  }
-}
 
   // ========== GET GROUP ASSIGNMENTS ==========
   static async getGroupAssignments(
@@ -1477,132 +1230,6 @@ if (filters.status) {
       return { success: false, message: error.message || "Error retrieving group assignments" };
     }
   }
-
-  // ========== GET UPCOMING ASSIGNMENTS ==========
- // In assignment.services.ts - FIXED getUpcomingAssignments with proper fields
-
-static async getUpcomingAssignments(
-  userId: string,
-  filters?: {
-    groupId?: string;
-    limit?: number;
-  }
-) {
-  try {
-    const where: any = {
-      userId: userId,
-      completed: false,
-      expired: false,  // EXCLUDE fully expired tasks
-      OR: [
-        { partiallyExpired: false },
-        { partiallyExpired: null }
-      ]
-    };
-
-    if (filters?.groupId) {
-      where.task = {
-        groupId: filters.groupId
-      };
-    }
-
-    const assignments = await prisma.assignment.findMany({
-      where,
-      include: {
-        timeSlot: true,
-        task: {
-          select: {
-            id: true,
-            title: true,
-            points: true,
-            executionFrequency: true,
-            timeSlots: {
-              select: {
-                id: true,
-                startTime: true,
-                endTime: true,
-                label: true,
-                points: true
-              }
-            },
-            group: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { dueDate: 'asc' },
-      take: filters?.limit || 10
-    });
-
-    const validAssignments = assignments.filter(a => a.task !== null);
-
-    const formattedAssignments = validAssignments.map(assignment => {
-      // Safely get the arrays (they might be null or undefined)
-      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
-      
-      // Check if this is a multi-slot daily task with future slots
-      let isStillActive = true;
-      
-      if (assignment.task?.executionFrequency === 'DAILY' && assignment.task?.timeSlots?.length > 1) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const dueDate = new Date(assignment.dueDate);
-        
-        // If due date is in the past, check if there are remaining slots
-        if (dueDate < today) {
-          const remainingSlots = assignment.task.timeSlots.filter((slot: any) => 
-            !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
-          );
-          isStillActive = remainingSlots.length > 0;
-        }
-      }
-      
-      return {
-        id: assignment.id,
-        taskId: assignment.taskId,
-        taskTitle: assignment.task!.title,
-        taskPoints: assignment.points,
-        group: assignment.task!.group,
-        dueDate: assignment.dueDate,
-        timeSlot: assignment.timeSlot,
-        rotationWeek: assignment.rotationWeek,
-        completed: assignment.completed,
-        expired: assignment.expired,
-        partiallyExpired: assignment.partiallyExpired,
-        isStillActive,
-        missedTimeSlotIds: missedSlotIds,
-        completedTimeSlotIds: completedSlotIds,
-        timeSlots: assignment.task!.timeSlots || []
-      };
-    });
-
-    return {
-      success: true,
-      message: "Upcoming assignments retrieved",
-      data: {
-        assignments: formattedAssignments,
-        currentTime: new Date(),
-        total: formattedAssignments.length
-      }
-    };
-
-  } catch (error: any) {
-    console.error("AssignmentService.getUpcomingAssignments error:", error);
-    return {
-      success: false,
-      message: error.message,
-      data: {
-        assignments: [],
-        currentTime: new Date(),
-        total: 0
-      }
-    };
-  }
-}
 
 // In assignment.services.ts - FULLY UPDATED getUserNeglectedTasks
 
@@ -2407,6 +2034,463 @@ private static async markAssignmentAsNeglected(
   } catch (error) {
     console.error('Error marking assignment as neglected immediately:', error);
     return { success: false, pointsLost: 0 };
+  }
+}
+
+static async getUpcomingAssignments(
+  userId: string,
+  filters?: {
+    groupId?: string;
+    limit?: number;
+  }
+) {
+  try {
+    const where: any = {
+      userId: userId,
+      completed: false,
+      expired: false,
+      OR: [
+        { partiallyExpired: false },
+        { partiallyExpired: null }
+      ]
+    };
+
+    if (filters?.groupId) {
+      where.task = {
+        groupId: filters.groupId
+      };
+    }
+
+    const assignments = await prisma.assignment.findMany({
+      where,
+      include: {
+        timeSlot: true,
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            executionFrequency: true,
+            timeSlots: {
+              select: {
+                id: true,
+                startTime: true,
+                endTime: true,
+                label: true,
+                points: true
+              }
+            },
+            group: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { dueDate: 'asc' },
+      take: filters?.limit || 10
+    });
+
+    const validAssignments = assignments.filter(a => a.task !== null);
+    
+    // ✅ FIXED: Use UTC for date comparison
+    const { todayUTC } = AssignmentService.getUTCToday();
+
+    const formattedAssignments = validAssignments.map(assignment => {
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
+      
+      let isStillActive = true;
+      
+      if (assignment.task?.executionFrequency === 'DAILY' && assignment.task?.timeSlots?.length > 1) {
+        const dueDate = new Date(assignment.dueDate);
+        
+        // ✅ FIXED: Use UTC comparison
+        if (dueDate < todayUTC) {
+          const remainingSlots = assignment.task.timeSlots.filter((slot: any) => 
+            !completedSlotIds.includes(slot.id) && !missedSlotIds.includes(slot.id)
+          );
+          isStillActive = remainingSlots.length > 0;
+        }
+      }
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
+        taskPoints: assignment.points,
+        group: assignment.task!.group,
+        dueDate: assignment.dueDate,
+        timeSlot: assignment.timeSlot,
+        rotationWeek: assignment.rotationWeek,
+        completed: assignment.completed,
+        expired: assignment.expired,
+        partiallyExpired: assignment.partiallyExpired,
+        isStillActive,
+        missedTimeSlotIds: missedSlotIds,
+        completedTimeSlotIds: completedSlotIds,
+        timeSlots: assignment.task!.timeSlots || []
+      };
+    });
+
+    return {
+      success: true,
+      message: "Upcoming assignments retrieved",
+      data: {
+        assignments: formattedAssignments,
+        currentTime: new Date(),
+        total: formattedAssignments.length
+      }
+    };
+
+  } catch (error: any) {
+    console.error("AssignmentService.getUpcomingAssignments error:", error);
+    return {
+      success: false,
+      message: error.message,
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }
+    };
+  }
+}
+
+static async getTodayAssignments(
+  userId: string,
+  filters?: {
+    groupId?: string;
+  }
+) {
+  try {
+    console.log('🔍🔍🔍 [getTodayAssignments] START 🔍🔍🔍');
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`🎯 Group filter:`, filters?.groupId || 'none');
+    
+    const now = new Date();
+    
+    // ✅ FIXED: Use UTC for date boundaries
+    const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
+    
+    console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
+    console.log(`📅 Tomorrow UTC: ${tomorrowUTC.toISOString()}`);
+    
+    const userAssignmentsResult = await this.getUserAssignments(userId, {
+      limit: 100,
+      offset: 0
+    });
+    
+    if (!userAssignmentsResult.success) {
+      return {
+        success: false,
+        data: { assignments: [], currentTime: now, total: 0 },
+        message: userAssignmentsResult.message
+      };
+    }
+    
+    const allAssignments = userAssignmentsResult.assignments || [];
+    
+    const todayAssignments = allAssignments.filter((assignment: any) => {
+      if (assignment.completed) {
+        console.log(`⏭️ Skipping COMPLETED assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      if (assignment.verified === true) {
+        console.log(`⏭️ Skipping VERIFIED assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      if (assignment.expired === true) {
+        console.log(`⏭️ Skipping EXPIRED assignment: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+       
+      if (assignment.partiallyExpired === true) {
+        const remainingSlots = assignment.timeSlots?.filter((slot: any) => 
+          !assignment.completedTimeSlotIds?.includes(slot.id) && 
+          !assignment.missedTimeSlotIds?.includes(slot.id)
+        );
+        if (!remainingSlots || remainingSlots.length === 0) {
+          console.log(`⏭️ Skipping PARTIALLY EXPIRED with no remaining slots: ${assignment.taskTitle} (${assignment.id})`);
+          return false;
+        }
+      } 
+       
+      if (!assignment.dueDate) {
+        console.log(`⏭️ Skipping assignment without due date: ${assignment.taskTitle} (${assignment.id})`);
+        return false;
+      }
+      
+      const dueDate = new Date(assignment.dueDate);
+      // ✅ FIXED: Use UTC comparison
+      const isDueToday = dueDate >= todayUTC && dueDate < tomorrowUTC;
+      
+      const belongsToGroup = !filters?.groupId || assignment.group?.id === filters.groupId;
+      
+      if (isDueToday) {
+        console.log(`✅ Active pending assignment due today: ${assignment.taskTitle} (${assignment.id})`);
+        console.log(`   Due date: ${dueDate.toISOString()}`);
+        console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+      }
+      
+      return isDueToday && belongsToGroup;
+    });
+    
+    console.log(`📋 Found ${todayAssignments.length} active pending assignments due today`);
+    
+    const assignmentsWithTimeInfo = todayAssignments.map((assignment: any) => {
+      const assignmentForValidation = {
+        ...assignment,
+        timeSlot: assignment.timeSlot,
+        points: assignment.points,
+        dueDate: assignment.dueDate
+      };
+      
+      const validation = TimeHelpers.canSubmitAssignment(assignmentForValidation, now);
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.taskTitle,
+        taskPoints: assignment.points,
+        group: assignment.group,
+        dueDate: assignment.dueDate,
+        canSubmit: validation.allowed,
+        timeLeft: validation.timeLeft,
+        timeLeftText: validation.timeLeft ? TimeHelpers.getTimeLeftText(validation.timeLeft) : null,
+        reason: validation.reason,
+        timeSlot: assignment.timeSlot,
+        willBePenalized: validation.willBePenalized,
+        finalPoints: validation.finalPoints,
+        submissionStatus: validation.submissionStatus
+      };
+    });
+    
+    console.log(`✅ Final active pending assignments count: ${assignmentsWithTimeInfo.length}`);
+    console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
+    
+    return {
+      success: true,
+      message: "Today's active pending assignments retrieved",
+      data: {
+        assignments: assignmentsWithTimeInfo,
+        currentTime: now,
+        total: assignmentsWithTimeInfo.length
+      }
+    };
+    
+  } catch (error: any) {
+    console.error('❌❌❌ [getTodayAssignments] ERROR ❌❌❌');
+    console.error(error);
+    return {
+      success: false,
+      message: error.message || "Error retrieving today's assignments",
+      data: {
+        assignments: [],
+        currentTime: new Date(),
+        total: 0
+      }  
+    };
+  }
+}
+
+static async getUserAssignments( 
+  userId: string,
+  filters: {
+    status?: string;
+    week?: number;
+    limit: number;
+    offset: number;
+  }
+) {
+  try {
+    console.log('🔍🔍🔍 [getUserAssignments] START 🔍🔍🔍');
+    console.log(`👤 User ID: ${userId}`);
+    console.log(`📋 Filters:`, filters);
+    
+    const where: any = { 
+      userId,
+      taskId: { not: null }
+    };
+    
+    console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
+
+    if (filters.status) {
+      switch (filters.status) {
+        case 'pending':
+          where.completed = false;
+          where.expired = false;
+          where.OR = [
+            { partiallyExpired: false },
+            { partiallyExpired: null }
+          ];
+          console.log(`   ✅ Filter: pending (completed = false, expired = false, partiallyExpired = false/null)`);
+          break;
+        case 'completed':
+          where.completed = true;
+          where.verified = null;
+          console.log(`   ✅ Filter: completed (completed = true, verified = null)`);
+          break;
+        case 'verified':
+          where.completed = true;
+          where.verified = true;
+          console.log(`   ✅ Filter: verified (completed = true, verified = true)`);
+          break;
+        case 'rejected':
+          where.completed = true;
+          where.verified = false;
+          console.log(`   ✅ Filter: rejected (completed = true, verified = false)`);
+          break;
+      }
+    }
+
+    if (filters.week !== undefined) {
+      where.rotationWeek = filters.week;
+      console.log(`   ✅ Filter: week = ${filters.week}`);
+    }
+
+    // ✅ FIXED: Use UTC for date boundaries
+    const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
+    
+    console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
+    console.log(`📅 Tomorrow UTC: ${tomorrowUTC.toISOString()}`);
+
+    console.log(`🔍 Executing Prisma query...`);
+    const [assignments, total] = await Promise.all([
+      prisma.assignment.findMany({
+        where,
+        include: {
+          task: {
+            select: {
+              id: true,
+              title: true,
+              points: true,
+              executionFrequency: true,
+              timeSlots: {
+                select: {
+                  id: true,
+                  startTime: true,
+                  endTime: true,
+                  label: true,
+                  points: true
+                }
+              },
+              group: { select: { id: true, name: true } }
+            }
+          },
+          timeSlot: true
+        },
+        orderBy: { dueDate: 'asc' },
+        take: filters.limit,
+        skip: filters.offset
+      }),
+      prisma.assignment.count({ where })
+    ]);
+
+    console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
+
+    const validAssignments = assignments.filter(a => a.task !== null);
+    console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
+    
+    const formattedAssignments = validAssignments.map(assignment => {
+      const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
+      const timeUntilDue = AssignmentHelpers.getTimeUntilDue(assignment.dueDate);
+      
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
+      
+      return {
+        id: assignment.id,
+        taskId: assignment.taskId,
+        taskTitle: assignment.task!.title,
+        group: assignment.task!.group,
+        points: assignment.points,
+        completed: assignment.completed,
+        verified: assignment.verified,
+        verificationStatus,
+        photoUrl: assignment.photoUrl,
+        notes: assignment.notes,
+        adminNotes: assignment.adminNotes,
+        dueDate: assignment.dueDate,
+        completedAt: assignment.completedAt,
+        timeUntilDue,
+        timeSlot: assignment.timeSlot,
+        rotationWeek: assignment.rotationWeek,
+        // ✅ FIXED: Use UTC for isDueToday
+        isDueToday: assignment.dueDate >= todayUTC && assignment.dueDate < tomorrowUTC,
+        isHistorical: false,
+        expired: assignment.expired || false,
+        partiallyExpired: assignment.partiallyExpired || false,
+        missedTimeSlotIds: missedSlotIds,
+        completedTimeSlotIds: completedSlotIds,
+        timeSlots: assignment.task!.timeSlots || []
+      };
+    });
+
+    const historicalWhere: any = {
+      userId,
+      taskId: null,
+      taskTitle: { not: null },
+      ...(filters.week !== undefined ? { rotationWeek: filters.week } : {})
+    };
+
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: historicalWhere,
+      include: {
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    console.log(`📚 Historical assignments (deleted tasks): ${historicalAssignments.length}`);
+
+    const formattedHistorical = historicalAssignments.map(assignment => ({
+      id: assignment.id,
+      taskId: null,
+      taskTitle: assignment.taskTitle || "Deleted Task",
+      group: { id: '', name: 'Deleted Group' },
+      points: assignment.taskPoints || assignment.points,
+      completed: assignment.completed,
+      verified: assignment.verified,
+      verificationStatus: assignment.verified ? 'verified' : (assignment.completed ? 'pending' : 'incomplete'),
+      photoUrl: assignment.photoUrl,
+      notes: assignment.notes,
+      adminNotes: assignment.adminNotes,
+      dueDate: assignment.dueDate,
+      completedAt: assignment.completedAt,
+      timeUntilDue: AssignmentHelpers.getTimeUntilDue(assignment.dueDate),
+      timeSlot: assignment.timeSlot,
+      rotationWeek: assignment.rotationWeek,
+      isDueToday: false,
+      isHistorical: true,
+      expired: false,
+      partiallyExpired: false,
+      missedTimeSlotIds: [],
+      completedTimeSlotIds: [],
+      timeSlots: []
+    })); 
+
+    const allAssignments = [...formattedAssignments, ...formattedHistorical];
+    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
+    console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
+
+    return {
+      success: true,
+      message: "Assignments retrieved successfully",
+      assignments: allAssignments,
+      total: validAssignments.length + historicalAssignments.length,
+      filters,
+      currentDate: { today: todayUTC, tomorrow: tomorrowUTC }
+    };
+
+  } catch (error: any) {
+    console.error('❌❌❌ [getUserAssignments] ERROR ❌❌❌');
+    console.error(error);
+    return { success: false, message: error.message || "Error retrieving assignments" };
   }
 }
 

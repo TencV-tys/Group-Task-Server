@@ -1,4 +1,5 @@
-// cron/reminderCron.ts - FIXED VERSION
+// cron/reminderCron.ts - UPDATED to run every 10 minutes
+
 import cron from 'node-cron';
 import prisma from '../prisma';
 import { AssignmentService } from '../services/assignment.services';
@@ -7,21 +8,26 @@ import { UserNotificationService } from '../services/user.notification.services'
 // ========== SEND DAILY TASK REMINDERS ==========
 const sendDailyTaskReminders = async () => {
   try {
+    // Use UTC for date boundaries (consistent with database)
     const now = new Date();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const todayUTC = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0, 0, 0, 0
+    ));
+    const tomorrowUTC = new Date(todayUTC);
+    tomorrowUTC.setUTCDate(todayUTC.getUTCDate() + 1);
 
-    console.log(`📅 Sending daily task reminders for ${today.toDateString()}`);
+    console.log(`📅 Sending daily task reminders for UTC date: ${todayUTC.toISOString().split('T')[0]}`);
 
     // Get all assignments due today that aren't completed
     const todaysAssignments = await prisma.assignment.findMany({
       where: {
         completed: false,
         dueDate: {
-          gte: today,
-          lt: tomorrow
+          gte: todayUTC,
+          lt: tomorrowUTC
         }
       },
       include: {
@@ -37,7 +43,15 @@ const sendDailyTaskReminders = async () => {
             id: true,
             title: true,
             points: true,
-            executionFrequency: true
+            executionFrequency: true,
+            groupId: true,
+            group: {
+              select: {
+                id: true,
+                name: true
+              }
+            },
+            timeSlots: true
           }
         },
         timeSlot: true
@@ -46,11 +60,32 @@ const sendDailyTaskReminders = async () => {
 
     // Filter out assignments with null tasks
     const validAssignments = todaysAssignments.filter(a => a.task !== null);
-
-    // Group by user
+    
+    // Group by user (excluding admins)
     const userTasks: Record<string, any> = {};
     
-    validAssignments.forEach(assignment => {
+    for (const assignment of validAssignments) {
+      const groupId = assignment.task?.groupId || assignment.task?.group?.id;
+      
+      if (!groupId) {
+        console.log(`⚠️ Cannot determine group for assignment ${assignment.id}, skipping`);
+        continue;
+      }
+      
+      // Check if user is admin
+      const membership = await prisma.groupMember.findFirst({
+        where: {
+          userId: assignment.userId,
+          groupId: groupId,
+          groupRole: "ADMIN"
+        }
+      });
+      
+      if (membership) {
+        console.log(`⏭️ Skipping reminder for admin user: ${assignment.user?.fullName}`);
+        continue;
+      }
+      
       if (!userTasks[assignment.userId]) {
         userTasks[assignment.userId] = {
           userId: assignment.userId,
@@ -59,34 +94,43 @@ const sendDailyTaskReminders = async () => {
         };
       }
       
-      // Format time slot info
-      let timeInfo = '';
-      if (assignment.timeSlot) {
-        timeInfo = `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}`;
-        if (assignment.timeSlot.label) {
-          timeInfo += ` (${assignment.timeSlot.label})`;
-        }
-      }
+      const timeSlots = assignment.task!.timeSlots?.length > 0 
+        ? assignment.task!.timeSlots 
+        : (assignment.timeSlot ? [assignment.timeSlot] : []);
       
-      userTasks[assignment.userId].tasks.push({
-        taskId: assignment.task!.id,
-        title: assignment.task!.title,
-        timeSlot: timeInfo,
-        points: assignment.points,
-        startTime: assignment.timeSlot?.startTime || 'Scheduled',
-        endTime: assignment.timeSlot?.endTime || '',
-        label: assignment.timeSlot?.label
-      });
-    });
+      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
+      
+      for (const slot of timeSlots) {
+        if (completedSlotIds.includes(slot.id)) continue;
+        if (missedSlotIds.includes(slot.id)) continue;
+        
+        let timeInfo = `${slot.startTime} - ${slot.endTime}`;
+        if (slot.label) {
+          timeInfo += ` (${slot.label})`;
+        }
+        
+        userTasks[assignment.userId].tasks.push({
+          taskId: assignment.task!.id,
+          title: assignment.task!.title,
+          timeSlot: timeInfo,
+          points: slot.points || assignment.points,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          label: slot.label,
+          slotId: slot.id
+        });
+      }
+    }
 
-    // Send one notification per user with all their tasks
     let remindersSent = 0;
     
     for (const userId in userTasks) {
       const userData = userTasks[userId];
       const taskCount = userData.tasks.length;
       
-      // Create a nice summary message
+      if (taskCount === 0) continue;
+      
       let message = '';
       if (taskCount === 1) {
         const task = userData.tasks[0];
@@ -95,7 +139,7 @@ const sendDailyTaskReminders = async () => {
           message += ` at ${task.timeSlot}`;
         }
       } else {
-        message = `You have ${taskCount} tasks today:\n`;
+        message = `You have ${taskCount} task${taskCount > 1 ? 's' : ''} today:\n`;
         userData.tasks.forEach((task: any, index: number) => {
           message += `${index + 1}. "${task.title}"`;
           if (task.timeSlot) {
@@ -105,13 +149,12 @@ const sendDailyTaskReminders = async () => {
         });
       }
 
-      // Check if we already sent a reminder today (prevent spam)
       const existingReminder = await prisma.userNotification.findFirst({
         where: {
           userId: userData.userId,
           type: "DAILY_TASK_REMINDER",
           createdAt: {
-            gte: today
+            gte: todayUTC
           }
         }
       });
@@ -123,20 +166,13 @@ const sendDailyTaskReminders = async () => {
           title: `📅 ${taskCount} Task${taskCount > 1 ? 's' : ''} Due Today`,
           message: message,
           data: {
-            date: today.toISOString(),
+            date: todayUTC.toISOString(),
             taskCount,
-            tasks: userData.tasks.map((t: any) => ({
-              taskId: t.taskId,
-              title: t.title,
-              timeSlot: t.timeSlot,
-              startTime: t.startTime,
-              endTime: t.endTime,
-              label: t.label,
-              points: t.points
-            }))
+            tasks: userData.tasks
           }
         });
         remindersSent++;
+        console.log(`📢 Sent daily reminder to ${userData.userName} with ${taskCount} tasks`);
       }
     }
 
@@ -154,49 +190,61 @@ const sendDailyTaskReminders = async () => {
 // ========== INITIALIZE CRON JOBS ==========
 export const initReminderCron = () => {
   
-  // 1️⃣ RUN EVERY MINUTE - Upcoming task reminders (30 min before, during window)
-  cron.schedule('* * * * *', async () => {
-    console.log('🔔 Running task reminder check at:', new Date().toISOString());
+  // 1️⃣ RUN EVERY 10 MINUTES - Upcoming task reminders
+  //    */10 means every 10 minutes (0, 10, 20, 30, 40, 50)
+ 
+  cron.schedule('*/10 * * * *', async () => {
+  console.log('🔔 Running task reminder check at:', new Date().toISOString());
+  
+  try { 
+    const startTime = Date.now();
+    const result = await AssignmentService.sendUpcomingTaskReminders();
+    const endTime = Date.now();
     
-    try { 
-      const startTime = Date.now();
-      const result = await AssignmentService.sendUpcomingTaskReminders();
-      const endTime = Date.now();
-      
-      if (result.success) {
-        if (result.remindersSent > 0) {
-          console.log(`✅ Sent ${result.remindersSent} task reminders in ${endTime - startTime}ms`);
-        }
+    if (result.success) {
+      if (result.remindersSent > 0) {
+        console.log(`✅ Sent ${result.remindersSent} task reminders in ${endTime - startTime}ms`);
       } else {
-        console.log(`❌ Reminder error: ${result.message}`);
+        console.log(`ℹ️ No reminders needed at ${new Date().toISOString()}`);
       }
-      
-    } catch (error) {
-      console.error('❌ Error in reminder cron job:', error);
+    } else {
+      console.error(`❌ Reminder error: ${result.message}`);
     }
-  });
+    
+  } catch (error) {
+    console.error('❌ Error in reminder cron job:', error);
+    // Don't re-throw - let cron continue
+  }
+});
 
-  // 2️⃣ RUN AT 7:00 AM - Early morning daily summary
-  cron.schedule('0 7 * * *', async () => {
+  // 2️⃣ RUN AT 7:00 AM PHT (23:00 UTC) - Early morning daily summary
+  cron.schedule('0 23 * * *', async () => {
     console.log('🌅 Running morning daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
   });
 
-  // 3️⃣ RUN AT 12:00 PM - Noon reminder for late risers
-  cron.schedule('0 12 * * *', async () => {
+  // 3️⃣ RUN AT 12:00 PM PHT (04:00 UTC) - Noon reminder
+  cron.schedule('0 4 * * *', async () => {
     console.log('☀️ Running afternoon daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
   });
 
-  // 4️⃣ RUN AT 4:00 PM - Afternoon reminder before evening tasks
-  cron.schedule('0 16 * * *', async () => {
+  // 4️⃣ RUN AT 4:00 PM PHT (08:00 UTC) - Afternoon/Evening reminder
+  cron.schedule('0 8 * * *', async () => {
     console.log('🌆 Running evening daily task reminder at:', new Date().toISOString());
+    await sendDailyTaskReminders();
+  });
+
+  // 5️⃣ RUN AT 7:00 PM PHT (11:00 UTC) - Night reminder
+  cron.schedule('0 11 * * *', async () => {
+    console.log('🌙 Running night daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
   });
   
   console.log('🔔 Task reminder cron initialized:');
-  console.log('   ├─ Every minute: Upcoming task alerts');
-  console.log('   ├─ 7:00 AM: Morning daily summary');
-  console.log('   ├─ 12:00 PM: Noon reminder');
-  console.log('   └─ 4:00 PM: Evening reminder');
+  console.log('   ├─ Every 10 minutes: Upcoming task alerts (supports multi-slot tasks, excludes admins)');
+  console.log('   ├─ 7:00 AM PHT: Morning daily summary');
+  console.log('   ├─ 12:00 PM PHT: Noon reminder');
+  console.log('   ├─ 4:00 PM PHT: Evening reminder');
+  console.log('   └─ 7:00 PM PHT: Night reminder');
 };

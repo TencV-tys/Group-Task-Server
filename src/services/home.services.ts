@@ -3,7 +3,6 @@
 import prisma from "../prisma";
 import { Assignment, Task, TimeSlot } from '@prisma/client';
 
-// ✅ CORRECTED - Use actual Task model fields
 type AssignmentWithTaskAndTimeSlot = Assignment & {
   task: (Pick<Task, 'id' | 'title' | 'points' | 'executionFrequency' | 'groupId'> & {
     group: { id: string; name: string; } | null;
@@ -66,7 +65,6 @@ export class HomeServices {
 
       const now = new Date();
 
-      // ✅ Use UTC for all date calculations
       const todayUTC = new Date(Date.UTC(
         now.getUTCFullYear(),
         now.getUTCMonth(),
@@ -74,8 +72,7 @@ export class HomeServices {
         0, 0, 0, 0
       ));
 
-      // ✅ Week starts on Monday (UTC)
-      const currentUTCDay = now.getUTCDay(); // 0 = Sunday
+      const currentUTCDay = now.getUTCDay();
       const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
       const currentWeekStart = new Date(Date.UTC(
         now.getUTCFullYear(),
@@ -84,7 +81,6 @@ export class HomeServices {
         0, 0, 0, 0
       ));
 
-      // ✅ Week ends on Sunday (UTC)
       const currentWeekEnd = new Date(currentWeekStart);
       currentWeekEnd.setUTCDate(currentWeekStart.getUTCDate() + 6);
       currentWeekEnd.setUTCHours(23, 59, 59, 999);
@@ -92,7 +88,7 @@ export class HomeServices {
       console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
       console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
 
-      // ✅ Get assignments with proper filtering for multi-slot tasks
+      // ✅ FIXED: Correct Prisma syntax for partiallyExpired
       const whereCondition: any = {
         userId: userId,
         completed: false,
@@ -101,7 +97,7 @@ export class HomeServices {
       };
 
       if (userInRotation) {
-           whereCondition.NOT = { partiallyExpired: true };  
+        whereCondition.partiallyExpired = false;
       }
 
       const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
@@ -125,7 +121,6 @@ export class HomeServices {
 
       console.log(`📊 Overdue tasks: ${overdueTasks}`);
 
-      // ✅ Get current week assignments with all needed fields
       const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
         where: {
           ...whereCondition,
@@ -162,10 +157,8 @@ export class HomeServices {
         orderBy: { dueDate: 'asc' }
       }) : [];
 
-      // ✅ Cast to the extended type to fix TypeScript errors
       const typedAssignments = currentWeekAssignments as unknown as AssignmentWithTaskAndTimeSlot[];
 
-      // ✅ Separate overdue and upcoming using UTC comparison
       const overdueAssignments = typedAssignments.filter(
         assignment => new Date(assignment.dueDate) < todayUTC
       );
@@ -174,7 +167,6 @@ export class HomeServices {
         assignment => new Date(assignment.dueDate) >= todayUTC
       );
 
-      // ✅ Count completed tasks (including multi-slot)
       const completedTasks = userInRotation ? await prisma.assignment.count({
         where: {
           userId: userId,
@@ -390,7 +382,6 @@ export class HomeServices {
       weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
       weekEnd.setUTCHours(23, 59, 59, 999);
 
-      // ✅ Get completed assignments (verified only)
       const completedThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
@@ -416,13 +407,13 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       }) : [];
 
-      // ✅ Get pending assignments with timeSlot included - FIXED
+      // ✅ FIXED: Added timeSlot to include
       const pendingThisWeekRaw = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
           expired: false,
-         NOT: { partiallyExpired: true },
+          partiallyExpired: false,  // ✅ FIXED: Correct syntax
           dueDate: {
             gte: weekStart,
             lte: weekEnd
@@ -436,7 +427,7 @@ export class HomeServices {
               executionFrequency: true
             }
           },
-          timeSlot: {
+          timeSlot: {  // ✅ ADDED: Include timeSlot
             select: {
               id: true,
               startTime: true,
@@ -448,7 +439,6 @@ export class HomeServices {
         }
       }) : [];
 
-      // ✅ Cast to fix TypeScript errors
       const pendingThisWeek = pendingThisWeekRaw as unknown as Array<Assignment & {
         task: { title: string; points: number; executionFrequency: string } | null;
         timeSlot: { id: string; startTime: string; endTime: string; label: string | null; points: number } | null;

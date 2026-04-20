@@ -592,240 +592,262 @@ export class SwapRequestController {
     }
   }
   
-  // CHECK: Check if assignment can be swapped
-  static async checkCanSwap(req: UserAuthRequest, res: Response) {
-    try {
-      const userId = req.user?.id;
-      const { assignmentId } = req.params as {assignmentId:string};
-      const { scope, selectedDay, selectedTimeSlotId } = req.query;
+  // CHECK: Check if assignment can be swapped (UTC FIXED)
+static async checkCanSwap(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { assignmentId } = req.params as { assignmentId: string };
+    const { scope, selectedDay, selectedTimeSlotId } = req.query;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated"
-        });
-      }
-
-      const assignment = await prisma.assignment.findUnique({
-        where: { id: assignmentId },
-        include: {
-          task: {
-            include: {
-              group: {
-                include: {
-                  tasks: {
-                    where: { 
-                      isRecurring: true,
-                      isDeleted: false 
-                    },
-                    orderBy: { createdAt: 'asc' },
-                    take: 1,
-                    select: { 
-                      id: true,
-                      createdAt: true 
-                    }
-                  }
-                }
-              },
-              timeSlots: true
-            }
-          },
-          timeSlot: true
-        }
-      });
-
-      if (!assignment) {
-        return res.status(404).json({
-          success: false,
-          message: "Assignment not found"
-        });
-      }
-
-      if (!assignment.task) {
-        return res.json({
-          success: true,
-          canSwap: false,
-          reason: "The task associated with this assignment has been deleted"
-        });
-      }
-
-      if (assignment.userId !== userId) {
-        return res.json({
-          success: true,
-          canSwap: false,
-          reason: "You can only request swap for your own assignments"
-        });
-      }
-
-      if (assignment.completed) {
-        return res.json({
-          success: true,
-          canSwap: false,
-          reason: "Cannot swap completed assignments"
-        });
-      }
-
-      const existingRequest = await prisma.swapRequest.findFirst({
-        where: {
-          assignmentId,
-          status: "PENDING"
-        }
-      });
-
-      if (existingRequest) {
-        return res.json({
-          success: true,
-          canSwap: false,
-          reason: "A pending swap request already exists for this assignment",
-          existingRequestId: existingRequest.id
-        });
-      }
-
-      const now = new Date();
-
-      // ===== WEEK SWAP =====
-      if (scope === 'week') {
-        const firstTask = assignment.task.group?.tasks?.[0];
-        if (!firstTask) {
-          return res.json({
-            success: true,
-            canSwap: false,
-            reason: "Cannot determine week start date - no tasks found"
-          });
-        }
-
-        const firstTaskDate = new Date(firstTask.createdAt);
-        const firstTaskDay = firstTaskDate.getDay();
-        const today = now.getDay();
-        let daysSinceWeekStart = today - firstTaskDay;
-        if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
-        
-        const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - daysSinceWeekStart);
-        weekStart.setHours(0, 0, 0, 0);
-        
-        const hoursSinceWeekStart = (now.getTime() - weekStart.getTime()) / (1000 * 60 * 60);
-        const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        
-        if (hoursSinceWeekStart > 24) {
-          return res.json({
-            success: true,
-            canSwap: false,
-            reason: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})`
-          });
-        }
-        
-        return res.json({
-          success: true,
-          canSwap: true,
-          weekInfo: {
-            weekNumber: Math.floor(
-              (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24) / 7
-            ) + 1,
-            weekStart: weekStart.toISOString(),
-            weekStartDay: weekDayNames[firstTaskDay],
-            hoursLeft: Math.max(0, 24 - hoursSinceWeekStart)
-          }
-        });
-      }
-
-      // ===== DAY SWAP =====
-      if (scope === 'day') {
-        const dueDate = new Date(assignment.dueDate);
-        const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-        
-        let targetDay = selectedDay as string;
-        let targetDate: Date | null = null;
-        
-        if (targetDay) {
-          const targetDayIndex = dayNames.indexOf(targetDay);
-          if (targetDayIndex === -1) {
-            return res.json({
-              success: true,
-              canSwap: false,
-              reason: "Invalid day selected"
-            });
-          }
-          
-          targetDate = new Date(now);
-          let daysToAdd = targetDayIndex - now.getDay();
-          if (daysToAdd < 0) daysToAdd += 7;
-          targetDate.setDate(now.getDate() + daysToAdd);
-          targetDate.setHours(0, 0, 0, 0);
-        }
-        
-        if (now > dueDate) {
-          return res.json({
-            success: true,
-            canSwap: false,
-            reason: "Cannot swap assignments that are already past due"
-          });
-        }
-        
-        if (assignment.task.executionFrequency === 'WEEKLY' && targetDay) {
-          let taskDays: string[] = [];
-          if (assignment.task.selectedDays) {
-            try {
-              taskDays = JSON.parse(assignment.task.selectedDays as string);
-            } catch {
-              taskDays = [];
-            }
-          }
-          
-          if (taskDays.length > 0 && !taskDays.includes(targetDay)) {
-            return res.json({
-              success: true,
-              canSwap: false,
-              reason: `This task is not scheduled on ${targetDay}. Available days: ${taskDays.join(', ')}`
-            });
-          }
-        }
-        
-        if (targetDay && targetDate && targetDate.toDateString() === dueDate.toDateString()) {
-          if (assignment.timeSlot && assignment.timeSlot.endTime) {
-            const timeParts = assignment.timeSlot.endTime.split(':');
-            const endHour = parseInt(timeParts[0] || '0', 10);
-            const endMinute = parseInt(timeParts[1] || '0', 10);
-            
-            if (!isNaN(endHour) && !isNaN(endMinute)) {
-              const endTime = new Date(dueDate);
-              endTime.setHours(endHour, endMinute, 0, 0);
-              
-              if (now > endTime) {
-                return res.json({
-                  success: true,
-                  canSwap: false,
-                  reason: "Cannot swap after the task's end time for today"
-                });
-              }
-            }
-          }
-        }
-        
-        return res.json({
-          success: true,
-          canSwap: true,
-          dayInfo: targetDate ? {
-            day: targetDay,
-            date: targetDate.toISOString(),
-            isToday: targetDate.toDateString() === now.toDateString()
-          } : undefined
-        });
-      }
-
-      return res.json({
-        success: true,
-        canSwap: true
-      });
-
-    } catch (error: any) {
-      console.error("SwapRequestController.checkCanSwap error:", error);
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "User not authenticated"
       });
     }
+
+    const assignment = await prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      include: {
+        task: {
+          include: {
+            group: {
+              include: {
+                tasks: {
+                  where: { 
+                    isRecurring: true,
+                    isDeleted: false 
+                  },
+                  orderBy: { createdAt: 'asc' },
+                  take: 1,
+                  select: { 
+                    id: true,
+                    createdAt: true 
+                  }
+                }
+              }
+            },
+            timeSlots: true
+          }
+        },
+        timeSlot: true
+      }
+    });
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found"
+      });
+    }
+
+    if (!assignment.task) {
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "The task associated with this assignment has been deleted"
+      });
+    }
+
+    if (assignment.userId !== userId) {
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "You can only request swap for your own assignments"
+      });
+    }
+
+    if (assignment.completed) {
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "Cannot swap completed assignments"
+      });
+    }
+
+    const existingRequest = await prisma.swapRequest.findFirst({
+      where: {
+        assignmentId,
+        status: "PENDING"
+      }
+    });
+
+    if (existingRequest) {
+      return res.json({
+        success: true,
+        canSwap: false,
+        reason: "A pending swap request already exists for this assignment",
+        existingRequestId: existingRequest.id
+      });
+    }
+
+    const now = new Date();
+
+    // ===== WEEK SWAP (UTC FIXED) =====
+    if (scope === 'week') {
+      const firstTask = assignment.task.group?.tasks?.[0];
+      if (!firstTask) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot determine week start date - no tasks found"
+        });
+      }
+
+      // ✅ FIXED: Use UTC for all date calculations
+      const firstTaskDate = new Date(firstTask.createdAt);
+      const firstTaskDay = firstTaskDate.getUTCDay();  // UTC day (0 = Sunday)
+      const currentUTCDay = now.getUTCDay();  // UTC day
+      
+      let daysSinceWeekStart = currentUTCDay - firstTaskDay;
+      if (daysSinceWeekStart < 0) daysSinceWeekStart += 7;
+      
+      const weekStartUTC = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - daysSinceWeekStart,
+        0, 0, 0, 0
+      ));
+      
+      const hoursSinceWeekStart = (now.getTime() - weekStartUTC.getTime()) / (1000 * 60 * 60);
+      const weekDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      
+      if (hoursSinceWeekStart > 24) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: `Week swap window has closed (only available within first 24 hours of the week, which started on ${weekDayNames[firstTaskDay]})`
+        });
+      }
+      
+      return res.json({
+        success: true,
+        canSwap: true,
+        weekInfo: {
+          weekNumber: Math.floor(
+            (now.getTime() - firstTaskDate.getTime()) / (1000 * 60 * 60 * 24) / 7
+          ) + 1,
+          weekStart: weekStartUTC.toISOString(),
+          weekStartDay: weekDayNames[firstTaskDay],
+          hoursLeft: Math.max(0, 24 - hoursSinceWeekStart)
+        }
+      });
+    }
+
+    // ===== DAY SWAP =====
+    if (scope === 'day') {
+      const dueDate = new Date(assignment.dueDate);
+      const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+      
+      let targetDay = selectedDay as string;
+      let targetDate: Date | null = null;
+      
+      if (targetDay) {
+        const targetDayIndex = dayNames.indexOf(targetDay);
+        if (targetDayIndex === -1) {
+          return res.json({
+            success: true,
+            canSwap: false,
+            reason: "Invalid day selected"
+          });
+        }
+        
+        // ✅ Use UTC for target date calculation
+        targetDate = new Date(Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0, 0, 0, 0
+        ));
+        let daysToAdd = targetDayIndex - now.getUTCDay();
+        if (daysToAdd < 0) daysToAdd += 7;
+        targetDate.setUTCDate(now.getUTCDate() + daysToAdd);
+      }
+      
+      // ✅ Use UTC comparison
+      if (now.getTime() > dueDate.getTime()) {
+        return res.json({
+          success: true,
+          canSwap: false,
+          reason: "Cannot swap assignments that are already past due"
+        });
+      }
+      
+      if (assignment.task.executionFrequency === 'WEEKLY' && targetDay) {
+        let taskDays: string[] = [];
+        if (assignment.task.selectedDays) {
+          try {
+            taskDays = JSON.parse(assignment.task.selectedDays as string);
+          } catch {
+            taskDays = [];
+          }
+        }
+        
+        if (taskDays.length > 0 && !taskDays.includes(targetDay)) {
+          return res.json({
+            success: true,
+            canSwap: false,
+            reason: `This task is not scheduled on ${targetDay}. Available days: ${taskDays.join(', ')}`
+          });
+        }
+      }
+      
+      // ✅ Use UTC for date comparison
+      if (targetDay && targetDate && 
+          targetDate.getUTCFullYear() === dueDate.getUTCFullYear() &&
+          targetDate.getUTCMonth() === dueDate.getUTCMonth() &&
+          targetDate.getUTCDate() === dueDate.getUTCDate()) {
+        
+        if (assignment.timeSlot && assignment.timeSlot.endTime) {
+          const timeParts = assignment.timeSlot.endTime.split(':');
+          const endHour = parseInt(timeParts[0] || '0', 10);
+          const endMinute = parseInt(timeParts[1] || '0', 10);
+          
+          if (!isNaN(endHour) && !isNaN(endMinute)) {
+            // Convert PHT to UTC for comparison
+            let utcEndHour = endHour - 8;
+            if (utcEndHour < 0) utcEndHour += 24;
+            
+            const endTimeUTC = new Date(dueDate);
+            endTimeUTC.setUTCHours(utcEndHour, endMinute, 0, 0);
+            
+            if (now.getTime() > endTimeUTC.getTime()) {
+              return res.json({
+                success: true,
+                canSwap: false,
+                reason: "Cannot swap after the task's end time for today"
+              });
+            }
+          }
+        }
+      }
+      
+      return res.json({
+        success: true,
+        canSwap: true,
+        dayInfo: targetDate ? {
+          day: targetDay,
+          date: targetDate.toISOString(),
+          isToday: targetDate.getUTCFullYear() === now.getUTCFullYear() &&
+                   targetDate.getUTCMonth() === now.getUTCMonth() &&
+                   targetDate.getUTCDate() === now.getUTCDate()
+        } : undefined
+      });
+    }
+
+    return res.json({
+      success: true,
+      canSwap: true
+    });
+
+  } catch (error: any) {
+    console.error("SwapRequestController.checkCanSwap error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
 
   // CHECK: Check if a user has an assignment on a specific day
   static async checkUserHasAssignmentOnDay(req: UserAuthRequest, res: Response) {
