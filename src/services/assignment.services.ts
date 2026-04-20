@@ -1582,7 +1582,7 @@ static async getTodayAssignments(
     
     console.log(`✅ Final active pending assignments count: ${assignmentsWithTimeInfo.length}`);
     console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
-    
+    console.log('assignmentswithtimeinfo',assignmentsWithTimeInfo)
     return {
       success: true,
       message: "Today's active pending assignments retrieved",
@@ -1846,79 +1846,25 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   const endTimeUTC = new Date(dueDate);
   endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
 
-  // Grace period = endTime + 30 minutes
+  // ✅ Grace period = endTime + 30 minutes (NO BUFFER)
   const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
 
-  // ✅ FIX: Add buffer AFTER grace period to give completeAssignment priority
-  // This buffer allows the user to submit exactly at the grace period boundary
-  const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
-  const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
-
-  const isNeglected = now > effectiveDeadline;
+  // ✅ Mark as neglected ONLY AFTER grace period ends
+  const isNeglected = now > gracePeriodEnd;
   
   console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime}:`);
   console.log(`      endTimeUTC=${endTimeUTC.toISOString()}`);
   console.log(`      gracePeriodEnd=${gracePeriodEnd.toISOString()}`);
-  console.log(`      effectiveDeadline=${effectiveDeadline.toISOString()}`);
   console.log(`      now=${now.toISOString()}`);
   console.log(`      isNeglected=${isNeglected}`);
-  
-  return isNeglected;
-}
-
-// In assignment.services.ts - FIXED isSingleSlotNeglected
-
-private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
-  if (assignment.completed) return false;
-  if (assignment.photoUrl) return false;  // Has submission, don't mark as neglected
-  if (assignment.expired) return false;
-  
-  const dueDate = new Date(assignment.dueDate);
-  
-  // Only check assignments due TODAY
-  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
-  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  
-  if (dueDateUTC !== todayUTC) return false;
-  
-  if (!assignment.timeSlot) {
-    // No time slot - due date is end of day UTC
-    const endOfDayUTC = new Date(dueDate);
-    endOfDayUTC.setUTCHours(23, 59, 59, 999);
-    const gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
-    // ✅ FIX: Use same logic as isTimeSlotNeglected
-    const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
-    const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
-    return now > effectiveDeadline;
+  if (!isNeglected && now < gracePeriodEnd) {
+    const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
+    console.log(`      Time remaining in grace period: ${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s`);
   }
   
-  // Parse end time (stored in PHT / UTC+8) → convert to UTC
-  const [endHourRaw, endMinRaw] = assignment.timeSlot.endTime.split(':');
-  let endHour = parseInt(endHourRaw || '0', 10);
-  const endMin = parseInt(endMinRaw || '0', 10);
-  
-  // PHT (UTC+8) to UTC
-  endHour = endHour - 8;
-  if (endHour < 0) endHour += 24;
-  
-  const endTimeUTC = new Date(dueDate);
-  endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
-  
-  // Grace period = endTime + 30 minutes
-  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
-  
-  // ✅ FIX: Use SAME buffer as isTimeSlotNeglected (2 minutes)
-  const bufferMs = 2 * 60 * 1000;  // 2 minutes buffer
-  const effectiveDeadline = new Date(gracePeriodEnd.getTime() + bufferMs);
-  
-  const isNeglected = now > effectiveDeadline;
-  
-  console.log(`   ⏰ Single slot check: endTime=${endTimeUTC.toISOString()}, graceEnd=${gracePeriodEnd.toISOString()}, effectiveDeadline=${effectiveDeadline.toISOString()}, now=${now.toISOString()}, isNeglected=${isNeglected}`);
-  
   return isNeglected;
 }
- 
-// In assignment.services.ts - FIXED checkGroupNeglectedAssignments
+// In assignment.services.ts - FULLY UPDATED checkGroupNeglectedAssignments
 
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
@@ -1934,7 +1880,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     // Get current UTC date
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
-    // ✅ FIX: Only check assignments due TODAY
+    // Get ALL assignments due TODAY that are not completed, not expired, no photo
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -1942,10 +1888,10 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         completed: false,
         expired: false,
         expiredAt: null,
-        photoUrl: null,  // Only assignments without submission
+        photoUrl: null,
         dueDate: {
           gte: todayUTC,
-          lt: tomorrowUTC  // Only today's assignments
+          lt: tomorrowUTC
         },
         AND: [
           {
@@ -2014,15 +1960,29 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             continue;
           }
 
-          // ✅ FIX: Check if slot is actually neglected (AFTER grace period)
-          const isNeglected = this.isTimeSlotNeglected(assignment, timeSlot, now);
+          // ✅ Calculate grace period end time (NO BUFFER - exactly 30 minutes)
+          const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
+          let endHour = parseInt(endHourRaw || '0', 10);
+          const endMin = parseInt(endMinRaw || '0', 10);
           
-          if (!isNeglected) {
-            console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime} STILL ACTIVE (within grace period)`);
+          // Convert PHT (UTC+8) to UTC
+          endHour = endHour - 8;
+          if (endHour < 0) endHour += 24;
+          
+          const dueDate = new Date(assignment.dueDate);
+          const endTimeUTC = new Date(dueDate);
+          endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+          
+          // ✅ Grace period ends exactly 30 minutes after end time
+          const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+          
+          // ✅ ONLY mark as neglected if current time is AFTER grace period ends
+          if (now <= gracePeriodEnd) {
+            console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime} STILL IN GRACE PERIOD (ends at ${gracePeriodEnd.toISOString()})`);
             continue;
           }
 
-          console.log(`   ❌ Slot ${timeSlot.startTime}-${timeSlot.endTime} is NEGLECTED!`);
+          console.log(`   ❌ Slot ${timeSlot.startTime}-${timeSlot.endTime} is NEGLECTED (grace period ended at ${gracePeriodEnd.toISOString()})`);
           newlyMissedSlots.push(timeSlot);
           const slotPts = timeSlot.points || 0;
           pointsLost += slotPts;
@@ -2112,11 +2072,35 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
       // ---- Single-slot task ----
       } else {
-        // ✅ FIX: Check if assignment is actually neglected AFTER full grace period
-        const isNeglected = this.isSingleSlotNeglected(assignment, now);
+        // ✅ Calculate grace period end time (NO BUFFER - exactly 30 minutes)
+        let gracePeriodEnd: Date;
         
-        if (!isNeglected) {
-          console.log(`   ⏰ Assignment ${assignment.task!.title} STILL ACTIVE (within grace period)`);
+        if (!assignment.timeSlot) {
+          const endOfDayUTC = new Date(assignment.dueDate);
+          endOfDayUTC.setUTCHours(23, 59, 59, 999);
+          gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
+        } else {
+          const [endHourRaw, endMinRaw] = assignment.timeSlot.endTime.split(':');
+          let endHour = parseInt(endHourRaw || '0', 10);
+          const endMin = parseInt(endMinRaw || '0', 10);
+          
+          // Convert PHT (UTC+8) to UTC
+          endHour = endHour - 8;
+          if (endHour < 0) endHour += 24;
+          
+          const dueDate = new Date(assignment.dueDate);
+          const endTimeUTC = new Date(dueDate);
+          endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+          
+          // ✅ Grace period ends exactly 30 minutes after end time
+          gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+        }
+        
+        // ✅ ONLY mark as neglected if current time is AFTER grace period ends
+        if (now <= gracePeriodEnd) {
+          console.log(`   ⏰ Assignment ${assignment.task!.title} STILL IN GRACE PERIOD (ends at ${gracePeriodEnd.toISOString()})`);
+          console.log(`      Current time: ${now.toISOString()}`);
+          console.log(`      Time remaining: ${Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000)} seconds`);
           continue;
         }
         
@@ -2125,7 +2109,9 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
 
-        console.log(`   ❌ Assignment ${assignment.task!.title} is NEGLECTED!`);
+        console.log(`   ❌ Assignment ${assignment.task!.title} is NEGLECTED (grace period ended at ${gracePeriodEnd.toISOString()})`);
+        console.log(`      Current time: ${now.toISOString()}`);
+        console.log(`      Time overdue: ${Math.ceil((now.getTime() - gracePeriodEnd.getTime()) / 1000)} seconds`);
         
         neglectedCount++;
         const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
@@ -2193,6 +2179,46 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     console.error("AssignmentService.checkGroupNeglectedAssignments error:", error);
     return { count: 0, pointsNotAwarded: 0 };
   }
+}
+
+private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
+  if (assignment.completed) return false;
+  if (assignment.photoUrl) return false;
+  if (assignment.expired) return false;
+  
+  const dueDate = new Date(assignment.dueDate);
+  
+  const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+  const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  
+  if (dueDateUTC !== todayUTC) return false;
+  
+  if (!assignment.timeSlot) {
+    const endOfDayUTC = new Date(dueDate);
+    endOfDayUTC.setUTCHours(23, 59, 59, 999);
+    const gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
+    // ✅ NO BUFFER - exactly 30 minutes grace period
+    return now > gracePeriodEnd;
+  }
+  
+  const [endHourRaw, endMinRaw] = assignment.timeSlot.endTime.split(':');
+  let endHour = parseInt(endHourRaw || '0', 10);
+  const endMin = parseInt(endMinRaw || '0', 10);
+  
+  endHour = endHour - 8;
+  if (endHour < 0) endHour += 24;
+  
+  const endTimeUTC = new Date(dueDate);
+  endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+  
+  // ✅ NO BUFFER - exactly 30 minutes grace period
+  const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+  
+  const isNeglected = now > gracePeriodEnd;
+  
+  console.log(`   ⏰ Single slot check: endTime=${endTimeUTC.toISOString()}, graceEnd=${gracePeriodEnd.toISOString()}, now=${now.toISOString()}, isNeglected=${isNeglected}`);
+  
+  return isNeglected;
 }
 
 

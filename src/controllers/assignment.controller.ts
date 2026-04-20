@@ -389,6 +389,7 @@ static async getTodayAssignments(req: UserAuthRequest, res: Response) {
     }
 
     console.log(`   ✅ Returning ${result.data?.total || 0} today's assignments`);
+
     return res.status(200).json(result);
     
   } catch (error: any) {
