@@ -11,7 +11,7 @@ export class UploadController {
   static getFileUrl(req: UserAuthRequest, filename: string, uploadType: string): string {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     
-    switch (uploadType) {
+    switch (uploadType) { 
       case 'user_avatar':
         return `${baseUrl}/uploads/user-avatars/${filename}`;
       case 'group_avatar':
@@ -766,8 +766,7 @@ static async uploadTaskPhoto(req: UserAuthRequest, res: Response) {
     }
   }
 
-  // Cloudinary task photo upload
-// Cloudinary task photo upload
+  // Cloudinary task photo upload - FIXED
 static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
   try {
     const userId = req.user?.id;
@@ -779,22 +778,27 @@ static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
       return res.status(400).json({ success: false, message: 'No photo uploaded' });
     }
 
+    // ✅ Get the actual Cloudinary URL from multer
     let fileUrl = req.file.path;
     
-    // ✅ FIX: Clean duplicate folder if present
+    console.log('📸 Original Cloudinary URL:', fileUrl);
+    
+    // ✅ FIX: Remove duplicate folder if present (but preserve full URL)
     if (fileUrl.includes('/task-photos/task-photos/')) {
       fileUrl = fileUrl.replace('/task-photos/task-photos/', '/task-photos/');
       console.log('🔧 Fixed duplicate folder in URL:', fileUrl);
     }
     
-    // Also clean if filename contains the folder path
-    if (fileUrl.includes('/')) {
-      const parts = fileUrl.split('/');
-      const filename = parts[parts.length - 1];
-      // Reconstruct with single folder
-      fileUrl = `https://res.cloudinary.com/.../task-photos/${filename}`;
-      // Or simpler: use the cleaned version above
+    // ✅ Ensure the URL is valid
+    if (!fileUrl.startsWith('http')) {
+      console.error('❌ Invalid Cloudinary URL:', fileUrl);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Invalid Cloudinary URL generated' 
+      });
     }
+
+    console.log('✅ Task photo uploaded to Cloudinary:', fileUrl);
 
     return res.status(200).json({
       success: true,
@@ -802,12 +806,13 @@ static async uploadTaskPhotoCloudinary(req: UserAuthRequest, res: Response) {
       data: { photoUrl: fileUrl }
     });
   } catch (error: any) {
-    console.error('Cloudinary task photo upload error:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    console.error('❌ Cloudinary task photo upload error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to upload photo' 
+    });
   }
 }
-
-// src/controllers/uploadController.ts - ADD THIS PUBLIC METHOD
 
 // Public Cloudinary avatar upload (for signup - NO AUTH REQUIRED)
 static async uploadAvatarCloudinaryPublic(req: Request, res: Response) {
@@ -821,13 +826,24 @@ static async uploadAvatarCloudinaryPublic(req: Request, res: Response) {
       });
     }
 
-    // Get Cloudinary URL
+    // ✅ Get the actual Cloudinary URL
     let fileUrl = req.file.path;
     
-    // Clean URL if needed
+    console.log('📸 Original Cloudinary URL:', fileUrl);
+    
+    // Clean URL if needed (remove duplicate folder)
     if (fileUrl.includes('/user-avatars/user-avatars/')) {
       fileUrl = fileUrl.replace('/user-avatars/user-avatars/', '/user-avatars/');
       console.log('🔧 Fixed duplicate folder in URL:', fileUrl);
+    }
+    
+    // ✅ Ensure the URL is valid
+    if (!fileUrl.startsWith('http')) {
+      console.error('❌ Invalid Cloudinary URL:', fileUrl);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Invalid Cloudinary URL generated' 
+      });
     }
 
     console.log('✅ Avatar uploaded to Cloudinary (public):', fileUrl);
@@ -846,4 +862,5 @@ static async uploadAvatarCloudinaryPublic(req: Request, res: Response) {
     });
   }
 }
+
 }

@@ -529,7 +529,7 @@ static async verifyAssignment(
     const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
     const notificationMessage = data.verified 
       ? `✅ Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
-      : `❌ Your submission for "${assignment.task.title}" needs revision. No points awarded.`;
+      : `❌ Your submission for "${assignment.task.title}". No points awarded.`;
 
     await UserNotificationService.createNotification({
       userId: assignment.userId,

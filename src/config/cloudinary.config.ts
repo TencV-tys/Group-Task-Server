@@ -65,20 +65,34 @@ export const deleteFromCloudinary = async (publicId: string) => {
   }
 };
 
-// Helper: Extract public ID from Cloudinary URL
+// src/config/cloudinary.config.ts - FIXED
 export const extractPublicId = (url: string): string | null => {
   if (!url) return null;
   try {
-    const parts = url.split('/');
-    const filename = parts.pop() || '';
-    const uploadIndex = parts.indexOf('upload');
+    // Find the upload path
+    const uploadIndex = url.indexOf('/upload/');
     if (uploadIndex === -1) return null;
-    const folderParts = parts.slice(uploadIndex + 2);
-    const folder = folderParts.join('/');
-    return `${folder}/${filename.split('.')[0]}`;
-  } catch {
+    
+    // Get everything after /upload/
+    let path = url.substring(uploadIndex + 8);
+    
+    // Remove version prefix if present (e.g., v1234567890/)
+    if (path.startsWith('v') && path.includes('/')) {
+      path = path.substring(path.indexOf('/') + 1);
+    }
+    
+    // Remove file extension
+    const lastDot = path.lastIndexOf('.');
+    if (lastDot !== -1) {
+      path = path.substring(0, lastDot);
+    }
+    
+    console.log('📤 Extracted publicId:', path);
+    return path;
+  } catch (error) {
+    console.error('Error extracting publicId:', error);
     return null;
-  } 
+  }
 };
 
 export default cloudinary;
