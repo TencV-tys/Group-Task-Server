@@ -5,15 +5,11 @@ import prisma from '../prisma';
 import { AssignmentService } from '../services/assignment.services';
 import { UserNotificationService } from '../services/user.notification.services';
 
-// ========== SEND DAILY TASK REMINDERS ==========
 const sendDailyTaskReminders = async () => {
   try {
-    // Use UTC for date boundaries (consistent with database)
     const now = new Date();
     const todayUTC = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
+      now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
       0, 0, 0, 0
     ));
     const tomorrowUTC = new Date(todayUTC);
@@ -21,23 +17,13 @@ const sendDailyTaskReminders = async () => {
 
     console.log(`📅 Sending daily task reminders for UTC date: ${todayUTC.toISOString().split('T')[0]}`);
 
-    // Get all assignments due today that aren't completed
     const todaysAssignments = await prisma.assignment.findMany({
       where: {
         completed: false,
-        dueDate: {
-          gte: todayUTC,
-          lt: tomorrowUTC
-        }
+        dueDate: { gte: todayUTC, lt: tomorrowUTC }
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true
-          }
-        },
+        user: { select: { id: true, fullName: true, email: true } },
         task: {
           select: {
             id: true,
@@ -45,12 +31,7 @@ const sendDailyTaskReminders = async () => {
             points: true,
             executionFrequency: true,
             groupId: true,
-            group: {
-              select: {
-                id: true,
-                name: true
-              }
-            },
+            group: { select: { id: true, name: true } },
             timeSlots: true
           }
         },
@@ -58,34 +39,37 @@ const sendDailyTaskReminders = async () => {
       }
     });
 
-    // Filter out assignments with null tasks
     const validAssignments = todaysAssignments.filter(a => a.task !== null);
-    
-    // Group by user (excluding admins)
+
+    // ✅ FIX Bug 1: batch-fetch all admins upfront — no N+1
+    const groupIds = [...new Set(validAssignments.map(a => a.task!.groupId).filter(Boolean))] as string[];
+    const adminMemberships = await prisma.groupMember.findMany({
+      where: { groupId: { in: groupIds }, groupRole: "ADMIN", isActive: true },
+      select: { userId: true, groupId: true }
+    });
+    const adminUserIdsByGroup: Record<string, Set<string>> = {};
+    for (const m of adminMemberships) {
+      adminUserIdsByGroup[m.groupId] ??= new Set();
+      adminUserIdsByGroup[m.groupId]!.add(m.userId);
+    }
+
     const userTasks: Record<string, any> = {};
-    
+
     for (const assignment of validAssignments) {
-      const groupId = assignment.task?.groupId || assignment.task?.group?.id;
-      
+      const groupId = assignment.task!.groupId; // ✅ FIX Bug 2: no redundant fallback
+
       if (!groupId) {
-        console.log(`⚠️ Cannot determine group for assignment ${assignment.id}, skipping`);
+        console.log(`⚠️ No groupId for assignment ${assignment.id}, skipping`);
         continue;
       }
-      
-      // Check if user is admin
-      const membership = await prisma.groupMember.findFirst({
-        where: {
-          userId: assignment.userId,
-          groupId: groupId,
-          groupRole: "ADMIN"
-        }
-      });
-      
-      if (membership) {
-        console.log(`⏭️ Skipping reminder for admin user: ${assignment.user?.fullName}`);
+
+      // ✅ FIX Bug 1: use pre-fetched map instead of DB call
+      const groupAdmins = adminUserIdsByGroup[groupId] || new Set();
+      if (groupAdmins.has(assignment.userId)) {
+        console.log(`⏭️ Skipping admin: ${assignment.user?.fullName}`);
         continue;
       }
-      
+
       if (!userTasks[assignment.userId]) {
         userTasks[assignment.userId] = {
           userId: assignment.userId,
@@ -93,23 +77,22 @@ const sendDailyTaskReminders = async () => {
           tasks: []
         };
       }
-      
-      const timeSlots = assignment.task!.timeSlots?.length > 0 
-        ? assignment.task!.timeSlots 
-        : (assignment.timeSlot ? [assignment.timeSlot] : []);
-      
-      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
-      
+
+      // ✅ FIX Bug 3: safe length check
+      const timeSlots = (assignment.task!.timeSlots?.length ?? 0) > 0
+        ? assignment.task!.timeSlots
+        : assignment.timeSlot ? [assignment.timeSlot] : [];
+
+      const completedSlotIds: string[] = (assignment as any).completedTimeSlotIds || [];
+      const missedSlotIds: string[]    = (assignment as any).missedTimeSlotIds    || [];
+
       for (const slot of timeSlots) {
         if (completedSlotIds.includes(slot.id)) continue;
         if (missedSlotIds.includes(slot.id)) continue;
-        
+
         let timeInfo = `${slot.startTime} - ${slot.endTime}`;
-        if (slot.label) {
-          timeInfo += ` (${slot.label})`;
-        }
-        
+        if (slot.label) timeInfo += ` (${slot.label})`;
+
         userTasks[assignment.userId].tasks.push({
           taskId: assignment.task!.id,
           title: assignment.task!.title,
@@ -124,27 +107,22 @@ const sendDailyTaskReminders = async () => {
     }
 
     let remindersSent = 0;
-    
+
     for (const userId in userTasks) {
       const userData = userTasks[userId];
       const taskCount = userData.tasks.length;
-      
       if (taskCount === 0) continue;
-      
+
       let message = '';
       if (taskCount === 1) {
         const task = userData.tasks[0];
         message = `You have 1 task today: "${task.title}"`;
-        if (task.timeSlot) {
-          message += ` at ${task.timeSlot}`;
-        }
+        if (task.timeSlot) message += ` at ${task.timeSlot}`;
       } else {
-        message = `You have ${taskCount} task${taskCount > 1 ? 's' : ''} today:\n`;
+        message = `You have ${taskCount} tasks today:\n`;
         userData.tasks.forEach((task: any, index: number) => {
           message += `${index + 1}. "${task.title}"`;
-          if (task.timeSlot) {
-            message += ` (${task.timeSlot})`;
-          }
+          if (task.timeSlot) message += ` (${task.timeSlot})`;
           message += '\n';
         });
       }
@@ -153,9 +131,7 @@ const sendDailyTaskReminders = async () => {
         where: {
           userId: userData.userId,
           type: "DAILY_TASK_REMINDER",
-          createdAt: {
-            gte: todayUTC
-          }
+          createdAt: { gte: todayUTC }
         }
       });
 
@@ -164,12 +140,8 @@ const sendDailyTaskReminders = async () => {
           userId: userData.userId,
           type: "DAILY_TASK_REMINDER",
           title: `📅 ${taskCount} Task${taskCount > 1 ? 's' : ''} Due Today`,
-          message: message,
-          data: {
-            date: todayUTC.toISOString(),
-            taskCount,
-            tasks: userData.tasks
-          }
+          message,
+          data: { date: todayUTC.toISOString(), taskCount, tasks: userData.tasks }
         });
         remindersSent++;
         console.log(`📢 Sent daily reminder to ${userData.userName} with ${taskCount} tasks`);
