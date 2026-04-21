@@ -4,278 +4,287 @@ import prisma from "../prisma";
 
 export class GroupActivityService {
 
-  static async getGroupActivitySummary(groupId: string, userId: string) {
-    try {
-      console.log('\n🔍🔍🔍 [getGroupActivitySummary] START 🔍🔍🔍');
-      console.log(`📊 Group ID: ${groupId}`);
-      console.log(`👤 User ID: ${userId}`);
-      
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId, groupRole: "ADMIN" }
-      });
+  // In group.activity.services.ts - FULLY UPDATED getGroupActivitySummary
 
-      if (!membership) {
-        console.log('❌ User is not admin');
-        return { success: false, message: "Only admins can view group activity summary" };
+static async getGroupActivitySummary(groupId: string, userId: string) {
+  try {
+    console.log('\n🔍🔍🔍 [getGroupActivitySummary] START 🔍🔍🔍');
+    console.log(`📊 Group ID: ${groupId}`);
+    console.log(`👤 User ID: ${userId}`);
+    
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      console.log('❌ User is not admin');
+      return { success: false, message: "Only admins can view group activity summary" };
+    }
+    console.log('✅ User is admin');
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { currentRotationWeek: true }
+    });
+    console.log(`📅 Current rotation week: ${group?.currentRotationWeek || 1}`);
+
+    const totalMembers = await prisma.groupMember.count({
+      where: { groupId, isActive: true }
+    });
+    console.log(`👥 Total active members: ${totalMembers}`);
+
+    const adminCount = await prisma.groupMember.count({
+      where: { 
+        groupId, 
+        isActive: true,
+        groupRole: "ADMIN" 
       }
-      console.log('✅ User is admin');
+    });
+    console.log(`👑 Admin count: ${adminCount}`);
 
-      const group = await prisma.group.findUnique({
-        where: { id: groupId },
-        select: { currentRotationWeek: true }
-      });
-      console.log(`📅 Current rotation week: ${group?.currentRotationWeek || 1}`);
+    const membersInRotation = await prisma.groupMember.count({
+      where: { 
+        groupId, 
+        isActive: true,
+        inRotation: true
+      }
+    });
+    console.log(`🔄 Members in rotation: ${membersInRotation}`);
 
-      const totalMembers = await prisma.groupMember.count({
-        where: { groupId, isActive: true }
-      });
-      console.log(`👥 Total active members: ${totalMembers}`);
+    const membersNotInRotation = await prisma.groupMember.count({
+      where: { 
+        groupId, 
+        isActive: true,
+        inRotation: false
+      }
+    });
+    console.log(`⏸️ Members not in rotation: ${membersNotInRotation}`);
 
-      const adminCount = await prisma.groupMember.count({
-        where: { 
-          groupId, 
-          isActive: true,
-          groupRole: "ADMIN" 
-        }
-      });
-      console.log(`👑 Admin count: ${adminCount}`);
+    const totalTasks = await prisma.task.count({
+      where: { groupId }
+    });
+    console.log(`📋 Total tasks: ${totalTasks}`);
 
-      const membersInRotation = await prisma.groupMember.count({
-        where: { 
-          groupId, 
-          isActive: true,
-          inRotation: true
-        }
-      });
-      console.log(`🔄 Members in rotation: ${membersInRotation}`);
+    const memberIdsInRotation = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        isActive: true,
+        inRotation: true 
+      },
+      select: { userId: true }
+    }).then(members => members.map(m => m.userId));
+    console.log(`👥 Member IDs in rotation: ${memberIdsInRotation.length} members`);
 
-      const membersNotInRotation = await prisma.groupMember.count({
-        where: { 
-          groupId, 
-          isActive: true,
-          inRotation: false
-        }
-      });
-      console.log(`⏸️ Members not in rotation: ${membersNotInRotation}`);
-
-      const totalTasks = await prisma.task.count({
-        where: { groupId }
-      });
-      console.log(`📋 Total tasks: ${totalTasks}`);
-
-      const memberIdsInRotation = await prisma.groupMember.findMany({
-        where: { 
-          groupId, 
-          isActive: true,
-          inRotation: true 
+    console.log(`\n📊 Fetching current week assignments for week ${group?.currentRotationWeek || 1}...`);
+    const currentWeekAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group?.currentRotationWeek || 1,
+        userId: { in: memberIdsInRotation }
+      },
+      include: {
+        user: { 
+          select: { 
+            id: true, 
+            fullName: true, 
+            avatarUrl: true,
+            groups: {
+              where: { groupId },
+              select: { groupRole: true, inRotation: true }
+            }
+          } 
         },
-        select: { userId: true }
-      }).then(members => members.map(m => m.userId));
-      console.log(`👥 Member IDs in rotation: ${memberIdsInRotation.length} members`);
+        task: { select: { title: true, points: true } },
+        timeSlot: true
+      }
+    });
+    console.log(`📊 Raw assignments found: ${currentWeekAssignments.length}`);
 
-      console.log(`\n📊 Fetching current week assignments for week ${group?.currentRotationWeek || 1}...`);
-      const currentWeekAssignments = await prisma.assignment.findMany({
-        where: {
-          task: { groupId },
-          rotationWeek: group?.currentRotationWeek || 1,
-          userId: { in: memberIdsInRotation }
-        },
-        include: {
-          user: { 
-            select: { 
-              id: true, 
-              fullName: true, 
-              avatarUrl: true,
-              groups: {
-                where: { groupId },
-                select: { groupRole: true, inRotation: true }
-              }
-            } 
-          },
-          task: { select: { title: true, points: true } },
-          timeSlot: true
+    const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
+    console.log(`✅ Valid assignments (with tasks): ${validAssignments.length}`);
+
+    const now = new Date();
+    
+    const totalAssignments = validAssignments.length;
+    const completedAssignments = validAssignments.filter(a => a.completed === true).length;
+    const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
+    
+    // ✅ FIXED: Pending verification = has photo AND not verified (works for both single and multi-slot)
+    const pendingVerification = validAssignments.filter(a => 
+      a.photoUrl !== null && a.verified === null
+    ).length;
+    
+    const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
+    
+    // ✅ FIXED: Use UTC for date comparison
+    const neglectedAssignments = validAssignments.filter(a => 
+      (a.expired === true || (!a.completed && new Date(a.dueDate).getTime() < now.getTime())) &&
+      a.verified !== true
+    ).length;
+    
+    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum, a) => {
+        let pointsToAdd = a.points || 0;
+        if (a.timeSlot && a.timeSlot.points) {
+          pointsToAdd = a.timeSlot.points;
         }
-      });
-      console.log(`📊 Raw assignments found: ${currentWeekAssignments.length}`);
+        return sum + pointsToAdd;
+      }, 0);
+    
+    console.log(`\n📈 Assignment Stats:`);
+    console.log(`   Total: ${totalAssignments}`);
+    console.log(`   Completed: ${completedAssignments}`);
+    console.log(`   Verified: ${verifiedAssignments}`);
+    console.log(`   Pending Verification: ${pendingVerification}`);
+    console.log(`   Rejected: ${rejectedAssignments}`);
+    console.log(`   Neglected: ${neglectedAssignments}`);
 
-      const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
-      console.log(`✅ Valid assignments (with tasks): ${validAssignments.length}`);
+    console.log(`\n💰 Points Stats:`);
+    console.log(`   Total Points: ${totalPoints}`);
+    console.log(`   Earned Points (verified): ${earnedPoints}`);
+    console.log(`   Completion Rate: ${totalPoints > 0 ? ((earnedPoints / totalPoints) * 100).toFixed(1) : 0}%`);
 
-      const now = new Date();
-      
-      const totalAssignments = validAssignments.length;
-      const completedAssignments = validAssignments.filter(a => a.completed === true).length;
-      const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
-      const pendingVerification = validAssignments.filter(a => a.completed && a.verified === null).length;
-      const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
-      
-      // ✅ FIXED: Use UTC for date comparison
-      const neglectedAssignments = validAssignments.filter(a => 
-        (a.expired === true || (!a.completed && new Date(a.dueDate).getTime() < now.getTime())) &&
-        a.verified !== true
-      ).length;
-      
-      const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
-      const earnedPoints = validAssignments
-        .filter(a => a.verified === true)
-        .reduce((sum, a) => {
-          let pointsToAdd = a.points || 0;
-          if (a.timeSlot && a.timeSlot.points) {
-            pointsToAdd = a.timeSlot.points;
-          }
-          return sum + pointsToAdd;
-        }, 0);
-      
-      console.log(`\n📈 Assignment Stats:`);
-      console.log(`   Total: ${totalAssignments}`);
-      console.log(`   Completed: ${completedAssignments}`);
-      console.log(`   Verified: ${verifiedAssignments}`);
-      console.log(`   Pending Verification: ${pendingVerification}`);
-      console.log(`   Rejected: ${rejectedAssignments}`);
-      console.log(`   Neglected: ${neglectedAssignments}`);
-
-      console.log(`\n💰 Points Stats:`);
-      console.log(`   Total Points: ${totalPoints}`);
-      console.log(`   Earned Points (verified): ${earnedPoints}`);
-      console.log(`   Completion Rate: ${totalPoints > 0 ? ((earnedPoints / totalPoints) * 100).toFixed(1) : 0}%`);
-
-      console.log(`\n📊 Fetching member contributions for current week...`);
-      const activeMembers = await prisma.groupMember.findMany({
-        where: {
-          groupId,
-          isActive: true,
-          inRotation: true
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true,
-              assignments: {
-                where: {
-                  rotationWeek: group?.currentRotationWeek || 1,
-                  task: { groupId }
-                },
-                select: {
-                  id: true,
-                  completed: true,
-                  verified: true,
-                  points: true,
-                  task: {
-                    select: {
-                      title: true
-                    }
+    console.log(`\n📊 Fetching member contributions for current week...`);
+    const activeMembers = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        isActive: true,
+        inRotation: true
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true,
+            assignments: {
+              where: {
+                rotationWeek: group?.currentRotationWeek || 1,
+                task: { groupId }
+              },
+              select: {
+                id: true,
+                completed: true,
+                verified: true,
+                points: true,
+                task: {
+                  select: {
+                    title: true
                   }
                 }
               }
             }
           }
         }
-      });
-      console.log(`👥 Active members found: ${activeMembers.length}`);
+      }
+    });
+    console.log(`👥 Active members found: ${activeMembers.length}`);
 
-      const memberContributions = activeMembers
-        .map(item => {
-          const validUserAssignments = item.user.assignments.filter(a => a.task !== null);
-          
-          const totalAssignmentsCount = validUserAssignments.length;
-          const completedAssignmentsCount = validUserAssignments.filter(a => a.completed).length;
-          const verifiedAssignmentsCount = validUserAssignments.filter(a => a.verified === true).length;
-          
-          const earnedPointsTotal = validUserAssignments
-            .filter(a => a.verified === true)
-            .reduce((sum, a) => sum + (a.points || 0), 0);
+    const memberContributions = activeMembers
+      .map(item => {
+        const validUserAssignments = item.user.assignments.filter(a => a.task !== null);
+        
+        const totalAssignmentsCount = validUserAssignments.length;
+        const completedAssignmentsCount = validUserAssignments.filter(a => a.completed).length;
+        const verifiedAssignmentsCount = validUserAssignments.filter(a => a.verified === true).length;
+        
+        const earnedPointsTotal = validUserAssignments
+          .filter(a => a.verified === true)
+          .reduce((sum, a) => sum + (a.points || 0), 0);
 
-          console.log(`   Member: ${item.user.fullName}`);
-          console.log(`      Total: ${totalAssignmentsCount}, Completed: ${completedAssignmentsCount}, Verified: ${verifiedAssignmentsCount}, Earned: ${earnedPointsTotal}`);
+        console.log(`   Member: ${item.user.fullName}`);
+        console.log(`      Total: ${totalAssignmentsCount}, Completed: ${completedAssignmentsCount}, Verified: ${verifiedAssignmentsCount}, Earned: ${earnedPointsTotal}`);
 
-          return {
-            id: item.user.id,
-            fullName: item.user.fullName,
-            avatarUrl: item.user.avatarUrl,
-            totalAssignments: totalAssignmentsCount,
-            completedAssignments: completedAssignmentsCount,
-            verifiedAssignments: verifiedAssignmentsCount,
-            earnedPoints: earnedPointsTotal,
-            inRotation: true
-          };
-        })
-        .filter(m => m.totalAssignments > 0);
+        return {
+          id: item.user.id,
+          fullName: item.user.fullName,
+          avatarUrl: item.user.avatarUrl,
+          totalAssignments: totalAssignmentsCount,
+          completedAssignments: completedAssignmentsCount,
+          verifiedAssignments: verifiedAssignmentsCount,
+          earnedPoints: earnedPointsTotal,
+          inRotation: true
+        };
+      })
+      .filter(m => m.totalAssignments > 0);
 
-      console.log(`\n🏆 Member contributions (after filtering): ${memberContributions.length} members`);
-      memberContributions.sort((a, b) => b.earnedPoints - a.earnedPoints);
+    console.log(`\n🏆 Member contributions (after filtering): ${memberContributions.length} members`);
+    memberContributions.sort((a, b) => b.earnedPoints - a.earnedPoints);
 
-      const admins = await prisma.groupMember.findMany({
-        where: {
-          groupId,
-          isActive: true,
-          groupRole: "ADMIN"
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true
-            }
+    const admins = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        isActive: true,
+        groupRole: "ADMIN"
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
           }
         }
-      });
+      }
+    });
 
-      const adminList = admins.map(admin => ({
-        id: admin.user.id,
-        fullName: admin.user.fullName,
-        avatarUrl: admin.user.avatarUrl,
-        role: admin.groupRole
-      }));
+    const adminList = admins.map(admin => ({
+      id: admin.user.id,
+      fullName: admin.user.fullName,
+      avatarUrl: admin.user.avatarUrl,
+      role: admin.groupRole
+    }));
 
-      console.log(`\n✅ [getGroupActivitySummary] COMPLETED`);
-      console.log(`   Total earned points from memberContributions: ${memberContributions.reduce((sum, m) => sum + m.earnedPoints, 0)}`);
-      console.log(`   Summary points.earned: ${earnedPoints}`);
-      console.log(`   Neglected count: ${neglectedAssignments}`);
-      console.log(`🔍🔍🔍 [getGroupActivitySummary] END 🔍🔍🔍\n`);
+    console.log(`\n✅ [getGroupActivitySummary] COMPLETED`);
+    console.log(`   Total earned points from memberContributions: ${memberContributions.reduce((sum, m) => sum + m.earnedPoints, 0)}`);
+    console.log(`   Summary points.earned: ${earnedPoints}`);
+    console.log(`   Neglected count: ${neglectedAssignments}`);
+    console.log(`   Pending verification count: ${pendingVerification}`);
+    console.log(`🔍🔍🔍 [getGroupActivitySummary] END 🔍🔍🔍\n`);
 
-      return {
-        success: true,
-        message: "Group activity summary retrieved",
-        data: {
-          summary: {
-            totalMembers,
-            adminCount,
-            membersInRotation,
-            membersNotInRotation,
-            totalTasks,
-            currentWeek: group?.currentRotationWeek || 1,
-            assignments: {
-              total: totalAssignments,
-              completed: completedAssignments,
-              pendingVerification,
-              verified: verifiedAssignments,
-              rejected: rejectedAssignments,
-              neglected: neglectedAssignments
-            },
-            points: {
-              total: totalPoints,
-              earned: earnedPoints,
-              completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
-            }
+    return {
+      success: true,
+      message: "Group activity summary retrieved",
+      data: {
+        summary: {
+          totalMembers,
+          adminCount,
+          membersInRotation,
+          membersNotInRotation,
+          totalTasks,
+          currentWeek: group?.currentRotationWeek || 1,
+          assignments: {
+            total: totalAssignments,
+            completed: completedAssignments,
+            pendingVerification,
+            verified: verifiedAssignments,
+            rejected: rejectedAssignments,
+            neglected: neglectedAssignments
           },
-          memberContributions,
-          admins: adminList,
-          rotationInfo: {
-            hasEnoughMembers: membersInRotation >= Math.ceil(totalTasks / 5),
-            membersNeeded: Math.max(0, Math.ceil(totalTasks / 5) - membersInRotation),
-            tasksPerMember: membersInRotation > 0 ? (totalTasks / membersInRotation).toFixed(1) : 0
+          points: {
+            total: totalPoints,
+            earned: earnedPoints,
+            completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
           }
+        },
+        memberContributions,
+        admins: adminList,
+        rotationInfo: {
+          hasEnoughMembers: membersInRotation >= Math.ceil(totalTasks / 5),
+          membersNeeded: Math.max(0, Math.ceil(totalTasks / 5) - membersInRotation),
+          tasksPerMember: membersInRotation > 0 ? (totalTasks / membersInRotation).toFixed(1) : 0
         }
-      };
+      }
+    };
 
-    } catch (error: any) {
-      console.error("❌ GroupActivityService.getGroupActivitySummary error:", error);
-      return { success: false, message: error.message || "Error retrieving activity summary" };
-    }
+  } catch (error: any) {
+    console.error("❌ GroupActivityService.getGroupActivitySummary error:", error);
+    return { success: false, message: error.message || "Error retrieving activity summary" };
   }
+}
+
 
   // ========== GET COMPLETION HISTORY ==========
   static async getCompletionHistory(
@@ -738,180 +747,193 @@ weeks[weekNum].assignments.push({
     }
   }
 
-  // ===== ADMIN DASHBOARD DATA =====
-  static async getAdminDashboard(groupId: string, userId: string) {
-    try {
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId, groupRole: "ADMIN" }
-      });
+  // In group.activity.services.ts - FULLY UPDATED getAdminDashboard
 
-      if (!membership) {
-        return { success: false, message: "Only admins can access admin dashboard" };
-      }
+static async getAdminDashboard(groupId: string, userId: string) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId, groupRole: "ADMIN" }
+    });
 
-      const group = await prisma.group.findUnique({
-        where: { id: groupId },
-        select: { 
-          name: true,
-          currentRotationWeek: true,
-          createdAt: true,
-          maxMembers: true
-        }
-      });
-
-      const members = await prisma.groupMember.findMany({
-        where: { groupId, isActive: true },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true
-            }
-          }
-        }
-      });
-
-      const admins = members.filter(m => m.groupRole === "ADMIN");
-      const membersInRotation = members.filter(m => m.inRotation);
-
-      const tasks = await prisma.task.findMany({
-        where: { groupId, isDeleted: false },
-        include: {
-          _count: {
-            select: { assignments: true }
-          }
-        }
-      });
-
-      const currentWeekAssignments = await prisma.assignment.findMany({
-        where: {
-          task: { groupId },
-          rotationWeek: group?.currentRotationWeek || 1
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true
-            }
-          },
-          task: {
-            include: {
-              timeSlots: true
-            }
-          },
-          timeSlot: true
-        }
-      });
-
-      const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
-      const now = new Date();
-
-      const totalAssignments = validAssignments.length;
-      const completedAssignments = validAssignments.filter(a => a.completed === true).length;
-      const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
-      const pendingAssignments = validAssignments.filter(a => !a.completed && !a.expired).length;
-      
-      // ✅ FIXED: Use UTC for date comparison
-      const expiredAssignmentsList = validAssignments.filter(a => {
-        if (a.expired === true) return a.verified !== true;
-        if (a.completed) return false;
-        const dueDate = new Date(a.dueDate);
-        return dueDate.getTime() < now.getTime() && a.verified !== true;
-      });
-      const expiredCount = expiredAssignmentsList.length;
-      
-      const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-      const earnedPoints = validAssignments
-        .filter(a => a.verified === true)
-        .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-
-      const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
-      const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-
-      const neglectedByMember: Record<string, { count: number; points: number; name: string }> = {};
-      expiredAssignmentsList.forEach((assignment: any) => {
-        const memberId = assignment.userId;
-        const member = members.find(m => m.userId === memberId);
-        const memberName = member?.user?.fullName || 'Unknown';
-        
-        if (!neglectedByMember[memberId]) {
-          neglectedByMember[memberId] = { count: 0, points: 0, name: memberName };
-        }
-        neglectedByMember[memberId].count++;
-        neglectedByMember[memberId].points += (assignment.points || 0);
-      });
-
-      console.log('📊 [AdminDashboard] Assignment-level Stats:', {
-        totalAssignments,
-        completedAssignments,
-        verifiedAssignments,
-        pendingAssignments,
-        expiredCount,
-        totalPoints,
-        earnedPoints,
-        completionPercentage: completionPercentage.toFixed(1),
-        neglectedPoints
-      });
-
-      return {
-        success: true,
-        message: "Admin dashboard data retrieved",
-        data: {
-          group: {
-            name: group?.name,
-            currentWeek: group?.currentRotationWeek || 1,
-            createdAt: group?.createdAt,
-            maxMembers: group?.maxMembers || 6,
-            memberCount: members.length,
-            slotsAvailable: Math.max(0, (group?.maxMembers || 6) - members.length)
-          },
-          stats: {
-            totalMembers: members.length,
-            admins: admins.length,
-            membersInRotation: membersInRotation.length,
-            totalTasks: tasks.length,
-            recurringTasks: tasks.filter(t => t.isRecurring).length,
-            weeklyCompletion: {
-              total: totalAssignments,
-              completed: verifiedAssignments,
-              pending: pendingAssignments,
-              percentage: completionPercentage,
-              activeTotal: totalAssignments - expiredCount
-            },
-            points: {
-              total: totalPoints,
-              earned: earnedPoints,
-              pendingVerification: 0,
-              rejected: 0
-            },
-            neglected: {
-              count: expiredCount,
-              points: neglectedPoints,
-              byMember: neglectedByMember
-            }
-          },
-          members: members.map(m => ({
-            id: m.userId,
-            fullName: m.user.fullName,
-            avatarUrl: m.user.avatarUrl,
-            role: m.groupRole,
-            inRotation: m.inRotation,
-            isActive: m.isActive,
-            points: m.cumulativePoints,
-            neglectedCount: neglectedByMember[m.userId]?.count || 0,
-            neglectedPoints: neglectedByMember[m.userId]?.points || 0
-          }))
-        }
-      }; 
-
-    } catch (error: any) {
-      console.error("Error in getAdminDashboard:", error);
-      return { success: false, message: error.message };
+    if (!membership) {
+      return { success: false, message: "Only admins can access admin dashboard" };
     }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { 
+        name: true,
+        currentRotationWeek: true,
+        createdAt: true,
+        maxMembers: true
+      }
+    });
+
+    const members = await prisma.groupMember.findMany({
+      where: { groupId, isActive: true },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    const admins = members.filter(m => m.groupRole === "ADMIN");
+    const membersInRotation = members.filter(m => m.inRotation);
+
+    const tasks = await prisma.task.findMany({
+      where: { groupId, isDeleted: false },
+      include: {
+        _count: {
+          select: { assignments: true }
+        }
+      }
+    });
+
+    const currentWeekAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group?.currentRotationWeek || 1
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        },
+        task: {
+          include: {
+            timeSlots: true
+          }
+        },
+        timeSlot: true
+      }
+    });
+
+    const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
+    const now = new Date();
+
+    const totalAssignments = validAssignments.length;
+    const completedAssignments = validAssignments.filter(a => a.completed === true).length;
+    const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
+    
+    // ✅ FIXED: Pending assignments = not completed, not expired, no photo
+    const pendingAssignments = validAssignments.filter(a => 
+      !a.completed && !a.expired && a.photoUrl === null
+    ).length;
+    
+    // ✅ FIXED: Pending verification = has photo AND not verified (submitted but waiting for admin)
+    const pendingVerificationCount = validAssignments.filter(a => 
+      a.photoUrl !== null && a.verified === null
+    ).length;
+    
+    // ✅ FIXED: Use UTC for date comparison
+    const expiredAssignmentsList = validAssignments.filter(a => {
+      if (a.expired === true) return a.verified !== true;
+      if (a.completed) return false;
+      if (a.photoUrl !== null) return false; // Skip pending verification
+      const dueDate = new Date(a.dueDate);
+      return dueDate.getTime() < now.getTime() && a.verified !== true;
+    });
+    const expiredCount = expiredAssignmentsList.length;
+    
+    const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+
+    const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+    const neglectedPoints = expiredAssignmentsList.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+
+    const neglectedByMember: Record<string, { count: number; points: number; name: string }> = {};
+    expiredAssignmentsList.forEach((assignment: any) => {
+      const memberId = assignment.userId;
+      const member = members.find(m => m.userId === memberId);
+      const memberName = member?.user?.fullName || 'Unknown';
+      
+      if (!neglectedByMember[memberId]) {
+        neglectedByMember[memberId] = { count: 0, points: 0, name: memberName };
+      }
+      neglectedByMember[memberId].count++;
+      neglectedByMember[memberId].points += (assignment.points || 0);
+    });
+
+    console.log('📊 [AdminDashboard] Assignment-level Stats:', {
+      totalAssignments,
+      completedAssignments,
+      verifiedAssignments,
+      pendingAssignments,
+      pendingVerificationCount,
+      expiredCount,
+      totalPoints,
+      earnedPoints,
+      completionPercentage: completionPercentage.toFixed(1),
+      neglectedPoints
+    });
+
+    return {
+      success: true,
+      message: "Admin dashboard data retrieved",
+      data: {
+        group: {
+          name: group?.name,
+          currentWeek: group?.currentRotationWeek || 1,
+          createdAt: group?.createdAt,
+          maxMembers: group?.maxMembers || 6,
+          memberCount: members.length,
+          slotsAvailable: Math.max(0, (group?.maxMembers || 6) - members.length)
+        },
+        stats: {
+          totalMembers: members.length,
+          admins: admins.length,
+          membersInRotation: membersInRotation.length,
+          totalTasks: tasks.length,
+          recurringTasks: tasks.filter(t => t.isRecurring).length,
+          weeklyCompletion: {
+            total: totalAssignments,
+            completed: verifiedAssignments,
+            pending: pendingAssignments,
+            pendingVerification: pendingVerificationCount,
+            percentage: completionPercentage,
+            activeTotal: totalAssignments - expiredCount - pendingVerificationCount
+          },
+          points: {
+            total: totalPoints,
+            earned: earnedPoints,
+            pendingVerification: 0,
+            rejected: 0
+          },
+          neglected: {
+            count: expiredCount,
+            points: neglectedPoints,
+            byMember: neglectedByMember
+          }
+        },
+        members: members.map(m => ({
+          id: m.userId,
+          fullName: m.user.fullName,
+          avatarUrl: m.user.avatarUrl,
+          role: m.groupRole,
+          inRotation: m.inRotation,
+          isActive: m.isActive,
+          points: m.cumulativePoints,
+          neglectedCount: neglectedByMember[m.userId]?.count || 0,
+          neglectedPoints: neglectedByMember[m.userId]?.points || 0
+        }))
+      }
+    }; 
+
+  } catch (error: any) {
+    console.error("Error in getAdminDashboard:", error);
+    return { success: false, message: error.message };
   }
+}
 
   // ===== MEMBER DASHBOARD DATA =====
   static async getMemberDashboard(groupId: string, userId: string) {
