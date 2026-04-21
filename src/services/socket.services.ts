@@ -11,11 +11,11 @@ import {
   AssignmentPendingVerificationPayload,
   AssignmentVerifiedPayload,
   SwapRequestedPayload,
-  SwapRespondedPayload, 
+  SwapRespondedPayload,  
   GroupMemberJoinedPayload, 
   GroupMemberLeftPayload,
   GroupMemberRoleChangedPayload,
-  RotationCompletedPayload, 
+  RotationCompletedPayload,  
   NotificationNewPayload, 
   AssignmentCreatedPayload,
   GroupCreatedPayload
@@ -1010,4 +1010,184 @@ static async emitFeedbackDeletedForUser(userId: string, feedbackId: string) {
     console.error('SocketService.emitFeedbackDeletedForUser error:', error);
   }
 }
+
+// Add these methods to your SocketService class
+
+// ========== REPORT DELETE EVENTS ==========
+
+static async emitReportDeleted(
+  adminIds: string[],
+  reportId: string,
+  groupId: string,
+  groupName: string,
+  reporterId: string,
+  reporterName: string,
+  deletedBy: string,
+  hardDelete: boolean
+) {
+  try {
+    const payload = {
+      reportId,
+      groupId,
+      groupName,
+      reporterId,
+      reporterName,
+      deletedBy,
+      hardDelete,
+      deletedAt: new Date()
+    };
+    
+    emitToUsers(adminIds, 'report:deleted', payload);
+    console.log(`📢 Emitted report deletion to ${adminIds.length} admins`);
+  } catch (error) {
+    console.error('SocketService.emitReportDeleted error:', error);
+  }
+}
+
+static async emitReportDeletedToUser(
+  userId: string,
+  reportId: string,
+  groupId: string,
+  groupName: string,
+  deletedBy: string
+) {
+  try {
+    const payload = {
+      reportId,
+      groupId,
+      groupName,
+      deletedBy,
+      deletedAt: new Date()
+    };
+    
+    emitToUser(userId, 'report:deleted:user', payload);
+    console.log(`📢 Emitted report deletion to user ${userId}`);
+  } catch (error) {
+    console.error('SocketService.emitReportDeletedToUser error:', error);
+  }
+}
+
+// Add these methods to your SocketService class
+
+// ========== ADMIN NOTIFICATION DELETE EVENTS ==========
+
+static async emitAdminNotificationDeleted(
+  adminId: string,
+  notificationId: string
+) {
+  try {
+    const payload = {
+      notificationId,
+      deletedAt: new Date()
+    };
+    
+    emitToUser(adminId, 'notification:deleted', payload);
+    console.log(`📢 Emitted notification deleted event to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationDeleted error:', error);
+  }
+}
+
+static async emitAdminNotificationsDeletedAll(
+  adminId: string,
+  count: number
+) {
+  try {
+    const payload = {
+      count,
+      deletedAt: new Date()
+    };
+    
+    emitToUser(adminId, 'notification:deleted:all', payload);
+    console.log(`📢 Emitted all notifications deleted event to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationsDeletedAll error:', error);
+  }
+}
+
+static async emitAdminNotificationsDeletedRead(
+  adminId: string,
+  count: number
+) {
+  try {
+    const payload = {
+      count,
+      deletedAt: new Date()
+    };
+    
+    emitToUser(adminId, 'notification:deleted:read', payload);
+    console.log(`📢 Emitted read notifications deleted event to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationsDeletedRead error:', error);
+  }
+}
+
+// Add these methods to your SocketService class (after the notification events section)
+
+// ========== ADMIN NOTIFICATION EVENTS ==========
+
+static async emitAdminNotificationNew(
+  adminId: string,
+  notificationId: string,
+  type: string,
+  title: string,
+  message: string,
+  data?: any
+) {
+  try {
+    const payload = {
+      notificationId,
+      type,
+      title,
+      message,
+      data,
+      createdAt: new Date()
+    };
+    
+    emitToUser(adminId, 'notification:new', payload);
+    console.log(`📢 Emitted new admin notification to ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationNew error:', error);
+  }
+}
+
+static async emitAdminNotificationRead(
+  adminId: string,
+  notificationId: string
+) {
+  try {
+    const payload = {
+      notificationId,
+      readAt: new Date()
+    };
+    
+    emitToUser(adminId, 'notification:read', payload);
+    console.log(`📢 Emitted notification read event to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationRead error:', error);
+  }
+}
+
+static async emitAdminNotificationReadAll(
+  adminId: string
+) {
+  try {
+    emitToUser(adminId, 'notification:read:all', { readAt: new Date() });
+    console.log(`📢 Emitted all notifications read event to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationReadAll error:', error);
+  }
+}
+
+static async emitAdminNotificationCountRefresh(
+  adminId: string
+) {
+  try {
+    emitToUser(adminId, 'notification:count:refresh', { timestamp: new Date() });
+    console.log(`📢 Emitted notification count refresh to admin ${adminId}`);
+  } catch (error) {
+    console.error('SocketService.emitAdminNotificationCountRefresh error:', error);
+  }
+}
+
 }

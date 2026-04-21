@@ -407,6 +407,7 @@ model SwapRequest {
   @@map("swap_requests")
 }
 
+
 // ============= REPORT MODEL - GROUP ONLY =============
 model Report {
   id          String       @id @default(uuid())
@@ -421,10 +422,14 @@ model Report {
   resolutionNotes String?   @db.Text
   resolvedAt      DateTime?
 
-  // Relationships - FIXED with unique relation names
+  // ===== SOFT DELETE FIELDS =====
+  deletedAt       DateTime?   // When the report was soft deleted
+  deletedBy       String?     // Admin ID who deleted it (just store the ID, no relation)
+
+  // Relationships
   reporter User         @relation("UserReports", fields: [reporterId], references: [id], onDelete: Cascade)
   group    Group        @relation("GroupReports", fields: [groupId], references: [id], onDelete: Cascade)
-  resolver SystemAdmin? @relation("ResolvedReports", fields: [resolvedBy], references: [id]) // 👈 FIXED: Added relation name
+  resolver SystemAdmin? @relation("ResolvedReports", fields: [resolvedBy], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -433,6 +438,7 @@ model Report {
   @@index([reporterId])
   @@index([status])
   @@index([createdAt])
+  @@index([deletedAt])
   @@map("reports")
 }
 

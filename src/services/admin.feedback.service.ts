@@ -1,5 +1,3 @@
-// services/admin.feedback.service.ts - FULLY UPDATED with real-time
-
 import prisma from "../prisma";
 import { UserNotificationService } from "./user.notification.services";
 import { emitToUser, emitToUsers } from '../socket';
@@ -18,6 +16,9 @@ export class AdminFeedbackService {
   
   // ========== GET ALL FEEDBACK WITH FILTERS ==========
   static async getFeedback(filters: FeedbackFilters = {}) {
+    console.log('📊 [SERVICE] getFeedback - START');
+    console.log('  Filters:', JSON.stringify(filters, null, 2));
+    
     try {
       const {
         status,
@@ -30,19 +31,28 @@ export class AdminFeedbackService {
       } = filters;
 
       const skip = (page - 1) * limit;
+      console.log(`  📄 Pagination: page=${page}, limit=${limit}, skip=${skip}`);
 
       const where: any = {};
 
-      if (status) where.status = status;
-      if (type) where.type = type;
+      if (status) {
+        where.status = status;
+        console.log(`  🏷️ Status filter: ${status}`);
+      }
+      if (type) {
+        where.type = type;
+        console.log(`  🏷️ Type filter: ${type}`);
+      }
       if (search) {
         where.OR = [
           { message: { contains: search } },
           { user: { fullName: { contains: search } } },
           { user: { email: { contains: search } } }
         ];
+        console.log(`  🔍 Search filter: ${search}`);
       }
 
+      console.log('  🔍 Executing database queries...');
       const [feedback, total] = await Promise.all([
         prisma.feedback.findMany({
           where,
@@ -63,6 +73,9 @@ export class AdminFeedbackService {
         prisma.feedback.count({ where })
       ]);
 
+      console.log(`  ✅ Found ${feedback.length} feedback items (total: ${total})`);
+      console.log('📊 [SERVICE] getFeedback - END');
+
       return {
         success: true,
         message: "Feedback retrieved successfully",
@@ -70,13 +83,15 @@ export class AdminFeedbackService {
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedback error:", error);
+      console.error('💥 [SERVICE] getFeedback ERROR:', error);
       return { success: false, message: error.message || "Failed to retrieve feedback" };
     }
   }
 
   // ========== GET SINGLE FEEDBACK DETAILS ==========
   static async getFeedbackById(feedbackId: string) {
+    console.log(`🔍 [SERVICE] getFeedbackById - ID: ${feedbackId}`);
+    
     try {
       const feedback = await prisma.feedback.findUnique({
         where: { id: feedbackId },
@@ -95,90 +110,117 @@ export class AdminFeedbackService {
       });
 
       if (!feedback) {
+        console.log(`❌ [SERVICE] Feedback not found: ${feedbackId}`);
         return { success: false, message: "Feedback not found" };
       }
 
+      console.log(`✅ [SERVICE] Feedback found: ${feedbackId}, type: ${feedback.type}`);
       return { success: true, message: "Feedback details retrieved", data: feedback };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedbackById error:", error);
+      console.error(`💥 [SERVICE] getFeedbackById ERROR for ${feedbackId}:`, error);
       return { success: false, message: error.message || "Failed to retrieve feedback" };
     }
   }
 
-// ========== UPDATE FEEDBACK STATUS (WITH REAL-TIME) ==========
-static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: string) {
-  try {
-    // Get original feedback for old status
-    const originalFeedback = await prisma.feedback.findUnique({
-      where: { id: feedbackId },
-      include: { user: { select: { id: true, fullName: true, email: true } } }
-    });
-
-    if (!originalFeedback) {
-      return { success: false, message: "Feedback not found" };
-    }
-
-    const oldStatus = originalFeedback.status;
-
-    const feedback = await prisma.feedback.update({
-      where: { id: feedbackId },
-      data: { status, updatedAt: new Date() },
-      include: {
-        user: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
-      }
-    });
-
-    // Get admin info if provided
-    let adminName = 'System';
-    if (adminId) {
-      const admin = await prisma.systemAdmin.findUnique({
-        where: { id: adminId },
-        select: { fullName: true }
+  // ========== UPDATE FEEDBACK STATUS (WITH REAL-TIME) ==========
+  static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: string) {
+    console.log('═══════════════════════════════════════════════════');
+    console.log('🔄🔄🔄 [SERVICE] updateFeedbackStatus - START 🔄🔄🔄');
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`  📝 Input: feedbackId=${feedbackId}, newStatus=${status}, adminId=${adminId}`);
+    
+    try {
+      // Get original feedback for old status
+      console.log('  🔍 Step 1: Fetching original feedback...');
+      const originalFeedback = await prisma.feedback.findUnique({
+        where: { id: feedbackId },
+        include: { user: { select: { id: true, fullName: true, email: true } } }
       });
-      if (admin) adminName = admin.fullName;
-    }
 
-    // ========== NOTIFY USER ==========
-    await UserNotificationService.createNotification({
-      userId: feedback.userId,
-      type: "FEEDBACK_STATUS_UPDATE",
-      title: `Feedback ${status}`,
-      message: `Your feedback "${feedback.message.substring(0, 50)}..." has been marked as ${status} by ${adminName}`,
-      data: {
-        feedbackId: feedback.id,
-        oldStatus,
-        newStatus: status,
-        updatedBy: adminId || 'SYSTEM',
-        updatedByName: adminName
+      if (!originalFeedback) {
+        console.log(`  ❌ Feedback not found: ${feedbackId}`);
+        return { success: false, message: "Feedback not found" };
       }
-    });
 
-    // ========== EMIT REAL-TIME SOCKET EVENT TO USER ==========
-    emitToUser(
-      feedback.userId,
-      'feedback:status',
-      {
+      const oldStatus = originalFeedback.status;
+      console.log(`  ✅ Original feedback found:`);
+      console.log(`     - oldStatus: ${oldStatus}`);
+      console.log(`     - userId: ${originalFeedback.userId}`);
+      console.log(`     - user: ${originalFeedback.user?.fullName}`);
+      console.log(`     - message preview: ${originalFeedback.message?.substring(0, 50)}`);
+
+      // Update feedback
+      console.log('  🔄 Step 2: Updating feedback status in database...');
+      const feedback = await prisma.feedback.update({
+        where: { id: feedbackId },
+        data: { status, updatedAt: new Date() },
+        include: {
+          user: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+        }
+      });
+      console.log(`  ✅ Database updated: status changed from ${oldStatus} to ${feedback.status}`);
+
+      // Get admin info if provided
+      let adminName = 'System';
+      if (adminId) {
+        console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
+        const admin = await prisma.systemAdmin.findUnique({
+          where: { id: adminId },
+          select: { fullName: true }
+        });
+        if (admin) {
+          adminName = admin.fullName;
+          console.log(`  ✅ Admin found: ${adminName}`);
+        } else {
+          console.log(`  ⚠️ Admin not found for ID: ${adminId}`);
+        }
+      } else {
+        console.log(`  ⚠️ No adminId provided, using "System" as admin name`);
+      }
+
+      // ========== NOTIFY USER ==========
+      console.log('  🔔 Step 4: Creating user notification...');
+      await UserNotificationService.createNotification({
+        userId: feedback.userId,
+        type: "FEEDBACK_STATUS_UPDATE",
+        title: `Feedback ${status}`,
+        message: `Your feedback "${feedback.message.substring(0, 50)}..." has been marked as ${status} by ${adminName}`,
+        data: {
+          feedbackId: feedback.id,
+          oldStatus,
+          newStatus: status,
+          updatedBy: adminId || 'SYSTEM',
+          updatedByName: adminName
+        }
+      });
+      console.log(`  ✅ User notification created for user: ${feedback.userId}`);
+
+      // ========== EMIT REAL-TIME SOCKET EVENT TO USER ==========
+      console.log('  📡 Step 5: Emitting socket event to user...');
+      const userPayload = {
         feedbackId: feedback.id,
         oldStatus,
         newStatus: status,
         updatedBy: adminId || 'SYSTEM',
         updatedByName: adminName,
         updatedAt: new Date()
-      }
-    );
+      };
+      console.log(`  📤 Emitting to user ${feedback.userId}:`, userPayload);
+      emitToUser(feedback.userId, 'feedback:status', userPayload);
+      console.log(`  ✅ Emitted to user`);
 
-    // ========== NOTIFY OTHER ADMINS ==========
-    const otherAdmins = await prisma.systemAdmin.findMany({
-      where: { id: { not: adminId || '' }, isActive: true },
-      select: { id: true }
-    });
+      // ========== NOTIFY OTHER ADMINS ==========
+      console.log('  📡 Step 6: Notifying other admins...');
+      const otherAdmins = await prisma.systemAdmin.findMany({
+        where: { id: { not: adminId || '' }, isActive: true },
+        select: { id: true }
+      });
+      console.log(`  👥 Found ${otherAdmins.length} other admins`);
 
-    if (otherAdmins.length > 0) {
-      emitToUsers(
-        otherAdmins.map(a => a.id),
-        'feedback:status',
-        {
+      if (otherAdmins.length > 0) {
+        const adminIds = otherAdmins.map(a => a.id);
+        const adminPayload = {
           feedbackId: feedback.id,
           userName: feedback.user?.fullName,
           oldStatus,
@@ -186,45 +228,74 @@ static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: 
           updatedBy: adminId || 'SYSTEM',
           updatedByName: adminName,
           updatedAt: new Date()
-        }
-      );
+        };
+        console.log(`  📤 Emitting to ${adminIds.length} admins:`, adminPayload);
+        emitToUsers(adminIds, 'feedback:status', adminPayload);
+        console.log(`  ✅ Emitted to admins`);
+      } else {
+        console.log(`  ℹ️ No other admins to notify`);
+      }
+
+      console.log(`═══════════════════════════════════════════════════`);
+      console.log(`✅✅✅ SUCCESS: ${adminName} updated feedback ${feedbackId}`);
+      console.log(`     Status: ${oldStatus} → ${status}`);
+      console.log(`═══════════════════════════════════════════════════`);
+
+      return {
+        success: true,
+        message: `Feedback status updated to ${status}`,
+        data: feedback
+      };
+
+    } catch (error: any) {
+      console.error('💥💥💥 [SERVICE] updateFeedbackStatus ERROR:', error);
+      console.log('═══════════════════════════════════════════════════');
+      return { success: false, message: error.message || "Failed to update feedback status" };
     }
-
-    console.log(`📢 ${adminName} updated feedback ${feedbackId} status from ${oldStatus} to ${status}`);
-
-    return {
-      success: true,
-      message: `Feedback status updated to ${status}`,
-      data: feedback
-    };
-
-  } catch (error: any) {
-    console.error("AdminFeedbackService.updateFeedbackStatus error:", error);
-    return { success: false, message: error.message || "Failed to update feedback status" };
   }
-}
+
   // ========== DELETE FEEDBACK (WITH REAL-TIME) ==========
   static async deleteFeedback(feedbackId: string, adminId: string) {
+    console.log('═══════════════════════════════════════════════════');
+    console.log('🗑️🗑️🗑️ [SERVICE] deleteFeedback - START 🗑️🗑️🗑️');
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`  📝 Input: feedbackId=${feedbackId}, adminId=${adminId}`);
+    
     try {
       // Get feedback before deleting
+      console.log('  🔍 Step 1: Fetching feedback to delete...');
       const feedback = await prisma.feedback.findUnique({
         where: { id: feedbackId },
         include: { user: { select: { id: true, fullName: true } } }
       });
 
       if (!feedback) {
+        console.log(`  ❌ Feedback not found: ${feedbackId}`);
         return { success: false, message: "Feedback not found" };
       }
 
+      console.log(`  ✅ Feedback found:`);
+      console.log(`     - userId: ${feedback.userId}`);
+      console.log(`     - user: ${feedback.user?.fullName}`);
+      console.log(`     - type: ${feedback.type}`);
+      console.log(`     - message: ${feedback.message?.substring(0, 50)}`);
+
+      // Delete feedback
+      console.log('  🗑️ Step 2: Deleting feedback from database...');
       await prisma.feedback.delete({ where: { id: feedbackId } });
+      console.log(`  ✅ Feedback deleted from database`);
 
       // Get admin info
+      console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
       const admin = await prisma.systemAdmin.findUnique({
         where: { id: adminId },
         select: { fullName: true }
       });
+      const adminName = admin?.fullName || 'Admin';
+      console.log(`  ✅ Admin: ${adminName}`);
 
       // ========== NOTIFY USER ==========
+      console.log('  🔔 Step 4: Creating user notification for deletion...');
       await UserNotificationService.createNotification({
         userId: feedback.userId,
         type: "FEEDBACK_DELETED",
@@ -232,54 +303,65 @@ static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: 
         message: `Your feedback has been deleted by an administrator.`,
         data: { feedbackId, type: feedback.type }
       });
+      console.log(`  ✅ User notification created for user: ${feedback.userId}`);
 
       // ========== EMIT REAL-TIME SOCKET EVENT ==========
-      emitToUser(
-        feedback.userId,
-        'feedback:deleted',
-        {
-          feedbackId: feedback.id,
-          type: feedback.type,
-          deletedBy: adminId,
-          deletedByName: admin?.fullName || 'Admin',
-          deletedAt: new Date()
-        }
-      );
+      console.log('  📡 Step 5: Emitting deletion socket event to user...');
+      const userPayload = {
+        feedbackId: feedback.id,
+        type: feedback.type,
+        deletedBy: adminId,
+        deletedByName: adminName,
+        deletedAt: new Date()
+      };
+      console.log(`  📤 Emitting to user ${feedback.userId}:`, userPayload);
+      emitToUser(feedback.userId, 'feedback:deleted', userPayload);
+      console.log(`  ✅ Emitted to user`);
 
       // ========== NOTIFY OTHER ADMINS ==========
+      console.log('  📡 Step 6: Notifying other admins about deletion...');
       const otherAdmins = await prisma.systemAdmin.findMany({
         where: { id: { not: adminId }, isActive: true },
         select: { id: true }
       });
+      console.log(`  👥 Found ${otherAdmins.length} other admins`);
 
       if (otherAdmins.length > 0) {
-        emitToUsers(
-          otherAdmins.map(a => a.id),
-          'feedback:deleted',
-          {
-            feedbackId: feedback.id,
-            userName: feedback.user?.fullName,
-            type: feedback.type,
-            deletedBy: adminId,
-            deletedByName: admin?.fullName || 'Admin',
-            deletedAt: new Date()
-          }
-        );
+        const adminIds = otherAdmins.map(a => a.id);
+        const adminPayload = {
+          feedbackId: feedback.id,
+          userName: feedback.user?.fullName,
+          type: feedback.type,
+          deletedBy: adminId,
+          deletedByName: adminName,
+          deletedAt: new Date()
+        };
+        console.log(`  📤 Emitting to ${adminIds.length} admins:`, adminPayload);
+        emitToUsers(adminIds, 'feedback:deleted', adminPayload);
+        console.log(`  ✅ Emitted to admins`);
+      } else {
+        console.log(`  ℹ️ No other admins to notify`);
       }
 
-      console.log(`📢 Admin ${admin?.fullName || adminId} deleted feedback ${feedbackId}`);
+      console.log(`═══════════════════════════════════════════════════`);
+      console.log(`✅✅✅ SUCCESS: Admin ${adminName} deleted feedback ${feedbackId}`);
+      console.log(`═══════════════════════════════════════════════════`);
 
       return { success: true, message: "Feedback deleted successfully" };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.deleteFeedback error:", error);
+      console.error('💥💥💥 [SERVICE] deleteFeedback ERROR:', error);
+      console.log('═══════════════════════════════════════════════════');
       return { success: false, message: error.message || "Failed to delete feedback" };
     }
   }
 
   // ========== GET FEEDBACK STATS ==========
   static async getFeedbackStats() {
+    console.log('📊 [SERVICE] getFeedbackStats - START');
+    
     try {
+      console.log('  🔍 Counting feedback by status...');
       const [open, inProgress, resolved, closed, total] = await Promise.all([
         prisma.feedback.count({ where: { status: "OPEN" } }),
         prisma.feedback.count({ where: { status: "IN_PROGRESS" } }),
@@ -288,13 +370,21 @@ static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: 
         prisma.feedback.count()
       ]);
 
+      console.log(`  📊 Status counts: OPEN=${open}, IN_PROGRESS=${inProgress}, RESOLVED=${resolved}, CLOSED=${closed}, TOTAL=${total}`);
+
+      console.log('  🔍 Grouping by type...');
       const byType = await prisma.feedback.groupBy({
         by: ['type'],
         _count: true
       });
 
       const typeStats: Record<string, number> = {};
-      byType.forEach(item => { typeStats[item.type] = item._count; });
+      byType.forEach(item => { 
+        typeStats[item.type] = item._count;
+        console.log(`     - ${item.type}: ${item._count}`);
+      });
+
+      console.log('📊 [SERVICE] getFeedbackStats - END');
 
       return {
         success: true,
@@ -303,83 +393,97 @@ static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: 
       };
 
     } catch (error: any) {
-      console.error("AdminFeedbackService.getFeedbackStats error:", error);
+      console.error('💥 [SERVICE] getFeedbackStats ERROR:', error);
       return { success: false, message: error.message || "Failed to retrieve stats" };
     }
   }
 
-// ✅ COMPLETE FIX for getFilteredFeedbackStats
-static async getFilteredFeedbackStats(filters?: { status?: string, type?: string, search?: string }) {
-  try {
-    const where: any = {};
+  // ========== GET FILTERED FEEDBACK STATS ==========
+  static async getFilteredFeedbackStats(filters?: { status?: string, type?: string, search?: string }) {
+    console.log('📊 [SERVICE] getFilteredFeedbackStats - START');
+    console.log('  Filters:', filters);
     
-    if (filters?.status) where.status = filters.status;
-    if (filters?.type) where.type = filters.type;
-    
-    if (filters?.search && filters.search.trim()) {
-      // Find users matching search first (no mode - works with MySQL/SQLite)
-      const matchingUsers = await prisma.user.findMany({
-        where: {
-          OR: [
-            { fullName: { contains: filters.search } },
-            { email: { contains: filters.search } }
-          ]
-        },
-        select: { id: true }
-      });
+    try {
+      const where: any = {};
       
-      const userIds = matchingUsers.map(u => u.id);
+      // Build the base where clause WITHOUT status filter for the breakdown
+      const baseWhere: any = {};
       
-      where.OR = [
-        { message: { contains: filters.search } },
-        ...(userIds.length > 0 ? [{ userId: { in: userIds } }] : [])
-      ];
-    }
-
-    console.log('📊 Filtered stats where clause:', JSON.stringify(where));
-
-    const total = await prisma.feedback.count({ where });
-
-    let open = 0, inProgress = 0, resolved = 0, closed = 0;
-
-    if (filters?.status) {
-      // If filtering by status, only that bucket gets the total — rest stay 0
-      switch (filters.status) {
-        case 'OPEN': open = total; break;
-        case 'IN_PROGRESS': inProgress = total; break;
-        case 'RESOLVED': resolved = total; break;
-        case 'CLOSED': closed = total; break;
+      if (filters?.type) {
+        baseWhere.type = filters.type;
+        console.log(`  🏷️ Type filter: ${filters.type}`);
       }
-    } else {
-      // No status filter — count each bucket using the same base where clause
-      [open, inProgress, resolved, closed] = await Promise.all([
-        prisma.feedback.count({ where: { ...where, status: "OPEN" } }),
-        prisma.feedback.count({ where: { ...where, status: "IN_PROGRESS" } }),
-        prisma.feedback.count({ where: { ...where, status: "RESOLVED" } }),
-        prisma.feedback.count({ where: { ...where, status: "CLOSED" } })
+      
+      if (filters?.search && filters.search.trim()) {
+        console.log(`  🔍 Search filter: ${filters.search}`);
+        const matchingUsers = await prisma.user.findMany({
+          where: {
+            OR: [
+              { fullName: { contains: filters.search } },
+              { email: { contains: filters.search } }
+            ]
+          },
+          select: { id: true }
+        });
+        
+        const userIds = matchingUsers.map(u => u.id);
+        console.log(`  👥 Found ${userIds.length} matching users`);
+        
+        baseWhere.OR = [
+          { message: { contains: filters.search } },
+          ...(userIds.length > 0 ? [{ userId: { in: userIds } }] : [])
+        ];
+      }
+
+      // For the main where clause (used for total), apply status filter if present
+      const mainWhere = { ...baseWhere };
+      if (filters?.status) {
+        mainWhere.status = filters.status;
+        console.log(`  🏷️ Status filter applied to mainWhere: ${filters.status}`);
+      }
+
+      console.log('  📊 BaseWhere (for breakdown):', JSON.stringify(baseWhere));
+      console.log('  📊 MainWhere (for total):', JSON.stringify(mainWhere));
+
+      // Get total count with status filter applied
+      const total = await prisma.feedback.count({ where: mainWhere });
+      console.log(`  📊 Total with status filter: ${total}`);
+
+      // Get breakdown counts WITHOUT status filter
+      console.log('  🔍 Getting breakdown counts...');
+      const [open, inProgress, resolved, closed] = await Promise.all([
+        prisma.feedback.count({ where: { ...baseWhere, status: "OPEN" } }),
+        prisma.feedback.count({ where: { ...baseWhere, status: "IN_PROGRESS" } }),
+        prisma.feedback.count({ where: { ...baseWhere, status: "RESOLVED" } }),
+        prisma.feedback.count({ where: { ...baseWhere, status: "CLOSED" } })
       ]);
+
+      console.log(`  📊 Breakdown: OPEN=${open}, IN_PROGRESS=${inProgress}, RESOLVED=${resolved}, CLOSED=${closed}`);
+
+      console.log('  🔍 Getting type breakdown...');
+      const byType = await prisma.feedback.groupBy({
+        by: ['type'],
+        where: mainWhere,
+        _count: true
+      });
+
+      const typeStats: Record<string, number> = {};
+      byType.forEach(item => { 
+        typeStats[item.type] = item._count;
+        console.log(`     - ${item.type}: ${item._count}`);
+      });
+
+      console.log('📊 [SERVICE] getFilteredFeedbackStats - END');
+
+      return {
+        success: true,
+        message: "Filtered feedback stats retrieved",
+        data: { total, open, inProgress, resolved, closed, byType: typeStats }
+      };
+
+    } catch (error: any) {
+      console.error('💥 [SERVICE] getFilteredFeedbackStats ERROR:', error);
+      return { success: false, message: error.message || "Failed to retrieve filtered stats" };
     }
-
-    console.log('📊 Filtered stats results:', { total, open, inProgress, resolved, closed });
-
-    const byType = await prisma.feedback.groupBy({
-      by: ['type'],
-      where,
-      _count: true
-    });
-
-    const typeStats: Record<string, number> = {};
-    byType.forEach(item => { typeStats[item.type] = item._count; });
-
-    return {
-      success: true,
-      message: "Filtered feedback stats retrieved",
-      data: { total, open, inProgress, resolved, closed, byType: typeStats }
-    };
-
-  } catch (error: any) {
-    console.error("AdminFeedbackService.getFilteredFeedbackStats error:", error);
-    return { success: false, message: error.message || "Failed to retrieve filtered stats" };
   }
 }
-} 

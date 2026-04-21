@@ -4,7 +4,7 @@ import { AdminReportController } from "../controllers/admin.report.controller";
 import { AdminAuthMiddleware } from "../middlewares/admin.auth.middleware";
 import { AuditLog } from "../middlewares/admin.audit.middleware"; // 👈 ADD
 
-const router = Router();
+const router = Router(); 
 
 router.use(AdminAuthMiddleware);
 
@@ -20,6 +20,17 @@ router.put(
   AdminReportController.updateReportStatus
 );
 
+router.delete(
+  '/:reportId',
+  AuditLog('DELETE_REPORT', (req) => req.params.reportId as string),
+  AdminReportController.deleteReport
+);
+
+router.post(
+  '/bulk-delete',
+  AuditLog('BULK_DELETE_REPORTS'),
+  AdminReportController.bulkDeleteReports
+);
 router.post(
   '/bulk-update', 
   AuditLog('BULK_UPDATE_REPORTS'), // 👈 ADD AUDIT

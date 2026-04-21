@@ -12,9 +12,9 @@ export class AdminReportController {
   static async getAllReports(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
-
+ 
       if (!adminId) {
-        return res.status(401).json({
+        return res.status(401).json({ 
           success: false,
           message: "Admin not authenticated"
         });
@@ -413,4 +413,97 @@ static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
       });
     }
   }
+
+  // Add these methods to your AdminReportController class
+
+// ========== DELETE REPORT (ADMIN ONLY) ==========
+static async deleteReport(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    const { reportId } = req.params as { reportId: string };
+    const { hardDelete = false } = req.query;
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin not authenticated"
+      });
+    }
+
+    const result = await AdminReportService.deleteReport(
+      reportId,
+      adminId,
+      hardDelete === 'true'
+    );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: result.message,
+      data: result.data
+    });
+
+  } catch (error: any) {
+    console.error("Error in deleteReport:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
+// ========== BULK DELETE REPORTS (ADMIN ONLY) ==========
+static async bulkDeleteReports(req: AdminAuthRequest, res: Response) {
+  try {
+    const adminId = req.admin?.id;
+    const { reportIds, hardDelete = false } = req.body;
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Admin not authenticated"
+      });
+    }
+
+    if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Report IDs are required"
+      });
+    }
+
+    const result = await AdminReportService.bulkDeleteReports(
+      reportIds,
+      adminId,
+      hardDelete
+    );
+
+    if (result.success && result.data) {
+      return res.json({
+        success: true,
+        message: `Deleted ${result.data.successCount} of ${result.data.totalCount} reports`,
+        results: result.data
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: result.message || "Failed to delete reports"
+      });
+    }
+
+  } catch (error: any) {
+    console.error("Error in bulkDeleteReports:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
 }

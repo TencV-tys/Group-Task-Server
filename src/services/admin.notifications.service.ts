@@ -1,4 +1,7 @@
+// services/admin.notifications.service.ts - FULLY UPDATED WITH SOCKET EVENTS
+
 import prisma from "../prisma";
+import { SocketService } from "./socket.services";
 
 export interface NotificationFilters {
   read?: boolean;
@@ -16,7 +19,7 @@ export class AdminNotificationsService {
   static async getNotifications(adminId: string, filters: NotificationFilters = {}) {
     try {
       const {
-        read,
+        read, 
         priority,
         search,
         page = 1,
@@ -147,6 +150,10 @@ export class AdminNotificationsService {
         where: { id: notificationId }
       });
 
+      // ✅ Emit socket events for real-time updates
+      await SocketService.emitAdminNotificationRead(adminId, notificationId);
+      await SocketService.emitAdminNotificationCountRefresh(adminId);
+
       return {
         success: true,
         message: "Notification marked as read",
@@ -174,6 +181,10 @@ export class AdminNotificationsService {
           read: true
         }
       });
+
+      // ✅ Emit socket events for real-time updates
+      await SocketService.emitAdminNotificationReadAll(adminId);
+      await SocketService.emitAdminNotificationCountRefresh(adminId);
 
       return {
         success: true,
@@ -209,6 +220,10 @@ export class AdminNotificationsService {
         };
       }
 
+      // ✅ Emit socket events for real-time deletion
+      await SocketService.emitAdminNotificationDeleted(adminId, notificationId);
+      await SocketService.emitAdminNotificationCountRefresh(adminId);
+
       return {
         success: true,
         message: "Notification deleted successfully"
@@ -226,12 +241,24 @@ export class AdminNotificationsService {
   // ========== DELETE ALL READ NOTIFICATIONS ==========
   static async deleteAllRead(adminId: string) {
     try {
+      // First get the count
+      const count = await prisma.adminNotification.count({
+        where: {
+          adminId,
+          read: true
+        }
+      });
+
       const result = await prisma.adminNotification.deleteMany({
         where: {
           adminId,
           read: true
         }
       });
+
+      // ✅ Emit socket events for real-time deletion
+      await SocketService.emitAdminNotificationsDeletedRead(adminId, result.count);
+      await SocketService.emitAdminNotificationCountRefresh(adminId);
 
       return {
         success: true,
@@ -299,6 +326,19 @@ export class AdminNotificationsService {
         }
       });
 
+      // ✅ Emit socket event for new notification
+      await SocketService.emitAdminNotificationNew(
+        data.adminId,
+        notification.id,
+        data.type,
+        data.title,
+        data.message,
+        data.data
+      );
+      
+      // Also refresh count
+      await SocketService.emitAdminNotificationCountRefresh(data.adminId);
+
       return {
         success: true,
         message: "Notification created",
@@ -313,4 +353,34 @@ export class AdminNotificationsService {
       };
     }
   }
-}  
+
+  // ========== DELETE ALL NOTIFICATIONS (Admin only) ==========
+  static async deleteAllNotifications(adminId: string) {
+    try {
+      const result = await prisma.adminNotification.deleteMany({
+        where: {
+          adminId
+        }
+      });
+
+      // ✅ Emit socket events for real-time deletion
+      await SocketService.emitAdminNotificationsDeletedAll(adminId, result.count);
+      await SocketService.emitAdminNotificationCountRefresh(adminId);
+
+      return {
+        success: true,
+        message: `Deleted ${result.count} notifications`,
+        data: {
+          count: result.count
+        }
+      };
+
+    } catch (error: any) {
+      console.error("AdminNotificationsService.deleteAllNotifications error:", error);
+      return {
+        success: false,
+        message: error.message || "Failed to delete all notifications"
+      };
+    }
+  }
+}
