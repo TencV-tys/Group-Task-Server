@@ -1864,7 +1864,6 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   
   return isNeglected;
 }
-// In assignment.services.ts - FULLY UPDATED checkGroupNeglectedAssignments
 
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
@@ -1880,7 +1879,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     // Get current UTC date
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
-    // Get ALL assignments due TODAY that are not completed, not expired, no photo
+    // Get ALL assignments due TODAY that are not completed, not expired
+    // ✅ REMOVED photoUrl: null - we'll check in the loop
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -1888,7 +1888,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         completed: false,
         expired: false,
         expiredAt: null,
-        photoUrl: null,
         dueDate: {
           gte: todayUTC,
           lt: tomorrowUTC
@@ -1935,8 +1934,24 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
     for (const assignment of validAssignments) {
       console.log(`\n🔍 Checking assignment: ${assignment.task!.title}`);
+      console.log(`   ID: ${assignment.id}`);
       console.log(`   Due date: ${assignment.dueDate.toISOString()}`);
       console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+      console.log(`   Photo URL: ${assignment.photoUrl ? '✅ Yes (submitted - pending verification)' : '❌ No'}`);
+      console.log(`   Verified: ${assignment.verified}`);
+      console.log(`   Completed: ${assignment.completed}`);
+      
+      // ✅ SKIP if assignment has a photo (pending verification)
+      if (assignment.photoUrl) {
+        console.log(`   ⏭️ SKIPPING - Assignment has photo (pending verification), will not be marked as neglected`);
+        continue;
+      }
+      
+      // ✅ SKIP if assignment is already verified
+      if (assignment.verified === true) {
+        console.log(`   ⏭️ SKIPPING - Assignment already verified`);
+        continue;
+      }
       
       const assignmentAny = assignment as any;
       const completedSlotIds: string[] = Array.isArray(assignmentAny.completedTimeSlotIds)
@@ -2130,7 +2145,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           where: { id: assignment.id },
           data: {
             expired: true,
-            expiredAt: now
+            expiredAt: now,
+            notes: `[EXPIRED: Grace period ended at ${gracePeriodEnd.toISOString()}] ${assignment.notes || ''}`
           }
         });
 
@@ -2146,6 +2162,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             groupId,
             pointsLost,
             dueDate: assignment.dueDate.toISOString(),
+            gracePeriodEnd: gracePeriodEnd.toISOString(),
             detectedAt: now.toISOString()
           }
         });
@@ -2165,11 +2182,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               userName: assignment.user?.fullName || 'Unknown',
               pointsLost,
               dueDate: assignment.dueDate.toISOString(),
+              gracePeriodEnd: gracePeriodEnd.toISOString(),
               detectedAt: now.toISOString()
             }
           });
         }
-      }
+      } 
     }
 
     console.log(`\n📊 Neglect detection summary for group ${groupId}: ${neglectedCount} assignments marked as neglected`);
@@ -2529,4 +2547,4 @@ private static async markAssignmentAsNeglected(
 }
 
 
-} 
+}   

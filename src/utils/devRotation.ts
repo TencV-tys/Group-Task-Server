@@ -184,8 +184,8 @@ async function updateExpiredAssignments() {
   // Get assignments that are:
   // 1. Not completed
   // 2. Not already marked as expired
-  // 3. Due date is in the past
-  const expiredAssignments = await prisma.assignment.findMany({
+  // 3. Due date is today or in the past
+  const potentialExpiredAssignments = await prisma.assignment.findMany({
     where: {
       completed: false,
       expired: false,
@@ -199,43 +199,108 @@ async function updateExpiredAssignments() {
           timeSlots: true
         }
       },
-      user: true
+      user: true,
+      timeSlot: true
     }
   });
 
-  if (expiredAssignments.length === 0) {
-    console.log('   ✅ No expired assignments found');
+  if (potentialExpiredAssignments.length === 0) {
+    console.log('   ✅ No potential expired assignments found');
     return;
   }
 
-  console.log(`   ⚠️ Found ${expiredAssignments.length} expired assignments`);
+  console.log(`   ⚠️ Found ${potentialExpiredAssignments.length} potential expired assignments`);
 
   let totalPointsLost = 0;
+  let actualExpiredCount = 0;
 
-  for (const assignment of expiredAssignments) {
+  for (const assignment of potentialExpiredAssignments) {
+    // Skip if task is deleted
+    if (!assignment.task) {
+      console.log(`   ⏭️ Skipping assignment ${assignment.id} - task deleted`);
+      continue;
+    }
+    
     // Skip multi-slot tasks that still have pending slots
-    const isMultiSlot = assignment.task?.timeSlots && assignment.task.timeSlots.length > 1;
+    const isMultiSlot = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
     const completedSlotIds: string[] = (assignment as any).completedTimeSlotIds || [];
     const missedSlotIds: string[] = (assignment as any).missedTimeSlotIds || [];
     
     if (isMultiSlot) {
-      const totalSlots = assignment.task!.timeSlots.length;
+      const totalSlots = assignment.task.timeSlots.length;
       const accountedSlots = completedSlotIds.length + missedSlotIds.length;
       
       // If there are still pending slots, don't mark as fully expired
       if (accountedSlots < totalSlots) {
-        console.log(`   ⏭️ Skipping full expiry for ${assignment.id} - ${accountedSlots}/${totalSlots} slots accounted`);
+        console.log(`   ⏭️ Skipping full expiry for ${assignment.id} - ${accountedSlots}/${totalSlots} slots accounted (still pending)`);
+        continue;
+      }
+      
+      // If all slots are accounted but some completed, don't mark as expired
+      if (completedSlotIds.length > 0) {
+        console.log(`   ⏭️ Skipping full expiry for ${assignment.id} - ${completedSlotIds.length} slots completed, not fully expired`);
         continue;
       }
     }
+    
+    // ✅ Calculate the actual expiration time (dueDate + 30 minutes grace period)
+    let expirationTime: Date;
+    let gracePeriodEnd: Date;
+    
+    if (assignment.timeSlot) {
+      // Parse end time and add 30 minutes grace period
+      const [endHourRaw, endMinRaw] = assignment.timeSlot.endTime.split(':');
+      let endHour = parseInt(endHourRaw || '0', 10);
+      const endMin = parseInt(endMinRaw || '0', 10);
+      
+      // Convert PHT to UTC (subtract 8 hours)
+      endHour = endHour - 8;
+      if (endHour < 0) endHour += 24;
+      
+      const endTimeUTC = new Date(assignment.dueDate);
+      endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+      
+      // ✅ Grace period ends 30 minutes after end time
+      gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+      expirationTime = gracePeriodEnd;
+      
+      console.log(`   📅 Assignment ${assignment.id}:`);
+      console.log(`      End time UTC: ${endTimeUTC.toISOString()}`);
+      console.log(`      Grace period ends: ${gracePeriodEnd.toISOString()}`);
+      console.log(`      Current time: ${now.toISOString()}`);
+      
+    } else {
+      // No time slot - due date at end of day UTC + 30 minutes
+      const endOfDayUTC = new Date(assignment.dueDate);
+      endOfDayUTC.setUTCHours(23, 59, 59, 999);
+      gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
+      expirationTime = gracePeriodEnd;
+      
+      console.log(`   📅 Assignment ${assignment.id} (no time slot):`);
+      console.log(`      End of day UTC: ${endOfDayUTC.toISOString()}`);
+      console.log(`      Grace period ends: ${gracePeriodEnd.toISOString()}`);
+      console.log(`      Current time: ${now.toISOString()}`);
+    }
+    
+    // ✅ ONLY mark as expired if current time is AFTER the grace period ends
+    if (now <= gracePeriodEnd) {
+      const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
+      console.log(`   ⏰ Assignment ${assignment.id} STILL IN GRACE PERIOD (${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s remaining)`);
+      continue;
+    }
+    
+    console.log(`   ❌ Assignment ${assignment.id} IS EXPIRED (grace period ended at ${gracePeriodEnd.toISOString()})`);
+    console.log(`      Time overdue: ${Math.ceil((now.getTime() - gracePeriodEnd.getTime()) / 1000)} seconds`);
+    
+    actualExpiredCount++;
     
     // Calculate points lost
     let pointsLost = assignment.points || 0;
     
     if (isMultiSlot && completedSlotIds.length > 0) {
       // Only count points from uncompleted slots
-      const totalSlotPoints = assignment.task!.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
-      const completedPoints = assignment.task!.timeSlots
+      const totalSlotPoints = assignment.task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+      const completedPoints = assignment.task.timeSlots
         .filter(slot => completedSlotIds.includes(slot.id))
         .reduce((sum, slot) => sum + (slot.points || 0), 0);
       pointsLost = totalSlotPoints - completedPoints;
@@ -244,7 +309,7 @@ async function updateExpiredAssignments() {
     totalPointsLost += pointsLost;
     
     // ✅ DEDUCT POINTS FROM USER
-    if (pointsLost > 0 && assignment.task?.groupId) {
+    if (pointsLost > 0 && assignment.task.groupId) {
       await prisma.groupMember.updateMany({
         where: {
           userId: assignment.userId,
@@ -261,19 +326,20 @@ async function updateExpiredAssignments() {
       console.log(`   💰 Deducted ${pointsLost} points from user ${assignment.userId}`);
     }
     
+    // Update assignment as expired
     await prisma.assignment.update({
       where: { id: assignment.id },
       data: {
         expired: true,
         expiredAt: now,
-        notes: `[EXPIRED: Past due on ${assignment.dueDate.toISOString().split('T')[0]}] ${assignment.notes || ''}`
+        notes: `[EXPIRED: Past grace period on ${gracePeriodEnd.toISOString().split('T')[0]}] ${assignment.notes || ''}`
       }
     });
 
     // Get admins for notifications
     const admins = await prisma.groupMember.findMany({
       where: {
-        groupId: assignment.task!.groupId,
+        groupId: assignment.task.groupId,
         groupRole: "ADMIN",
         isActive: true
       },
@@ -288,18 +354,19 @@ async function updateExpiredAssignments() {
       type: "TASK_EXPIRED",
       title: "⚠️ Task Expired",
       message: isMultiSlot && completedSlotIds.length > 0
-        ? `"${assignment.task?.title || 'Task'}" had uncompleted time slots that have expired. You lost ${pointsLost} points.`
-        : `"${assignment.task?.title || 'Task'}" was not completed on time and has expired. No points awarded.`,
+        ? `"${assignment.task.title}" had uncompleted time slots that have expired. You lost ${pointsLost} points.`
+        : `"${assignment.task.title}" was not completed within the 30-minute grace period and has expired. You lost ${pointsLost} points.`,
       data: {
         assignmentId: assignment.id,
         taskId: assignment.taskId,
-        taskTitle: assignment.task?.title,
+        taskTitle: assignment.task.title,
         dueDate: assignment.dueDate,
+        gracePeriodEnd: gracePeriodEnd.toISOString(),
         expiredAt: now,
         pointsLost,
         isMultiSlot,
         completedSlots: completedSlotIds.length,
-        totalSlots: assignment.task?.timeSlots?.length || 1
+        totalSlots: assignment.task.timeSlots?.length || 1
       }
     });
 
@@ -309,24 +376,25 @@ async function updateExpiredAssignments() {
         userId: admin.userId,
         type: "NEGLECT_DETECTED",
         title: "⚠️ Task Expired",
-        message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task?.title}" - ${pointsLost} points deducted`,
+        message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task.title}" - ${pointsLost} points deducted`,
         data: {
           assignmentId: assignment.id,
           taskId: assignment.taskId,
-          taskTitle: assignment.task?.title,
+          taskTitle: assignment.task.title,
           userId: assignment.userId,
           userName: assignment.user?.fullName || 'Unknown',
           pointsLost,
           dueDate: assignment.dueDate,
+          gracePeriodEnd: gracePeriodEnd.toISOString(),
           detectedAt: now
         }
       });
     }
 
-    console.log(`   ✅ Expired assignment: ${assignment.id} (${assignment.task?.title}) - Lost ${pointsLost} points`);
+    console.log(`   ✅ Expired assignment: ${assignment.id} (${assignment.task.title}) - Lost ${pointsLost} points`);
   }
   
-  console.log(`✅ Assignments updated: ${expiredAssignments.length} expired, total points lost: ${totalPointsLost}`);
+  console.log(`✅ Assignments updated: ${actualExpiredCount} expired, total points lost: ${totalPointsLost}`);
 }
 
 // ========== CLEANUP OLD NOTIFICATIONS ==========
@@ -367,6 +435,7 @@ async function markMissedTimeSlots() {
     where: {
       completed: false,
       expired: false,
+      photoUrl: null,
       task: {
         timeSlots: {
           some: {}
@@ -392,6 +461,8 @@ async function markMissedTimeSlots() {
   let totalPointsLost = 0;
   
   for (const assignment of validAssignments) {
+
+
     const timeSlots = assignment.task!.timeSlots;
     if (timeSlots.length === 0) continue;
     
@@ -425,15 +496,11 @@ async function markMissedTimeSlots() {
       const slotEndTime = new Date(dueDate);
       slotEndTime.setUTCHours(endHour, endMinute, 0, 0);
       
-      // Grace period ends 30 minutes after slot end time
+      // ✅ Grace period ends 30 minutes after slot end time (NO BUFFER)
       const gracePeriodEnd = new Date(slotEndTime.getTime() + 30 * 60000);
       
-      // ✅ Add 1 minute buffer to prevent marking at exact grace period end
-      const bufferMs = 60000; // 1 minute buffer
-      const adjustedNow = new Date(now.getTime() - bufferMs);
-      
-      // If adjusted time is past grace period, mark as missed
-      if (adjustedNow > gracePeriodEnd) {
+      // ✅ ONLY mark as missed if current time is AFTER grace period ends
+      if (now > gracePeriodEnd) {
         newlyMissedSlots.push({
           ...timeSlot,
           pointsLost: timeSlot.points || 0
@@ -463,7 +530,7 @@ async function markMissedTimeSlots() {
         },
         data: {
           cumulativePoints: {
-            decrement: pointsLostThisBatch  // ✅ Only missed slot points
+            decrement: pointsLostThisBatch
           },
           pointsUpdatedAt: new Date()
         }

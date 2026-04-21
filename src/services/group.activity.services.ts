@@ -508,20 +508,30 @@ export class GroupActivityService {
           }
         }
 
-        weeks[weekNum].assignments.push({
-          id: assignment.id,
-          taskTitle: assignment.task!.title,
-          dueDate: assignment.dueDate,
-          completed: assignment.completed,
-          completedAt: assignment.completedAt,
-          verified: assignment.verified,
-          points: assignmentPoints,
-          isLate: assignment.completedAt && assignment.completedAt > assignment.dueDate,
-          timeSlot: assignment.timeSlot ? 
-            `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}` : null,
-          isMissed: isMissed
-        });
-      });
+
+weeks[weekNum].assignments.push({
+  id: assignment.id,
+  taskId: assignment.taskId,
+  taskTitle: assignment.task!.title,
+  dueDate: assignment.dueDate,
+  completed: assignment.completed,
+  completedAt: assignment.completedAt,
+  verified: assignment.verified,
+  points: assignmentPoints,
+  isLate: assignment.completedAt && assignment.completedAt > assignment.dueDate,
+  timeSlot: assignment.timeSlot ? 
+    `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}` : null,
+  timeSlotId: assignment.timeSlot?.id,
+  isMissed: isMissed,
+  // ✅ CRITICAL: Include photoUrl for pending review detection
+  photoUrl: assignment.photoUrl,
+  // ✅ Also include these for better status detection
+  expired: assignment.expired,
+  completedTimeSlotIds: (assignment as any).completedTimeSlotIds || [],
+  missedTimeSlotIds: (assignment as any).missedTimeSlotIds || []
+});
+ 
+      }); 
 
       const weeksArray = Object.values(weeks).sort((a: any, b: any) => b.week - a.week);
 
@@ -1000,7 +1010,7 @@ export class GroupActivityService {
         now.getUTCFullYear(),
         now.getUTCMonth(),
         now.getUTCDate(),
-        0, 0, 0, 0
+        0, 0, 0, 0 
       ));
       const endOfDayUTC = new Date(Date.UTC(
         now.getUTCFullYear(),
