@@ -935,266 +935,299 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
-  // ===== MEMBER DASHBOARD DATA =====
-  static async getMemberDashboard(groupId: string, userId: string) {
-    try {
-      console.log('🔍🔍🔍 [getMemberDashboard] START 🔍🔍🔍');
-      console.log(`📊 Group ID: ${groupId}`);
-      console.log(`👤 User ID: ${userId}`);
+// ===== MEMBER DASHBOARD DATA =====
+static async getMemberDashboard(groupId: string, userId: string) {
+  try {
+    console.log('🔍🔍🔍 [getMemberDashboard] START 🔍🔍🔍');
+    console.log(`📊 Group ID: ${groupId}`);
+    console.log(`👤 User ID: ${userId}`);
 
-      const membership = await prisma.groupMember.findFirst({
-        where: { userId, groupId }
-      });
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId }
+    });
 
-      if (!membership) {
-        return { success: false, message: "You are not a member of this group" };
-      }
-
-      const group = await prisma.group.findUnique({
-        where: { id: groupId },
-        select: { 
-          name: true,
-          currentRotationWeek: true,
-          maxMembers: true
-        }
-      });
-
-      const totalMembers = await prisma.groupMember.count({
-        where: { groupId, isActive: true }
-      });
-
-      const assignments = await prisma.assignment.findMany({
-        where: {
-          userId,
-          task: { groupId },
-          rotationWeek: group?.currentRotationWeek || 1
-        },
-        include: {
-          task: {
-            select: {
-              id: true,
-              title: true,
-              points: true,
-              timeSlots: true
-            }
-          },
-          timeSlot: true
-        },
-        orderBy: { dueDate: 'asc' }
-      });
-
-      const assignmentsWithTasks = assignments.filter(a => a.task !== null);
-      const now = new Date();
-      const currentWeek = group?.currentRotationWeek || 1;
-
-      const totalAssignments = assignmentsWithTasks.length;
-      const pendingAssignments = assignmentsWithTasks.filter(a => !a.completed && !a.expired);
-      const pendingCount = pendingAssignments.length;
-      const completedAssignments = assignmentsWithTasks.filter(a => a.completed === true);
-      const completedCount = completedAssignments.length;
-      
-      // ✅ FIXED: Use UTC for date comparison
-      const expiredAssignments = assignmentsWithTasks.filter(a => {
-        if (a.verified === true) return false;
-        if (a.expired === true) return true;
-        if (a.completed === true) return false;
-        
-        const dueDate = new Date(a.dueDate);
-        if (dueDate.getTime() < now.getTime()) return true;
-        
-        const timeSlot = a.timeSlot;
-        if (timeSlot && timeSlot.endTime) {
-          const endParts = timeSlot.endTime.split(':');
-          if (endParts.length >= 2 && endParts[0] && endParts[1]) {
-            const endHour = parseInt(endParts[0], 10);
-            const endMinute = parseInt(endParts[1], 10);
-            
-            if (!isNaN(endHour) && !isNaN(endMinute)) {
-              const deadline = new Date(Date.UTC(
-                dueDate.getUTCFullYear(),
-                dueDate.getUTCMonth(),
-                dueDate.getUTCDate(),
-                endHour - 8, endMinute, 0, 0
-              ));
-              const graceEnd = new Date(deadline.getTime() + 30 * 60000);
-              if (now.getTime() > graceEnd.getTime()) return true;
-            }
-          }
-        }
-        
-        return false;
-      });
-      const myNeglectedCount = expiredAssignments.length;
-      const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
-
-      // ✅ FIXED: Use UTC for due today calculation
-      const startOfDayUTC = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        0, 0, 0, 0 
-      ));
-      const endOfDayUTC = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23, 59, 59, 999
-      ));
-
-      const dueTodayAssignments = pendingAssignments.filter(assignment => {
-        const dueDate = new Date(assignment.dueDate);
-        return dueDate >= startOfDayUTC && dueDate <= endOfDayUTC;
-      });
-      const dueTodayCount = dueTodayAssignments.length;
-
-      const upcomingAssignments = pendingAssignments.filter(assignment => {
-        const dueDate = new Date(assignment.dueDate);
-        return !(dueDate >= startOfDayUTC && dueDate <= endOfDayUTC);
-      });
-
-      let totalVerifiedPoints = 0;
-      let thisWeekVerifiedPoints = 0;
-      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-      for (const a of assignmentsWithTasks) {
-        const isVerified = a.verified === true;
-        
-        if (isVerified) {
-          const points = a.points || 0;
-          totalVerifiedPoints += points;
-          
-          const verificationDate = a.updatedAt || a.completedAt;
-          if (verificationDate && new Date(verificationDate).getTime() > weekAgo.getTime()) {
-            thisWeekVerifiedPoints += points;
-          }
-        }
-      }
-
-      const verifiedAssignmentsCount = assignmentsWithTasks.filter(a => a.verified === true).length;
-      const totalPoints = assignmentsWithTasks.reduce((sum, a) => sum + (a.points || 0), 0);
-
-      const pendingSwaps = await prisma.swapRequest.count({
-        where: {
-          OR: [
-            { assignment: { userId }, status: "PENDING" },
-            { targetUserId: userId, status: "PENDING" }
-          ]
-        }
-      });
-
-      const formattedDueToday = dueTodayAssignments.map(a => ({
-        id: a.id,
-        taskId: a.taskId,
-        title: a.task!.title,
-        points: a.points || 0,
-        dueDate: a.dueDate,
-        timeSlot: a.timeSlot,
-        completed: a.completed
-      }));
-
-      const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
-        id: a.id,
-        taskId: a.taskId,
-        title: a.task!.title,
-        points: a.points || 0,
-        dueDate: a.dueDate,
-        timeSlot: a.timeSlot,
-        isOverdue: new Date(a.dueDate).getTime() < now.getTime() && !a.expired
-      }));
-
-      const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
-        const dueDate = new Date(a.dueDate);
-        const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        return {
-          id: a.id,
-          taskId: a.taskId,
-          title: a.task!.title,
-          points: a.points || 0,
-          dueDate: a.dueDate,
-          expiredAt: a.expiredAt,
-          daysOverdue,
-          timeSlot: a.timeSlot
-        };
-      });
-
-      const historicalAssignments = await prisma.assignment.findMany({
-        where: {
-          userId,
-          taskId: null,
-          taskTitle: { not: null }
-        },
-        include: {
-          timeSlot: true
-        },
-        orderBy: { dueDate: 'desc' },
-        take: 10
-      });
-
-      const formattedHistorical = historicalAssignments.slice(0, 3).map(t => ({
-        id: t.id,
-        taskId: null,
-        title: t.taskTitle || "Deleted Task",
-        points: t.taskPoints || t.points || 0,
-        dueDate: t.dueDate,
-        completed: t.completed,
-        completedAt: t.completedAt,
-        isHistorical: true,
-        timeSlot: t.timeSlot
-      }));
-
-      console.log(`🏁 [getMemberDashboard] Final stats:`, {
-        totalAssignments,
-        pendingCount,
-        completedCount,
-        dueTodayCount,
-        myNeglectedCount,
-        upcomingCount: upcomingAssignments.length,
-        totalVerifiedPoints,
-        thisWeekVerifiedPoints
-      });
-
-      return {
-        success: true,
-        message: "Member dashboard data retrieved",
-        data: {
-          group: {
-            name: group?.name,
-            currentWeek: group?.currentRotationWeek || 1,
-            maxMembers: group?.maxMembers || 6,
-            memberCount: totalMembers
-          },
-          stats: {
-            pendingTasks: pendingCount,
-            completedTasks: verifiedAssignmentsCount,
-            dueToday: dueTodayCount,
-            pendingSwaps,
-            pointsThisWeek: thisWeekVerifiedPoints,
-            totalPoints: totalVerifiedPoints,
-            totalPointsPossible: totalPoints,  
-            totalAssignments,
-            verifiedAssignmentsCount,
-            historicalCount: historicalAssignments.length,
-            myNeglectedCount,
-            myNeglectedPoints
-          },
-          tasks: {
-            dueToday: formattedDueToday,
-            upcoming: formattedUpcoming,
-            neglected: formattedNeglected,
-            recentHistory: formattedHistorical
-          },
-          user: {
-            inRotation: membership.inRotation,
-            role: membership.groupRole
-          }
-        }
-      };
-
-    } catch (error: any) {
-      console.error("Error in getMemberDashboard:", error);
-      return { success: false, message: error.message };
+    if (!membership) {
+      return { success: false, message: "You are not a member of this group" };
     }
+
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { 
+        name: true,
+        currentRotationWeek: true,
+        maxMembers: true
+      }
+    });
+
+    const totalMembers = await prisma.groupMember.count({
+      where: { groupId, isActive: true }
+    });
+
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        task: { groupId },
+        rotationWeek: group?.currentRotationWeek || 1
+      },
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            points: true,
+            timeSlots: true
+          }
+        },
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    const assignmentsWithTasks = assignments.filter(a => a.task !== null);
+    const now = new Date();
+    const currentWeek = group?.currentRotationWeek || 1;
+
+    const totalAssignments = assignmentsWithTasks.length;
+    
+    // ✅ FIXED: Separate counts for different statuses
+    const notStartedTasks = assignmentsWithTasks.filter(a => 
+      !a.completed && 
+      !a.expired && 
+      !a.photoUrl && 
+      a.verified !== true && 
+      a.verified !== false
+    );
+    const pendingCount = notStartedTasks.length;
+    
+    const pendingVerificationCount = assignmentsWithTasks.filter(a => 
+      a.photoUrl !== null && a.verified === null
+    ).length;
+    
+    const rejectedCount = assignmentsWithTasks.filter(a => 
+      a.verified === false
+    ).length;
+    
+    const verifiedCount = assignmentsWithTasks.filter(a => 
+      a.verified === true
+    ).length;
+    
+    const expiredCount = assignmentsWithTasks.filter(a => 
+      a.expired === true
+    ).length;
+    
+    const completedCount = verifiedCount;
+    
+    // ✅ FIXED: Use UTC for date comparison for expired assignments
+    const expiredAssignments = assignmentsWithTasks.filter(a => {
+      if (a.verified === true) return false;
+      if (a.expired === true) return true;
+      if (a.completed === true) return false;
+      
+      const dueDate = new Date(a.dueDate);
+      if (dueDate.getTime() < now.getTime()) return true;
+      
+      const timeSlot = a.timeSlot;
+      if (timeSlot && timeSlot.endTime) {
+        const endParts = timeSlot.endTime.split(':');
+        if (endParts.length >= 2 && endParts[0] && endParts[1]) {
+          const endHour = parseInt(endParts[0], 10);
+          const endMinute = parseInt(endParts[1], 10);
+          
+          if (!isNaN(endHour) && !isNaN(endMinute)) {
+            const deadline = new Date(Date.UTC(
+              dueDate.getUTCFullYear(),
+              dueDate.getUTCMonth(),
+              dueDate.getUTCDate(),
+              endHour - 8, endMinute, 0, 0
+            ));
+            const graceEnd = new Date(deadline.getTime() + 30 * 60000);
+            if (now.getTime() > graceEnd.getTime()) return true;
+          }
+        }
+      }
+      
+      return false;
+    });
+    const myNeglectedCount = expiredAssignments.length;
+    const myNeglectedPoints = expiredAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+
+    // ✅ FIXED: Use UTC for due today calculation
+    const startOfDayUTC = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0, 0, 0, 0 
+    ));
+    const endOfDayUTC = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      23, 59, 59, 999
+    ));
+
+    // ✅ Only not started tasks are considered for due today
+    const dueTodayAssignments = notStartedTasks.filter(assignment => {
+      const dueDate = new Date(assignment.dueDate);
+      return dueDate >= startOfDayUTC && dueDate <= endOfDayUTC;
+    });
+    const dueTodayCount = dueTodayAssignments.length;
+
+    // ✅ Only not started tasks are considered for upcoming
+    const upcomingAssignments = notStartedTasks.filter(assignment => {
+      const dueDate = new Date(assignment.dueDate);
+      return !(dueDate >= startOfDayUTC && dueDate <= endOfDayUTC);
+    });
+
+    let totalVerifiedPoints = 0;
+    let thisWeekVerifiedPoints = 0;
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    for (const a of assignmentsWithTasks) {
+      const isVerified = a.verified === true;
+      
+      if (isVerified) {
+        const points = a.points || 0;
+        totalVerifiedPoints += points;
+        
+        const verificationDate = a.updatedAt || a.completedAt;
+        if (verificationDate && new Date(verificationDate).getTime() > weekAgo.getTime()) {
+          thisWeekVerifiedPoints += points;
+        }
+      }
+    }
+
+    const verifiedAssignmentsCount = verifiedCount;
+    const totalPoints = assignmentsWithTasks.reduce((sum, a) => sum + (a.points || 0), 0);
+
+    const pendingSwaps = await prisma.swapRequest.count({
+      where: {
+        OR: [
+          { assignment: { userId }, status: "PENDING" },
+          { targetUserId: userId, status: "PENDING" }
+        ]
+      }
+    });
+
+    const formattedDueToday = dueTodayAssignments.map(a => ({
+      id: a.id,
+      taskId: a.taskId,
+      title: a.task!.title,
+      points: a.points || 0,
+      dueDate: a.dueDate,
+      timeSlot: a.timeSlot,
+      completed: a.completed
+    }));
+
+    const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
+      id: a.id,
+      taskId: a.taskId,
+      title: a.task!.title,
+      points: a.points || 0,
+      dueDate: a.dueDate,
+      timeSlot: a.timeSlot,
+      isOverdue: new Date(a.dueDate).getTime() < now.getTime() && !a.expired
+    }));
+
+    const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
+      const dueDate = new Date(a.dueDate);
+      const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      return {
+        id: a.id,
+        taskId: a.taskId,
+        title: a.task!.title,
+        points: a.points || 0,
+        dueDate: a.dueDate,
+        expiredAt: a.expiredAt,
+        daysOverdue,
+        timeSlot: a.timeSlot
+      };
+    });
+
+    const historicalAssignments = await prisma.assignment.findMany({
+      where: {
+        userId,
+        taskId: null,
+        taskTitle: { not: null }
+      },
+      include: {
+        timeSlot: true
+      },
+      orderBy: { dueDate: 'desc' },
+      take: 10
+    });
+
+    const formattedHistorical = historicalAssignments.slice(0, 3).map(t => ({
+      id: t.id,
+      taskId: null,
+      title: t.taskTitle || "Deleted Task",
+      points: t.taskPoints || t.points || 0,
+      dueDate: t.dueDate,
+      completed: t.completed,
+      completedAt: t.completedAt,
+      isHistorical: true,
+      timeSlot: t.timeSlot
+    }));
+
+    console.log(`🏁 [getMemberDashboard] Final stats:`, {
+      totalAssignments,
+      pendingCount,
+      pendingVerificationCount,
+      verifiedCount,
+      rejectedCount,
+      expiredCount,
+      dueTodayCount,
+      myNeglectedCount,
+      upcomingCount: upcomingAssignments.length,
+      totalVerifiedPoints,
+      thisWeekVerifiedPoints
+    });
+
+    return {
+      success: true,
+      message: "Member dashboard data retrieved",
+      data: {
+        group: {
+          name: group?.name,
+          currentWeek: group?.currentRotationWeek || 1,
+          maxMembers: group?.maxMembers || 6,
+          memberCount: totalMembers
+        },
+        stats: {
+          pendingTasks: pendingCount,              // ✅ Only not started tasks
+          pendingVerification: pendingVerificationCount,  // ✅ Submitted waiting for admin
+          completedTasks: verifiedCount,           // ✅ Verified tasks
+          rejectedTasks: rejectedCount,            // ✅ Rejected tasks
+          expiredTasks: expiredCount,              // ✅ Expired/missed tasks
+          dueToday: dueTodayCount,
+          pendingSwaps,
+          pointsThisWeek: thisWeekVerifiedPoints,
+          totalPoints: totalVerifiedPoints,
+          totalPointsPossible: totalPoints,  
+          totalAssignments,
+          verifiedAssignmentsCount,
+          historicalCount: historicalAssignments.length,
+          myNeglectedCount,
+          myNeglectedPoints
+        },
+        tasks: {
+          dueToday: formattedDueToday,
+          upcoming: formattedUpcoming,
+          neglected: formattedNeglected,
+          recentHistory: formattedHistorical
+        },
+        user: {
+          inRotation: membership.inRotation,
+          role: membership.groupRole
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error("Error in getMemberDashboard:", error);
+    return { success: false, message: error.message };
   }
+}
+
 
   // ===== GET RECENT ACTIVITY =====
   static async getRecentActivity(groupId: string, userId: string, limit: number = 10) {
