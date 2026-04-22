@@ -1189,5 +1189,30 @@ static async emitAdminNotificationCountRefresh(
     console.error('SocketService.emitAdminNotificationCountRefresh error:', error);
   }
 }
+// services/socket.services.ts - Add this method
 
+// ========== GROUP REPORT COUNT UPDATE ==========
+static async emitGroupReportCountUpdated(groupId: string, groupName: string) {
+  try {
+    const payload = {
+      groupId,
+      groupName,
+      timestamp: new Date()
+    };
+    
+    // Get all admins
+    const admins = await prisma.systemAdmin.findMany({
+      where: { isActive: true },
+      select: { id: true }
+    });
+    
+    if (admins.length > 0) {
+      emitToUsers(admins.map(a => a.id), 'group:report_count_updated', payload);
+    }
+    
+    console.log(`📢 Emitted group report count update for ${groupName} (${groupId})`);
+  } catch (error) {
+    console.error('SocketService.emitGroupReportCountUpdated error:', error);
+  }
 }
+} 

@@ -3,6 +3,7 @@
 import prisma from "../prisma";
 import { UserNotificationService } from "./user.notification.services";
 import { SocketService } from "./socket.services"; // ✅ Import SocketService
+import { AdminNotificationsService } from "./admin.notifications.service";
 
 export class FeedbackService {
   
@@ -142,7 +143,8 @@ export class FeedbackService {
     }
   }
 
-// services/feedback.services.ts - FULLY UPDATED submitFeedback
+
+  // services/feedback.services.ts - FIXED submitFeedback with admin notifications
 
 static async submitFeedback(
   userId: string,
@@ -202,13 +204,37 @@ static async submitFeedback(
       }
     });
 
-    // ✅ STEP 3: Notify ALL ADMINS via Socket
+    // ✅ STEP 3: Get all active admins
     const admins = await prisma.systemAdmin.findMany({
       where: { isActive: true },
-      select: { id: true }
+      select: { id: true, fullName: true }
     });
 
     if (admins.length > 0) {
+      // ✅ STEP 3a: Create DATABASE notifications for each admin
+      const adminNotifications = [];
+      for (const admin of admins) {
+        // Import AdminNotificationsService at the top of your file
+        const notification = await AdminNotificationsService.createNotification({
+          adminId: admin.id,
+          type: "FEEDBACK_SUBMITTED",
+          title: "New Feedback Submitted",
+          message: `${user.fullName} submitted ${data.type} feedback: "${data.message.substring(0, 100)}${data.message.length > 100 ? '...' : ''}"`,
+          priority: "MEDIUM",
+          data: {
+            feedbackId: feedback.id,
+            userId: userId,
+            userName: user.fullName,
+            userEmail: user.email,
+            type: data.type,
+            messagePreview: data.message.substring(0, 200)
+          }
+        });
+        adminNotifications.push(notification);
+      }
+      console.log(`📬 Created ${adminNotifications.length} admin notifications`);
+
+      // ✅ STEP 3b: Send REAL-TIME socket events to all admins
       await SocketService.emitNewFeedbackReceived(
         admins.map(a => a.id),
         feedback.id,
@@ -239,6 +265,7 @@ static async submitFeedback(
     return { success: false, message: error.message || "Error submitting feedback" };
   }
 }
+
 
 // ========== UPDATE FEEDBACK ==========
 static async updateFeedback(

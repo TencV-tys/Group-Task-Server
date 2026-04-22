@@ -40,7 +40,7 @@ static async getReports(filters: {
         orderBy: { createdAt: 'desc' },
         include: {
           reporter: {
-            select: {
+            select: { 
               id: true,
               fullName: true,
               email: true,
@@ -153,7 +153,9 @@ static async getReports(filters: {
     }
   }
 
-  // ========== UPDATE REPORT STATUS - WITH REAL-TIME ==========
+  
+  // services/admin.report.services.ts - UPDATE updateReportStatus method
+
 static async updateReportStatus(
   reportId: string,
   adminId: string,
@@ -310,6 +312,9 @@ static async updateReportStatus(
       );
     }
 
+    // ✅ ADD THIS: Emit group report count update to refresh group lists
+    await SocketService.emitGroupReportCountUpdated(groupId, updatedReport.group?.name || '');
+
     // Create notifications for other admins
     for (const otherAdmin of otherAdmins) {
       await AdminNotificationsService.createNotification({
@@ -337,7 +342,7 @@ static async updateReportStatus(
       success: true,
       message: `Report status updated to ${status}`,
       report: updatedReport
-    };
+    }; 
 
   } catch (error: any) {
     console.error("❌ [REPORT] Error updating report:", error);
