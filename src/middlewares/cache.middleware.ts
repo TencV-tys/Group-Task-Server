@@ -68,7 +68,7 @@ const NEVER_CACHE_PATTERNS = [
   '/api/swap-requests',            // Swap operations  
   '/api/tasks/create',             // Task creation
   '/api/tasks/update',             // Task updates
-  '/api/tasks/delete',             // Task deletion
+  '/api/tasks/delete',             // Task deletion 
   '/api/group/create',             // Group creation
   '/api/group/update',             // Group updates 
   '/api/group/delete',             // Group deletion
@@ -79,13 +79,16 @@ const NEVER_CACHE_PATTERNS = [
   '/api/auth',                     // Auth endpoints
   '/api/home',                     // Home data (personalized)
 
+  '/api/admin/groups',
   '/api/admin/feedback',
   '/api/admin/feedback/stats',
   '/api/admin/notifications',
   '/api/admin/reports',
   '/api/admin/users',
-  '/api/admin/groups',
-
+  '/api/admin/dashboard',
+  '/api/admin/audit',
+  '/api/admin/audit/export',
+  '/api/admin/db-stats',
 ];
 
 const shouldNeverCache = (url: string): boolean => {

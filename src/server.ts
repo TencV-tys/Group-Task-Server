@@ -23,8 +23,6 @@ import {
   assignmentLimiter
 } from './middlewares/rateLimiter';
 
-// ========== ADD CACHE AND THROTTLE IMPORTS ==========
-import { cacheMiddleware } from './middlewares/cache.middleware';
 import { dbMonitorMiddleware, getDbStats } from './middlewares/db.monitor';
 import { 
   throttleMiddleware, 
@@ -196,25 +194,9 @@ const createUploadsDirectories = () => {
 createUploadsDirectories();
 
 // ============================================================================
-// 8. CACHE MIDDLEWARE - Apply to specific GET endpoints
-// ============================================================================
-console.log('💾 Applying cache middleware...');
-
-svr.get('/api/home', cacheMiddleware(30 * 1000));
-svr.get('/api/group', cacheMiddleware(30 * 1000));
-svr.get('/api/tasks', cacheMiddleware(20 * 1000));
-svr.get('/api/group-activity', cacheMiddleware(30 * 1000));
-//svr.get('/api/admin/audit/statistics', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/dashboard', cacheMiddleware(3 * 60 * 1000));
-svr.get('/api/admin/groups', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/feedback', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/reports', cacheMiddleware(2 * 60 * 1000));
-svr.get('/api/admin/users', cacheMiddleware(2 * 60 * 1000));
-
-// ============================================================================
 // 9. ROUTES - All routes registered here
 // ============================================================================
-console.log('📡 Registering routes...');
+console.log('📡 Registering routes...'); 
 
 // Auth routes
 svr.use('/api/auth/users', UserAuthRoutes);
