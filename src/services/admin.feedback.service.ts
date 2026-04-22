@@ -123,179 +123,59 @@ export class AdminFeedbackService {
     }
   }
 
-  // ========== UPDATE FEEDBACK STATUS (WITH REAL-TIME) ==========
-  static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: string) {
-    console.log('═══════════════════════════════════════════════════');
-    console.log('🔄🔄🔄 [SERVICE] updateFeedbackStatus - START 🔄🔄🔄');
-    console.log('═══════════════════════════════════════════════════');
-    console.log(`  📝 Input: feedbackId=${feedbackId}, newStatus=${status}, adminId=${adminId}`);
-    
-    try {
-      // Get original feedback for old status
-      console.log('  🔍 Step 1: Fetching original feedback...');
-      const originalFeedback = await prisma.feedback.findUnique({
-        where: { id: feedbackId },
-        include: { user: { select: { id: true, fullName: true, email: true } } }
-      });
+  // services/admin.feedback.service.ts - UPDATED deleteFeedback
 
-      if (!originalFeedback) {
-        console.log(`  ❌ Feedback not found: ${feedbackId}`);
-        return { success: false, message: "Feedback not found" };
-      }
+static async deleteFeedback(feedbackId: string, adminId: string) {
+  console.log('═══════════════════════════════════════════════════');
+  console.log('🗑️🗑️🗑️ [SERVICE] deleteFeedback - START 🗑️🗑️🗑️');
+  console.log('═══════════════════════════════════════════════════');
+  console.log(`  📝 Input: feedbackId=${feedbackId}, adminId=${adminId}`);
+  
+  try {
+    // Get feedback before deleting
+    console.log('  🔍 Step 1: Fetching feedback to delete...');
+    const feedback = await prisma.feedback.findUnique({
+      where: { id: feedbackId },
+      include: { user: { select: { id: true, fullName: true } } }
+    });
 
-      const oldStatus = originalFeedback.status;
-      console.log(`  ✅ Original feedback found:`);
-      console.log(`     - oldStatus: ${oldStatus}`);
-      console.log(`     - userId: ${originalFeedback.userId}`);
-      console.log(`     - user: ${originalFeedback.user?.fullName}`);
-      console.log(`     - message preview: ${originalFeedback.message?.substring(0, 50)}`);
-
-      // Update feedback
-      console.log('  🔄 Step 2: Updating feedback status in database...');
-      const feedback = await prisma.feedback.update({
-        where: { id: feedbackId },
-        data: { status, updatedAt: new Date() },
-        include: {
-          user: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
-        }
-      });
-      console.log(`  ✅ Database updated: status changed from ${oldStatus} to ${feedback.status}`);
-
-      // Get admin info if provided
-      let adminName = 'System';
-      if (adminId) {
-        console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
-        const admin = await prisma.systemAdmin.findUnique({
-          where: { id: adminId },
-          select: { fullName: true }
-        });
-        if (admin) {
-          adminName = admin.fullName;
-          console.log(`  ✅ Admin found: ${adminName}`);
-        } else {
-          console.log(`  ⚠️ Admin not found for ID: ${adminId}`);
-        }
-      } else {
-        console.log(`  ⚠️ No adminId provided, using "System" as admin name`);
-      }
-
-      // ========== NOTIFY USER ==========
-      console.log('  🔔 Step 4: Creating user notification...');
-      await UserNotificationService.createNotification({
-        userId: feedback.userId,
-        type: "FEEDBACK_STATUS_UPDATE",
-        title: `Feedback ${status}`,
-        message: `Your feedback "${feedback.message.substring(0, 50)}..." has been marked as ${status} by ${adminName}`,
-        data: {
-          feedbackId: feedback.id,
-          oldStatus,
-          newStatus: status,
-          updatedBy: adminId || 'SYSTEM',
-          updatedByName: adminName
-        }
-      });
-      console.log(`  ✅ User notification created for user: ${feedback.userId}`);
-
-      // ========== EMIT REAL-TIME SOCKET EVENT TO USER ==========
-      console.log('  📡 Step 5: Emitting socket event to user...');
-      const userPayload = {
-        feedbackId: feedback.id,
-        oldStatus,
-        newStatus: status,
-        updatedBy: adminId || 'SYSTEM',
-        updatedByName: adminName,
-        updatedAt: new Date()
-      };
-      console.log(`  📤 Emitting to user ${feedback.userId}:`, userPayload);
-      emitToUser(feedback.userId, 'feedback:status', userPayload);
-      console.log(`  ✅ Emitted to user`);
-
-      // ========== NOTIFY OTHER ADMINS ==========
-      console.log('  📡 Step 6: Notifying other admins...');
-      const otherAdmins = await prisma.systemAdmin.findMany({
-        where: { id: { not: adminId || '' }, isActive: true },
-        select: { id: true }
-      });
-      console.log(`  👥 Found ${otherAdmins.length} other admins`);
-
-      if (otherAdmins.length > 0) {
-        const adminIds = otherAdmins.map(a => a.id);
-        const adminPayload = {
-          feedbackId: feedback.id,
-          userName: feedback.user?.fullName,
-          oldStatus,
-          newStatus: status,
-          updatedBy: adminId || 'SYSTEM',
-          updatedByName: adminName,
-          updatedAt: new Date()
-        };
-        console.log(`  📤 Emitting to ${adminIds.length} admins:`, adminPayload);
-        emitToUsers(adminIds, 'feedback:status', adminPayload);
-        console.log(`  ✅ Emitted to admins`);
-      } else {
-        console.log(`  ℹ️ No other admins to notify`);
-      }
-
-      console.log(`═══════════════════════════════════════════════════`);
-      console.log(`✅✅✅ SUCCESS: ${adminName} updated feedback ${feedbackId}`);
-      console.log(`     Status: ${oldStatus} → ${status}`);
-      console.log(`═══════════════════════════════════════════════════`);
-
-      return {
-        success: true,
-        message: `Feedback status updated to ${status}`,
-        data: feedback
-      };
-
-    } catch (error: any) {
-      console.error('💥💥💥 [SERVICE] updateFeedbackStatus ERROR:', error);
-      console.log('═══════════════════════════════════════════════════');
-      return { success: false, message: error.message || "Failed to update feedback status" };
+    if (!feedback) {
+      console.log(`  ❌ Feedback not found: ${feedbackId}`);
+      return { success: false, message: "Feedback not found" };
     }
-  }
 
-  // ========== DELETE FEEDBACK (WITH REAL-TIME) ==========
-  static async deleteFeedback(feedbackId: string, adminId: string) {
-    console.log('═══════════════════════════════════════════════════');
-    console.log('🗑️🗑️🗑️ [SERVICE] deleteFeedback - START 🗑️🗑️🗑️');
-    console.log('═══════════════════════════════════════════════════');
-    console.log(`  📝 Input: feedbackId=${feedbackId}, adminId=${adminId}`);
-    
+    // ✅ ADD VALIDATION: Only allow delete if status is CLOSED or RESOLVED
+    if (feedback.status !== 'CLOSED' && feedback.status !== 'RESOLVED') {
+      console.log(`  ❌ Cannot delete feedback with status: ${feedback.status}. Only CLOSED or RESOLVED allowed.`);
+      return { 
+        success: false, 
+        message: `Cannot delete feedback with status ${feedback.status}. Only closed or resolved feedback can be deleted.` 
+      };
+    }
+
+    console.log(`  ✅ Feedback found:`);
+    console.log(`     - userId: ${feedback.userId}`);
+    console.log(`     - user: ${feedback.user?.fullName}`);
+    console.log(`     - status: ${feedback.status}`);
+    console.log(`     - type: ${feedback.type}`);
+
+    // Delete feedback
+    console.log('  🗑️ Step 2: Deleting feedback from database...');
+    await prisma.feedback.delete({ where: { id: feedbackId } });
+    console.log(`  ✅ Feedback deleted from database`);
+
+    // Get admin info
+    console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
+    const admin = await prisma.systemAdmin.findUnique({
+      where: { id: adminId },
+      select: { fullName: true }
+    });
+    const adminName = admin?.fullName || 'Admin';
+    console.log(`  ✅ Admin: ${adminName}`);
+
+    // ========== NOTIFY USER ==========
+    console.log('  🔔 Step 4: Creating user notification for deletion...');
     try {
-      // Get feedback before deleting
-      console.log('  🔍 Step 1: Fetching feedback to delete...');
-      const feedback = await prisma.feedback.findUnique({
-        where: { id: feedbackId },
-        include: { user: { select: { id: true, fullName: true } } }
-      });
-
-      if (!feedback) {
-        console.log(`  ❌ Feedback not found: ${feedbackId}`);
-        return { success: false, message: "Feedback not found" };
-      }
-
-      console.log(`  ✅ Feedback found:`);
-      console.log(`     - userId: ${feedback.userId}`);
-      console.log(`     - user: ${feedback.user?.fullName}`);
-      console.log(`     - type: ${feedback.type}`);
-      console.log(`     - message: ${feedback.message?.substring(0, 50)}`);
-
-      // Delete feedback
-      console.log('  🗑️ Step 2: Deleting feedback from database...');
-      await prisma.feedback.delete({ where: { id: feedbackId } });
-      console.log(`  ✅ Feedback deleted from database`);
-
-      // Get admin info
-      console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
-      const admin = await prisma.systemAdmin.findUnique({
-        where: { id: adminId },
-        select: { fullName: true }
-      });
-      const adminName = admin?.fullName || 'Admin';
-      console.log(`  ✅ Admin: ${adminName}`);
-
-      // ========== NOTIFY USER ==========
-      console.log('  🔔 Step 4: Creating user notification for deletion...');
       await UserNotificationService.createNotification({
         userId: feedback.userId,
         type: "FEEDBACK_DELETED",
@@ -304,57 +184,196 @@ export class AdminFeedbackService {
         data: { feedbackId, type: feedback.type }
       });
       console.log(`  ✅ User notification created for user: ${feedback.userId}`);
+    } catch (notifError) {
+      console.error(`  ⚠️ Failed to create user notification:`, notifError);
+      // Don't fail the delete if notification fails
+    }
 
-      // ========== EMIT REAL-TIME SOCKET EVENT ==========
-      console.log('  📡 Step 5: Emitting deletion socket event to user...');
-      const userPayload = {
+    // ========== EMIT REAL-TIME SOCKET EVENT TO USER ==========
+    console.log('  📡 Step 5: Emitting deletion socket event to user...');
+    const userPayload = {
+      feedbackId: feedback.id,
+      type: feedback.type,
+      deletedBy: adminId,
+      deletedByName: adminName,
+      deletedAt: new Date()
+    };
+    console.log(`  📤 Emitting to user ${feedback.userId}:`, userPayload);
+    emitToUser(feedback.userId, 'feedback:deleted', userPayload);
+    console.log(`  ✅ Emitted to user`);
+
+    // ========== NOTIFY OTHER ADMINS (EXCLUDE SELF) ==========
+    console.log('  📡 Step 6: Notifying OTHER admins (excluding self)...');
+    const otherAdmins = await prisma.systemAdmin.findMany({
+      where: { 
+        id: { not: adminId },  // ← EXCLUDE the current admin
+        isActive: true 
+      },
+      select: { id: true }
+    });
+    console.log(`  👥 Found ${otherAdmins.length} OTHER admins (excluding ${adminName})`);
+
+    if (otherAdmins.length > 0) {
+      const adminIds = otherAdmins.map(a => a.id);
+      const adminPayload = {
         feedbackId: feedback.id,
+        userName: feedback.user?.fullName,
         type: feedback.type,
         deletedBy: adminId,
         deletedByName: adminName,
         deletedAt: new Date()
       };
-      console.log(`  📤 Emitting to user ${feedback.userId}:`, userPayload);
-      emitToUser(feedback.userId, 'feedback:deleted', userPayload);
-      console.log(`  ✅ Emitted to user`);
-
-      // ========== NOTIFY OTHER ADMINS ==========
-      console.log('  📡 Step 6: Notifying other admins about deletion...');
-      const otherAdmins = await prisma.systemAdmin.findMany({
-        where: { id: { not: adminId }, isActive: true },
-        select: { id: true }
-      });
-      console.log(`  👥 Found ${otherAdmins.length} other admins`);
-
-      if (otherAdmins.length > 0) {
-        const adminIds = otherAdmins.map(a => a.id);
-        const adminPayload = {
-          feedbackId: feedback.id,
-          userName: feedback.user?.fullName,
-          type: feedback.type,
-          deletedBy: adminId,
-          deletedByName: adminName,
-          deletedAt: new Date()
-        };
-        console.log(`  📤 Emitting to ${adminIds.length} admins:`, adminPayload);
-        emitToUsers(adminIds, 'feedback:deleted', adminPayload);
-        console.log(`  ✅ Emitted to admins`);
-      } else {
-        console.log(`  ℹ️ No other admins to notify`);
-      }
-
-      console.log(`═══════════════════════════════════════════════════`);
-      console.log(`✅✅✅ SUCCESS: Admin ${adminName} deleted feedback ${feedbackId}`);
-      console.log(`═══════════════════════════════════════════════════`);
-
-      return { success: true, message: "Feedback deleted successfully" };
-
-    } catch (error: any) {
-      console.error('💥💥💥 [SERVICE] deleteFeedback ERROR:', error);
-      console.log('═══════════════════════════════════════════════════');
-      return { success: false, message: error.message || "Failed to delete feedback" };
+      console.log(`  📤 Emitting to ${adminIds.length} OTHER admins:`, adminPayload);
+      emitToUsers(adminIds, 'feedback:deleted', adminPayload);
+      console.log(`  ✅ Emitted to OTHER admins`);
+    } else {
+      console.log(`  ℹ️ No OTHER admins to notify (only self)`);
     }
+
+    console.log(`═══════════════════════════════════════════════════`);
+    console.log(`✅✅✅ SUCCESS: Admin ${adminName} deleted feedback ${feedbackId}`);
+    console.log(`═══════════════════════════════════════════════════`);
+
+    return { success: true, message: "Feedback deleted successfully" };
+
+  } catch (error: any) {
+    console.error('💥💥💥 [SERVICE] deleteFeedback ERROR:', error);
+    console.log('═══════════════════════════════════════════════════');
+    
+    // Check for specific Prisma errors
+    if (error.code === 'P2003') {
+      return { success: false, message: "Cannot delete feedback because it has related records (notifications, etc.)" };
+    }
+    
+    return { success: false, message: error.message || "Failed to delete feedback" };
   }
+}
+
+// Also update the updateFeedbackStatus to exclude self from broadcast
+
+static async updateFeedbackStatus(feedbackId: string, status: string, adminId?: string) {
+  console.log('═══════════════════════════════════════════════════');
+  console.log('🔄🔄🔄 [SERVICE] updateFeedbackStatus - START 🔄🔄🔄');
+  console.log('═══════════════════════════════════════════════════');
+  console.log(`  📝 Input: feedbackId=${feedbackId}, newStatus=${status}, adminId=${adminId}`);
+  
+  try {
+    // Get original feedback for old status
+    console.log('  🔍 Step 1: Fetching original feedback...');
+    const originalFeedback = await prisma.feedback.findUnique({
+      where: { id: feedbackId },
+      include: { user: { select: { id: true, fullName: true, email: true } } }
+    });
+
+    if (!originalFeedback) {
+      console.log(`  ❌ Feedback not found: ${feedbackId}`);
+      return { success: false, message: "Feedback not found" };
+    }
+
+    const oldStatus = originalFeedback.status;
+    console.log(`  ✅ Original feedback found:`);
+    console.log(`     - oldStatus: ${oldStatus}`);
+    console.log(`     - userId: ${originalFeedback.userId}`);
+
+    // Update feedback
+    console.log('  🔄 Step 2: Updating feedback status in database...');
+    const feedback = await prisma.feedback.update({
+      where: { id: feedbackId },
+      data: { status, updatedAt: new Date() },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+      }
+    });
+    console.log(`  ✅ Database updated: status changed from ${oldStatus} to ${feedback.status}`);
+
+    // Get admin info if provided
+    let adminName = 'System';
+    if (adminId) {
+      console.log(`  🔍 Step 3: Fetching admin info for ID: ${adminId}...`);
+      const admin = await prisma.systemAdmin.findUnique({
+        where: { id: adminId },
+        select: { fullName: true }
+      });
+      if (admin) {
+        adminName = admin.fullName;
+        console.log(`  ✅ Admin found: ${adminName}`);
+      }
+    }
+
+    // ========== NOTIFY USER ==========
+    console.log('  🔔 Step 4: Creating user notification...');
+    await UserNotificationService.createNotification({
+      userId: feedback.userId,
+      type: "FEEDBACK_STATUS_UPDATE",
+      title: `Feedback ${status}`,
+      message: `Your feedback has been marked as ${status} by ${adminName}`,
+      data: {
+        feedbackId: feedback.id,
+        oldStatus,
+        newStatus: status,
+        updatedBy: adminId || 'SYSTEM',
+        updatedByName: adminName
+      }
+    });
+    console.log(`  ✅ User notification created`);
+
+    // ========== EMIT REAL-TIME SOCKET EVENT TO USER ==========
+    console.log('  📡 Step 5: Emitting socket event to user...');
+    const userPayload = {
+      feedbackId: feedback.id,
+      oldStatus,
+      newStatus: status,
+      updatedBy: adminId || 'SYSTEM',
+      updatedByName: adminName,
+      updatedAt: new Date()
+    };
+    emitToUser(feedback.userId, 'feedback:status', userPayload);
+    console.log(`  ✅ Emitted to user`);
+
+    // ========== NOTIFY OTHER ADMINS (EXCLUDE SELF) ==========
+    console.log('  📡 Step 6: Notifying OTHER admins (excluding self)...');
+    const otherAdmins = await prisma.systemAdmin.findMany({
+      where: { 
+        id: { not: adminId || '' },  // ← EXCLUDE the current admin
+        isActive: true 
+      },
+      select: { id: true }
+    });
+    console.log(`  👥 Found ${otherAdmins.length} OTHER admins`);
+
+    if (otherAdmins.length > 0) {
+      const adminIds = otherAdmins.map(a => a.id);
+      const adminPayload = {
+        feedbackId: feedback.id,
+        userName: feedback.user?.fullName,
+        oldStatus,
+        newStatus: status,
+        updatedBy: adminId || 'SYSTEM',
+        updatedByName: adminName,
+        updatedAt: new Date()
+      };
+      emitToUsers(adminIds, 'feedback:status', adminPayload);
+      console.log(`  ✅ Emitted to ${adminIds.length} OTHER admins`);
+    } else {
+      console.log(`  ℹ️ No OTHER admins to notify (only self)`);
+    }
+
+    console.log(`═══════════════════════════════════════════════════`);
+    console.log(`✅✅✅ SUCCESS: ${adminName} updated feedback ${feedbackId}`);
+    console.log(`═══════════════════════════════════════════════════`);
+
+    return {
+      success: true,
+      message: `Feedback status updated to ${status}`,
+      data: feedback
+    };
+
+  } catch (error: any) {
+    console.error('💥💥💥 [SERVICE] updateFeedbackStatus ERROR:', error);
+    return { success: false, message: error.message || "Failed to update feedback status" };
+  }
+}
+
 
   // ========== GET FEEDBACK STATS ==========
   static async getFeedbackStats() {
@@ -486,4 +505,4 @@ export class AdminFeedbackService {
       return { success: false, message: error.message || "Failed to retrieve filtered stats" };
     }
   }
-}
+} 
