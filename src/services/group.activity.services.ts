@@ -840,54 +840,38 @@ static async getMemberDashboard(groupId: string, userId: string) {
     // ✅ Calculate total points lost from missed slots (only from truly expired assignments)
     let myNeglectedPoints = 0;
     for (const a of expiredAssignments) {
-      // Check if multi-slot task
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
       
       if (isMultiSlot) {
-        // For multi-slot, get the missed slot points
         const missedSlotIds = (a as any).missedTimeSlotIds || [];
         const timeSlots = a.task?.timeSlots || [];
-        
-        // Sum points from missed slots only
         const pointsLost = timeSlots
           .filter(slot => missedSlotIds.includes(slot.id))
           .reduce((total, slot) => total + (slot.points || 0), 0);
-        
         myNeglectedPoints += pointsLost;
-        
         console.log(`   📊 Multi-slot expired assignment: ${a.task!.title}, missed slots: ${missedSlotIds.length}, points lost: ${pointsLost}`);
       } else {
-        // Single-slot task - only count if truly expired
         myNeglectedPoints += (a.points || 0);
         console.log(`   📊 Single-slot expired assignment: ${a.task!.title}, points lost: ${a.points || 0}`);
       }
     }
 
-    // ✅ FIXED: Use UTC for due today calculation
-    const startOfDayUTC = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      0, 0, 0, 0 
-    ));
-    const endOfDayUTC = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      23, 59, 59, 999
-    ));
+    // ✅ FIXED: Use UTC date without time for proper comparison
+    const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 
     // ✅ Only not started tasks are considered for due today
     const dueTodayAssignments = notStartedTasks.filter(assignment => {
       const dueDate = new Date(assignment.dueDate);
-      return dueDate >= startOfDayUTC && dueDate <= endOfDayUTC;
+      const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+      return dueDateUTC === todayUTC;
     });
     const dueTodayCount = dueTodayAssignments.length;
 
-    // ✅ Only not started tasks are considered for upcoming
+    // ✅ Only not started tasks are considered for upcoming (all future dates)
     const upcomingAssignments = notStartedTasks.filter(assignment => {
       const dueDate = new Date(assignment.dueDate);
-      return !(dueDate >= startOfDayUTC && dueDate <= endOfDayUTC);
+      const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+      return dueDateUTC > todayUTC;
     });
 
     let totalVerifiedPoints = 0;
@@ -937,14 +921,13 @@ static async getMemberDashboard(groupId: string, userId: string) {
       points: a.points || 0,
       dueDate: a.dueDate,
       timeSlot: a.timeSlot,
-      isOverdue: new Date(a.dueDate).getTime() < now.getTime() && !a.expired
+      isOverdue: false // No overdue since we're only showing future dates
     }));
 
     const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
       const dueDate = new Date(a.dueDate);
       const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
       
-      // Calculate points lost for display
       let displayPointsLost = a.points || 0;
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
       if (isMultiSlot) {

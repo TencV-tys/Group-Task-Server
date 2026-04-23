@@ -466,7 +466,7 @@ static async verifyAssignment(
       return { success: false, message: "Only group admins can verify assignments" };
     }
 
-    // ✅ FIXED: Allow verification for:
+    // ✅ Allow verification for:
     // 1. Fully completed assignments (completed = true)
     // 2. Partially completed multi-slot assignments (has photo, verified = null)
     const isMultiSlotTask = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
@@ -501,9 +501,16 @@ static async verifyAssignment(
       }
     });
 
+    // ✅ FIXED: Award exactly the points stored in assignment.points
+    // The completeAssignment function already calculated the correct reduced points for late submissions
+    let pointsToAward = assignment.points || 0;
+    
+    console.log(`💰 [VERIFY] Awarding ${pointsToAward} points for assignment ${assignmentId}`);
+    console.log(`   Task: ${assignment.task.title}`);
+    console.log(`   Notes contain late: ${assignment.notes?.includes('[LATE:') || false}`);
+    
     // ✅ Award points only when verified (approved)
-    // For multi-slot tasks, award points for the completed slot
-    if (data.verified === true && assignment.points > 0) {
+    if (data.verified === true && pointsToAward > 0) {
       await prisma.groupMember.updateMany({
         where: {
           userId: assignment.userId,
@@ -512,15 +519,13 @@ static async verifyAssignment(
         },
         data: {
           cumulativePoints: {
-            increment: assignment.points
+            increment: pointsToAward
           },
           pointsUpdatedAt: new Date()
         }
       }); 
       
-      console.log(`💰💰💰 [POINTS AWARDED] User ${assignment.userId} earned +${assignment.points} points for verified assignment ${assignmentId}`);
-      console.log(`   Task: ${assignment.task.title}`);
-      console.log(`   Group: ${assignment.task.group.name}`);
+      console.log(`💰💰💰 [POINTS AWARDED] User ${assignment.userId} earned +${pointsToAward} points for verified assignment ${assignmentId}`);
     } else if (data.verified === false) {
       console.log(`⚠️ [ASSIGNMENT REJECTED] No points awarded for assignment ${assignmentId}`);
     }
@@ -528,7 +533,7 @@ static async verifyAssignment(
     const notificationType = data.verified ? "SUBMISSION_VERIFIED" : "SUBMISSION_REJECTED";
     const notificationTitle = data.verified ? "✅ Task Verified" : "❌ Task Rejected";
     const notificationMessage = data.verified 
-      ? `✅ Your submission for "${assignment.task.title}" has been verified! You earned ${assignment.points} points.`
+      ? `✅ Your submission for "${assignment.task.title}" has been verified! You earned ${pointsToAward} points.`
       : `❌ Your submission for "${assignment.task.title}". No points awarded.`;
 
     await UserNotificationService.createNotification({
@@ -544,10 +549,10 @@ static async verifyAssignment(
         groupName: assignment.task.group.name,
         verified: data.verified,
         adminNotes: data.adminNotes,
-        points: assignment.points,
+        points: pointsToAward,
         verifiedBy: userId,
         verifiedAt: new Date(),
-        pointsAwarded: data.verified ? assignment.points : 0
+        pointsAwarded: data.verified ? pointsToAward : 0
       }
     });
 
@@ -566,7 +571,7 @@ static async verifyAssignment(
       data.verified,
       userId,
       verifierName?.fullName || 'Admin',
-      assignment.points
+      pointsToAward
     );
 
     const otherAdmins = await prisma.groupMember.findMany({
@@ -583,7 +588,7 @@ static async verifyAssignment(
         userId: admin.userId,
         type: "SUBMISSION_DECISION",
         title: data.verified ? "✅ Submission Verified" : "❌ Submission Rejected",
-        message: `${assignment.user?.fullName || 'Unknown'}'s submission for "${assignment.task.title}" was ${data.verified ? 'verified' : 'rejected'}${data.verified ? ` and awarded ${assignment.points} points` : ''}`,
+        message: `${assignment.user?.fullName || 'Unknown'}'s submission for "${assignment.task.title}" was ${data.verified ? 'verified' : 'rejected'}${data.verified ? ` and awarded ${pointsToAward} points` : ''}`,
         data: {
           assignmentId: assignment.id,
           taskId: assignment.taskId,
@@ -596,7 +601,7 @@ static async verifyAssignment(
           adminNotes: data.adminNotes,
           verifiedBy: userId,
           verifiedAt: new Date(),
-          pointsAwarded: data.verified ? assignment.points : 0
+          pointsAwarded: data.verified ? pointsToAward : 0
         }
       });
     }
@@ -605,7 +610,7 @@ static async verifyAssignment(
       success: true,
       message: data.verified ? "Assignment verified successfully! Points awarded." : "Assignment rejected. No points awarded.",
       assignment: updatedAssignment,
-      pointsAwarded: data.verified ? assignment.points : 0,
+      pointsAwarded: data.verified ? pointsToAward : 0,
       notifications: {
         notifiedUser: true,
         notifiedOtherAdmins: otherAdmins.length
@@ -1640,7 +1645,7 @@ static async getUserAssignments(
     offset: number;
   }
 ) {
-  try {
+  try { 
     console.log('🔍🔍🔍 [getUserAssignments] START 🔍🔍🔍');
     console.log(`👤 User ID: ${userId}`);
     console.log(`📋 Filters:`, filters);

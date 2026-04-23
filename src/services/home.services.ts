@@ -1,4 +1,4 @@
-// services/home.services.ts - COMPLETE FIXED VERSION
+// services/home.services.ts - COMPLETE FIXED VERSION WITH ROLLING 7-DAY WINDOW
 
 import prisma from "../prisma";
 import { Assignment, Task, TimeSlot } from '@prisma/client';
@@ -6,6 +6,7 @@ import { Assignment, Task, TimeSlot } from '@prisma/client';
 type AssignmentWithTaskAndTimeSlot = Assignment & {
   task: (Pick<Task, 'id' | 'title' | 'points' | 'executionFrequency' | 'groupId'> & {
     group: { id: string; name: string; } | null;
+    timeSlots?: Array<Pick<TimeSlot, 'id' | 'startTime' | 'endTime' | 'label' | 'points'>>;
   }) | null;
   timeSlot: Pick<TimeSlot, 'id' | 'startTime' | 'endTime' | 'label' | 'points'> | null;
 };
@@ -14,7 +15,8 @@ export class HomeServices {
 
   static async getHomeData(userId: string) {
     try {
-      console.log(`Fetching home data for user: ${userId}`);
+      console.log('\n🔵🔵🔵 [getHomeData] START 🔵🔵🔵');
+      console.log(`👤 User ID: ${userId}`);
 
       const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -65,68 +67,28 @@ export class HomeServices {
 
       const now = new Date();
 
-      const todayUTC = new Date(Date.UTC(
+      // ✅ FIXED: Use rolling 7-day window instead of calendar week
+      const todayStartUTC = new Date(Date.UTC(
         now.getUTCFullYear(),
         now.getUTCMonth(),
         now.getUTCDate(),
         0, 0, 0, 0
       ));
+      
+      const next7DaysEnd = new Date(todayStartUTC);
+      next7DaysEnd.setUTCDate(todayStartUTC.getUTCDate() + 7);
+      next7DaysEnd.setUTCHours(23, 59, 59, 999);
 
-      const currentUTCDay = now.getUTCDay();
-      const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
-      const currentWeekStart = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() - daysToMonday,
-        0, 0, 0, 0
-      ));
+      console.log(`📅 Rolling 7-day window: ${todayStartUTC.toISOString()} to ${next7DaysEnd.toISOString()}`);
 
-      const currentWeekEnd = new Date(currentWeekStart);
-      currentWeekEnd.setUTCDate(currentWeekStart.getUTCDate() + 6);
-      currentWeekEnd.setUTCHours(23, 59, 59, 999);
-
-      console.log(`📅 Current week: ${currentWeekStart.toISOString()} to ${currentWeekEnd.toISOString()}`);
-      console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
-
-      // ✅ FIXED: Correct Prisma syntax for partiallyExpired
-      const whereCondition: any = {
-        userId: userId,
-        completed: false,
-        expired: false,
-        taskId: { not: null }
-      };
-
-      if (userInRotation) {
-        whereCondition.partiallyExpired = false;
-      }
-
-      const tasksDueThisWeek = userInRotation ? await prisma.assignment.count({
+      // ✅ Get ALL assignments for the next 7 days (no filters)
+      const allAssignments = await prisma.assignment.findMany({
         where: {
-          ...whereCondition,
+          userId: userId,
+          taskId: { not: null },
           dueDate: {
-            gte: currentWeekStart,
-            lte: currentWeekEnd
-          }
-        }
-      }) : 0;
-
-      console.log(`📊 Tasks due this week: ${tasksDueThisWeek}`);
-
-      const overdueTasks = userInRotation ? await prisma.assignment.count({
-        where: {
-          ...whereCondition,
-          dueDate: { lt: todayUTC }
-        }
-      }) : 0;
-
-      console.log(`📊 Overdue tasks: ${overdueTasks}`);
-
-      const currentWeekAssignments = userInRotation ? await prisma.assignment.findMany({
-        where: {
-          ...whereCondition,
-          dueDate: {
-            gte: currentWeekStart,
-            lte: currentWeekEnd
+            gte: todayStartUTC,
+            lt: next7DaysEnd
           }
         },
         include: {
@@ -136,6 +98,15 @@ export class HomeServices {
               title: true,
               points: true,
               executionFrequency: true,
+              timeSlots: {
+                select: {
+                  id: true,
+                  startTime: true,
+                  endTime: true,
+                  label: true,
+                  points: true
+                }
+              },
               group: {
                 select: {
                   id: true,
@@ -155,34 +126,55 @@ export class HomeServices {
           }
         },
         orderBy: { dueDate: 'asc' }
-      }) : [];
+      });
 
-      const typedAssignments = currentWeekAssignments as unknown as AssignmentWithTaskAndTimeSlot[];
+      const typedAssignments = allAssignments as any[];
 
-      const overdueAssignments = typedAssignments.filter(
-        assignment => new Date(assignment.dueDate) < todayUTC
-      );
+      // ✅ Count ALL assignments (no filtering)
+      const tasksDueInNext7Days = typedAssignments.length;
+      console.log(`📊 TOTAL Assignments in next 7 days: ${tasksDueInNext7Days}`);
       
-      const upcomingAssignmentsThisWeek = typedAssignments.filter(
-        assignment => new Date(assignment.dueDate) >= todayUTC
-      );
+      // ✅ Log each assignment with details
+      console.log(`\n📋 DETAILED ASSIGNMENT LIST:`);
+      typedAssignments.forEach((a, idx) => {
+        console.log(`   ${idx + 1}. ID: ${a.id.substring(0, 8)}...`);
+        console.log(`      Title: ${a.task?.title || 'N/A'}`);
+        console.log(`      Due Date: ${a.dueDate.toISOString()}`);
+        console.log(`      Completed: ${a.completed}`);
+        console.log(`      Verified: ${a.verified}`);
+        console.log(`      PhotoUrl: ${a.photoUrl ? 'Yes' : 'No'}`);
+        console.log(`      Expired: ${a.expired}`);
+      });
 
-      const completedTasks = userInRotation ? await prisma.assignment.count({
+      // ✅ Overdue assignments (due date < today)
+      const overdueAssignments = typedAssignments.filter(
+        assignment => new Date(assignment.dueDate) < todayStartUTC
+      );
+      const overdueTasks = overdueAssignments.length;
+      console.log(`\n⏰ Overdue assignments: ${overdueTasks}`);
+      
+      // ✅ Upcoming assignments (due today or future)
+      const upcomingAssignments = typedAssignments.filter(
+        assignment => new Date(assignment.dueDate) >= todayStartUTC
+      );
+      console.log(`📅 Upcoming assignments: ${upcomingAssignments.length}`);
+
+      const completedTasks = await prisma.assignment.count({
         where: {
           userId: userId,
           completed: true,
           taskId: { not: null }
         }
-      }) : 0;
+      });
 
-      const totalTasks = userInRotation ? await prisma.assignment.count({
+      const totalTasks = await prisma.assignment.count({
         where: { 
           userId: userId,
           taskId: { not: null }
         }
-      }) : 0;
+      });
 
-      const swapRequests = userInRotation ? await prisma.swapRequest.count({
+      const swapRequests = await prisma.swapRequest.count({
         where: {
           assignment: {
             userId: userId,
@@ -190,7 +182,7 @@ export class HomeServices {
           },
           status: "PENDING"
         }
-      }) : 0;
+      });
 
       const recentActivity = await prisma.userNotification.findMany({
         where: { userId: userId },
@@ -206,12 +198,137 @@ export class HomeServices {
         }
       });
 
-      const pointsThisWeek = userInRotation ? await this.getWeeklyPoints(userId, currentWeekStart) : 0;
+      const pointsThisWeek = await this.getWeeklyPoints(userId, todayStartUTC);
+
+      // ✅ Build current week tasks with ALL fields (no filtering)
+      const currentWeekTasksFormatted = upcomingAssignments
+        .filter(assignment => assignment.task !== null)
+        .map(assignment => {
+          const dueDate = new Date(assignment.dueDate);
+          const timeSlot = assignment.timeSlot;
+          const isMultiSlot = assignment.task?.executionFrequency === 'DAILY' && 
+                              assignment.task?.points !== assignment.points;
+          
+          let completedSlotIds: string[] = [];
+          let missedSlotIds: string[] = [];
+          
+          const rawCompleted = assignment.completedTimeSlotIds;
+          const rawMissed = assignment.missedTimeSlotIds;
+          
+          if (rawCompleted) {
+            if (typeof rawCompleted === 'string') {
+              try { completedSlotIds = JSON.parse(rawCompleted); } catch(e) { completedSlotIds = []; }
+            } else if (Array.isArray(rawCompleted)) {
+              completedSlotIds = rawCompleted;
+            }
+          }
+          
+          if (rawMissed) {
+            if (typeof rawMissed === 'string') {
+              try { missedSlotIds = JSON.parse(rawMissed); } catch(e) { missedSlotIds = []; }
+            } else if (Array.isArray(rawMissed)) {
+              missedSlotIds = rawMissed;
+            }
+          }
+          
+          const timeSlots = assignment.task?.timeSlots || [];
+          
+          return {
+            id: assignment.id,
+            taskId: assignment.task!.id,
+            title: assignment.task!.title,
+            points: assignment.points,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            verified: assignment.verified,
+            photoUrl: assignment.photoUrl,
+            expired: assignment.expired,
+            partiallyExpired: assignment.partiallyExpired,
+            groupName: assignment.task!.group?.name || 'Unknown Group',
+            groupId: assignment.task!.group?.id,
+            isOverdue: false,
+            daysLeft: Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+            timeSlot: timeSlot ? {
+              id: timeSlot.id,
+              startTime: timeSlot.startTime,
+              endTime: timeSlot.endTime,
+              label: timeSlot.label,
+              points: timeSlot.points
+            } : null,
+            isMultiSlot,
+            totalPointsPossible: assignment.task!.points,
+            completedTimeSlotIds: completedSlotIds,
+            missedTimeSlotIds: missedSlotIds,
+            timeSlots: timeSlots.map((slot: any) => ({
+              id: slot.id,
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              label: slot.label,
+              points: slot.points
+            }))
+          };
+        });
+
+      const overdueTasksFormatted = overdueAssignments
+        .filter(assignment => assignment.task !== null)
+        .map(assignment => {
+          const dueDate = new Date(assignment.dueDate);
+          const timeSlot = assignment.timeSlot;
+          
+          let completedSlotIds: string[] = [];
+          let missedSlotIds: string[] = [];
+          
+          const rawCompleted = assignment.completedTimeSlotIds;
+          const rawMissed = assignment.missedTimeSlotIds;
+          
+          if (rawCompleted) {
+            if (typeof rawCompleted === 'string') {
+              try { completedSlotIds = JSON.parse(rawCompleted); } catch(e) { completedSlotIds = []; }
+            } else if (Array.isArray(rawCompleted)) {
+              completedSlotIds = rawCompleted;
+            }
+          }
+          
+          if (rawMissed) {
+            if (typeof rawMissed === 'string') {
+              try { missedSlotIds = JSON.parse(rawMissed); } catch(e) { missedSlotIds = []; }
+            } else if (Array.isArray(rawMissed)) {
+              missedSlotIds = rawMissed;
+            }
+          }
+          
+          return {
+            id: assignment.id,
+            taskId: assignment.task!.id,
+            title: assignment.task!.title,
+            points: assignment.points,
+            dueDate: assignment.dueDate,
+            completed: assignment.completed,
+            verified: assignment.verified,
+            photoUrl: assignment.photoUrl,
+            expired: assignment.expired,
+            partiallyExpired: assignment.partiallyExpired,
+            groupName: assignment.task!.group?.name || 'Unknown Group',
+            groupId: assignment.task!.group?.id,
+            isOverdue: true,
+            daysOverdue: Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)),
+            timeSlot: timeSlot ? {
+              id: timeSlot.id,
+              startTime: timeSlot.startTime,
+              endTime: timeSlot.endTime,
+              label: timeSlot.label,
+              points: timeSlot.points
+            } : null,
+            completedTimeSlotIds: completedSlotIds,
+            missedTimeSlotIds: missedSlotIds,
+            timeSlots: []
+          };
+        });
 
       const groups = await Promise.all(userMemberships.map(async (member) => {
         const group = member.group;
-        const tasksForThisGroup = typedAssignments.filter(
-          assignment => assignment.task?.group?.id === group.id
+        const tasksForThisGroup = currentWeekTasksFormatted.filter(
+          (assignment: any) => assignment.groupId === group.id
         );
 
         const membersInRotation = await prisma.groupMember.count({
@@ -251,6 +368,16 @@ export class HomeServices {
 
       groups.sort((a, b) => b.stats.yourTasksThisWeek - a.stats.yourTasksThisWeek);
 
+      console.log(`\n🏁 FINAL SUMMARY:`);
+      console.log(`   TOTAL assignments in next 7 days: ${tasksDueInNext7Days}`);
+      console.log(`   CurrentWeekTasks count: ${currentWeekTasksFormatted.length}`);
+      console.log(`   OverdueTasks count: ${overdueTasksFormatted.length}`);
+      console.log(`   Stat tasksDueThisWeek: ${tasksDueInNext7Days}`);
+      console.log(`   Stat overdueTasks: ${overdueTasks}`);
+      console.log(`   Stat completedTasks: ${completedTasks}`);
+      console.log(`   Stat totalTasks: ${totalTasks}`);
+      console.log(`🔵🔵🔵 [getHomeData] END 🔵🔵🔵\n`);
+
       return {
         success: true,
         data: {
@@ -258,7 +385,7 @@ export class HomeServices {
             ...user,
             groupsCount,
             pointsThisWeek,
-            totalPoints: userInRotation ? await this.getTotalPoints(userId) : 0,
+            totalPoints: await this.getTotalPoints(userId),
             inRotation: userInRotation,
             isAdmin: userIsAdmin,
             groupsWhereUserInRotation,
@@ -266,7 +393,7 @@ export class HomeServices {
           },
           stats: {
             groupsCount,
-            tasksDueThisWeek,
+            tasksDueThisWeek: tasksDueInNext7Days,
             overdueTasks,
             completedTasks,
             totalTasks,
@@ -276,58 +403,8 @@ export class HomeServices {
             userInRotation,
             isAdmin: userIsAdmin
           },
-          currentWeekTasks: upcomingAssignmentsThisWeek
-            .filter(assignment => assignment.task !== null)
-            .map(assignment => {
-              const dueDate = new Date(assignment.dueDate);
-              const timeSlot = assignment.timeSlot;
-              const isMultiSlot = assignment.task?.executionFrequency === 'DAILY' && 
-                                  assignment.task?.points !== assignment.points;
-              
-              return {
-                id: assignment.id,
-                taskId: assignment.task!.id,
-                title: assignment.task!.title,
-                points: assignment.points,
-                dueDate: assignment.dueDate,
-                completed: assignment.completed,
-                groupName: assignment.task!.group?.name || 'Unknown Group',
-                groupId: assignment.task!.group?.id,
-                isOverdue: false,
-                daysLeft: Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
-                timeSlot: timeSlot ? {
-                  startTime: timeSlot.startTime,
-                  endTime: timeSlot.endTime,
-                  label: timeSlot.label
-                } : null,
-                isMultiSlot,
-                totalPointsPossible: assignment.task!.points
-              };
-            }),
-          overdueTasks: overdueAssignments
-            .filter(assignment => assignment.task !== null)
-            .map(assignment => {
-              const dueDate = new Date(assignment.dueDate);
-              const timeSlot = assignment.timeSlot;
-              
-              return {
-                id: assignment.id,
-                taskId: assignment.task!.id,
-                title: assignment.task!.title,
-                points: assignment.points,
-                dueDate: assignment.dueDate,
-                completed: assignment.completed,
-                groupName: assignment.task!.group?.name || 'Unknown Group',
-                groupId: assignment.task!.group?.id,
-                isOverdue: true,
-                daysOverdue: Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)),
-                timeSlot: timeSlot ? {
-                  startTime: timeSlot.startTime,
-                  endTime: timeSlot.endTime,
-                  label: timeSlot.label
-                } : null
-              };
-            }),
+          currentWeekTasks: currentWeekTasksFormatted,
+          overdueTasks: overdueTasksFormatted,
           groups: groups,
           recentActivity: recentActivity.map(activity => ({
             ...activity,
@@ -335,16 +412,16 @@ export class HomeServices {
             timeAgo: this.getTimeAgo(activity.createdAt)
           })),
           rotationInfo: {
-            currentWeekStart,
-            currentWeekEnd,
-            nextRotationStarts: new Date(currentWeekEnd.getTime() + 1000),
-            daysUntilNextRotation: Math.max(0, Math.ceil((currentWeekEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+            currentWeekStart: todayStartUTC,
+            currentWeekEnd: next7DaysEnd,
+            nextRotationStarts: new Date(next7DaysEnd.getTime() + 1000),
+            daysUntilNextRotation: Math.max(0, Math.ceil((next7DaysEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
           }
         }
       };
 
     } catch (e: any) {
-      console.error("HomeServices error:", e);
+      console.error("❌ HomeServices error:", e);
       return {
         success: false,
         message: e.message || "Internal server error"
@@ -353,6 +430,7 @@ export class HomeServices {
   }
     
   static async getWeeklySummary(userId: string) {
+    // ... keep existing code (same as before)
     try {
       const userMemberships = await prisma.groupMember.findMany({
         where: { userId: userId },
@@ -368,19 +446,16 @@ export class HomeServices {
 
       const now = new Date();
 
-      const currentUTCDay = now.getUTCDay();
-      const daysToMonday = currentUTCDay === 0 ? 6 : currentUTCDay - 1;
-
-      const weekStart = new Date(Date.UTC(
+      const todayStartUTC = new Date(Date.UTC(
         now.getUTCFullYear(),
         now.getUTCMonth(),
-        now.getUTCDate() - daysToMonday,
+        now.getUTCDate(),
         0, 0, 0, 0
       ));
 
-      const weekEnd = new Date(weekStart);
-      weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
-      weekEnd.setUTCHours(23, 59, 59, 999);
+      const next7DaysEnd = new Date(todayStartUTC);
+      next7DaysEnd.setUTCDate(todayStartUTC.getUTCDate() + 7);
+      next7DaysEnd.setUTCHours(23, 59, 59, 999);
 
       const completedThisWeek = inRotation ? await prisma.assignment.findMany({
         where: {
@@ -388,7 +463,7 @@ export class HomeServices {
           completed: true,
           verified: true,
           completedAt: {
-            gte: weekStart
+            gte: todayStartUTC
           }
         },
         include: {
@@ -407,16 +482,14 @@ export class HomeServices {
         orderBy: { completedAt: 'desc' }
       }) : [];
 
-      // ✅ FIXED: Added timeSlot to include
       const pendingThisWeekRaw = inRotation ? await prisma.assignment.findMany({
         where: {
           userId: userId,
           completed: false,
           expired: false,
-          partiallyExpired: false,  // ✅ FIXED: Correct syntax
           dueDate: {
-            gte: weekStart,
-            lte: weekEnd
+            gte: todayStartUTC,
+            lte: next7DaysEnd
           }
         },
         include: {
@@ -427,7 +500,7 @@ export class HomeServices {
               executionFrequency: true
             }
           },
-          timeSlot: {  // ✅ ADDED: Include timeSlot
+          timeSlot: {
             select: {
               id: true,
               startTime: true,
@@ -439,10 +512,7 @@ export class HomeServices {
         }
       }) : [];
 
-      const pendingThisWeek = pendingThisWeekRaw as unknown as Array<Assignment & {
-        task: { title: string; points: number; executionFrequency: string } | null;
-        timeSlot: { id: string; startTime: string; endTime: string; label: string | null; points: number } | null;
-      }>;
+      const pendingThisWeek = pendingThisWeekRaw as any[];
 
       const totalPoints = completedThisWeek.reduce((sum, assignment) => {
         return sum + (assignment.points || 0);
