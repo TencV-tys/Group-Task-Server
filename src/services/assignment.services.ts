@@ -962,8 +962,6 @@ if (filters.status) {
     }
   }
 
-// In assignment.services.ts - FULLY UPDATED getUserNeglectedTasks
-
 static async getUserNeglectedTasks(userId: string, filters?: {
   groupId?: string;
   limit?: number;
@@ -990,14 +988,17 @@ static async getUserNeglectedTasks(userId: string, filters?: {
 
     const now = new Date();
     
+    // ✅ FIXED: Only show assignments that are truly expired (after grace period)
+    // The cron job sets expired=true or partiallyExpired=true ONLY after 30-min grace period
     const where: any = { 
       userId,
       completed: false,
       AND: [
         {
+          // Only tasks that have been officially marked as expired/neglected by cron
           OR: [
             { expired: true },
-            { dueDate: { lt: now } }
+            { partiallyExpired: true }
           ]
         },
         {
@@ -1065,6 +1066,8 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       prisma.assignment.count({ where })
     ]);
 
+    console.log(`📊 Found ${neglectedTasks.length} truly neglected tasks for user ${userId} (only expired=true or partiallyExpired=true)`);
+
     const formattedTasks = neglectedTasks.map(assignment => {
       const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
       const timeSlots = (assignment.task?.timeSlots || []) as any[];
@@ -1076,15 +1079,12 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       let displayTimeSlot = null;
       
       if (missedSlots.length > 0) {
-        // Use the first missed slot for display
         displayTimeSlot = missedSlots[0];
         totalPointsLost = missedSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
       } else if (assignment.timeSlot) {
-        // Fallback to assignment timeSlot
         displayTimeSlot = assignment.timeSlot;
         totalPointsLost = assignment.timeSlot.points || assignment.points || 0;
       } else if (timeSlots.length > 0) {
-        // Last resort: use first time slot from task
         displayTimeSlot = timeSlots[0];
         totalPointsLost = displayTimeSlot.points || 0;
       }
@@ -1208,14 +1208,17 @@ static async getGroupNeglectedTasks(
 
     const now = new Date();
     
+    // ✅ FIXED: Only show assignments that are truly expired (after grace period)
+    // The cron job sets expired=true or partiallyExpired=true ONLY after 30-min grace period
     const where: any = {
       task: { groupId },
       completed: false,
       AND: [
         {
+          // Only tasks that have been officially marked as expired/neglected by cron
           OR: [
             { expired: true },
-            { dueDate: { lt: now } }
+            { partiallyExpired: true }
           ]
         },
         {
@@ -1230,6 +1233,8 @@ static async getGroupNeglectedTasks(
     if (filters?.memberId) {
       where.userId = filters.memberId;
     }
+
+    console.log(`📊 Querying neglected tasks with where clause:`, JSON.stringify(where, null, 2));
 
     const [neglectedTasks, total] = await Promise.all([
       prisma.assignment.findMany({
@@ -1275,6 +1280,8 @@ static async getGroupNeglectedTasks(
       prisma.assignment.count({ where })
     ]);
 
+    console.log(`📊 Found ${neglectedTasks.length} truly neglected tasks in group ${groupId} (only expired=true or partiallyExpired=true)`);
+
     const pointsByUser: Record<string, number> = {};
     
     const formattedTasks = neglectedTasks.map(assignment => {
@@ -1288,15 +1295,12 @@ static async getGroupNeglectedTasks(
       let displayTimeSlot = null;
       
       if (missedSlots.length > 0) {
-        // Use the first missed slot for display
         displayTimeSlot = missedSlots[0];
         totalPointsLost = missedSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
       } else if (assignment.timeSlot) {
-        // Fallback to assignment timeSlot
         displayTimeSlot = assignment.timeSlot;
         totalPointsLost = assignment.timeSlot.points || assignment.points || 0;
       } else if (timeSlots.length > 0) {
-        // Last resort: use first time slot from task
         displayTimeSlot = timeSlots[0];
         totalPointsLost = displayTimeSlot.points || 0;
       }
@@ -1336,7 +1340,7 @@ static async getGroupNeglectedTasks(
       data: {
         tasks: formattedTasks,
         total,
-        count: formattedTasks.length,
+        count: formattedTasks.length, 
         pointsByUser
       }
     };
@@ -1346,6 +1350,7 @@ static async getGroupNeglectedTasks(
     return { success: false, message: error.message };
   }
 }
+
 
 static async getUpcomingAssignments(
   userId: string,
@@ -1865,6 +1870,7 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   return isNeglected;
 }
 
+
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({
@@ -1880,7 +1886,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
     // Get ALL assignments due TODAY that are not completed, not expired
-    // ✅ REMOVED photoUrl: null - we'll check in the loop
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -1959,6 +1964,13 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       const missedSlotIds: string[] = Array.isArray(assignmentAny.missedTimeSlotIds)
         ? assignmentAny.missedTimeSlotIds : [];
 
+      // Get current user points first
+      const currentMember = await prisma.groupMember.findFirst({
+        where: { userId: assignment.userId, groupId, isActive: true },
+        select: { cumulativePoints: true }
+      });
+      let currentPoints = currentMember?.cumulativePoints || 0;
+
       // ---- Multi-slot task ----
       if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
         const newlyMissedSlots: any[] = [];
@@ -1975,7 +1987,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             continue;
           }
 
-          // ✅ Calculate grace period end time (NO BUFFER - exactly 30 minutes)
+          // ✅ Calculate grace period end time
           const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
           let endHour = parseInt(endHourRaw || '0', 10);
           const endMin = parseInt(endMinRaw || '0', 10);
@@ -2003,14 +2015,21 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           pointsLost += slotPts;
           totalPointsNotAwarded += slotPts;
 
-          await prisma.groupMember.updateMany({
-            where: { userId: assignment.userId, groupId, isActive: true },
-            data: {
-              cumulativePoints: { decrement: slotPts },
-              pointsUpdatedAt: new Date()
-            }
-          });
-          console.log(`💰 [POINTS DEDUCTED] -${slotPts} from ${assignment.userId} for slot ${timeSlot.startTime}-${timeSlot.endTime}`);
+          // ✅ PREVENT NEGATIVE POINTS - Only deduct up to current points
+          const actualDeduction = Math.min(slotPts, currentPoints);
+          if (actualDeduction > 0) {
+            await prisma.groupMember.updateMany({
+              where: { userId: assignment.userId, groupId, isActive: true },
+              data: {
+                cumulativePoints: { decrement: actualDeduction },
+                pointsUpdatedAt: new Date()
+              }
+            });
+            currentPoints -= actualDeduction;
+            console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} for slot ${timeSlot.startTime}-${timeSlot.endTime} (${currentPoints + actualDeduction} → ${currentPoints} pts)`);
+          } else {
+            console.log(`💰 [POINTS SKIPPED] User ${assignment.userId} has 0 points, no deduction for slot ${timeSlot.startTime}-${timeSlot.endTime}`);
+          }
         }
 
         if (newlyMissedSlots.length > 0) {
@@ -2039,11 +2058,14 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
           // Notify user per missed slot
           for (const slot of newlyMissedSlots) {
+            const actualDeduction = Math.min(slot.points || 0, currentPoints + (slot.points || 0));
             await UserNotificationService.createNotification({
               userId: assignment.userId,
               type: "SLOT_MISSED",
               title: "⏰ Time Slot Missed",
-              message: `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slot.points || 0} points.`,
+              message: actualDeduction > 0 
+                ? `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${actualDeduction} points.`
+                : `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". You had 0 points, so no points were deducted.`,
               data: {
                 assignmentId: assignment.id,
                 taskId: assignment.taskId,
@@ -2052,7 +2074,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 slotId: slot.id,
                 slotTime: `${slot.startTime}-${slot.endTime}`,
                 slotLabel: slot.label || '',
-                pointsLost: slot.points || 0,
+                pointsLost: actualDeduction,
                 totalSlots: assignment.task!.timeSlots.length,
                 dueDate: assignment.dueDate.toISOString(),
                 detectedAt: now.toISOString()
@@ -2066,7 +2088,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               userId: admin.userId,
               type: "NEGLECT_DETECTED",
               title: "⚠️ Time Slot Missed",
-              message: `${assignment.user?.fullName || 'Unknown'} missed ${newlyMissedSlots.length} slot(s) for "${assignment.task!.title}" — ${pointsLost} pts deducted`,
+              message: `${assignment.user?.fullName || 'Unknown'} missed ${newlyMissedSlots.length} slot(s) for "${assignment.task!.title}" — ${pointsLost} pts attempted, actual deduction based on available points`,
               data: {
                 assignmentId: assignment.id,
                 taskId: assignment.taskId,
@@ -2087,7 +2109,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
       // ---- Single-slot task ----
       } else {
-        // ✅ Calculate grace period end time (NO BUFFER - exactly 30 minutes)
+        // ✅ Calculate grace period end time
         let gracePeriodEnd: Date;
         
         if (!assignment.timeSlot) {
@@ -2132,14 +2154,21 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
         totalPointsNotAwarded += pointsLost;
 
-        await prisma.groupMember.updateMany({
-          where: { userId: assignment.userId, groupId, isActive: true },
-          data: {
-            cumulativePoints: { decrement: pointsLost },
-            pointsUpdatedAt: new Date()
-          }
-        });
-        console.log(`💰 [POINTS DEDUCTED] -${pointsLost} from ${assignment.userId} for task ${assignment.task!.title}`);
+        // ✅ PREVENT NEGATIVE POINTS - Only deduct up to current points
+        const actualDeduction = Math.min(pointsLost, currentPoints);
+        
+        if (actualDeduction > 0) {
+          await prisma.groupMember.updateMany({
+            where: { userId: assignment.userId, groupId, isActive: true },
+            data: {
+              cumulativePoints: { decrement: actualDeduction },
+              pointsUpdatedAt: new Date()
+            }
+          });
+          console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} for task ${assignment.task!.title} (${currentPoints} → ${currentPoints - actualDeduction} pts)`);
+        } else {
+          console.log(`💰 [POINTS SKIPPED] User ${assignment.userId} has 0 points, no deduction for task ${assignment.task!.title}`);
+        }
 
         await prisma.assignment.update({
           where: { id: assignment.id },
@@ -2154,13 +2183,15 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           userId: assignment.userId,
           type: "TASK_MISSED",
           title: "⚠️ Task Missed",
-          message: `You missed "${assignment.task!.title}" — Lost ${pointsLost} points`,
+          message: actualDeduction > 0
+            ? `You missed "${assignment.task!.title}" — Lost ${actualDeduction} points`
+            : `You missed "${assignment.task!.title}" — You had 0 points, so no points were deducted. Keep completing tasks to earn points!`,
           data: {
             assignmentId: assignment.id,
             taskId: assignment.taskId,
             taskTitle: assignment.task!.title,
             groupId,
-            pointsLost,
+            pointsLost: actualDeduction,
             dueDate: assignment.dueDate.toISOString(),
             gracePeriodEnd: gracePeriodEnd.toISOString(),
             detectedAt: now.toISOString()
@@ -2172,7 +2203,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             userId: admin.userId,
             type: "NEGLECT_DETECTED",
             title: "⚠️ Task Missed",
-            message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" — ${pointsLost} pts deducted`,
+            message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" — ${actualDeduction} pts deducted${actualDeduction === 0 ? ' (user had 0 points)' : ''}`,
             data: {
               assignmentId: assignment.id,
               taskId: assignment.taskId,
@@ -2180,7 +2211,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
               groupId,
               userId: assignment.userId,
               userName: assignment.user?.fullName || 'Unknown',
-              pointsLost,
+              pointsLost: actualDeduction,
               dueDate: assignment.dueDate.toISOString(),
               gracePeriodEnd: gracePeriodEnd.toISOString(),
               detectedAt: now.toISOString()
@@ -2198,6 +2229,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
+
 
 private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
   if (assignment.completed) return false;
@@ -2432,7 +2464,6 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
   }
 }
 
-// ----------------------------------------------------------------
 private static async markAssignmentAsNeglected(
   assignmentId: string,
   userId: string
@@ -2480,13 +2511,28 @@ private static async markAssignmentAsNeglected(
       }
     }
 
-    await prisma.groupMember.updateMany({
+    // ✅ Get current user points
+    const currentMember = await prisma.groupMember.findFirst({
       where: { userId: assignment.userId, groupId: assignment.task!.groupId, isActive: true },
-      data: {
-        cumulativePoints: { decrement: pointsLost },
-        pointsUpdatedAt: now
-      }
+      select: { cumulativePoints: true }
     });
+    const currentPoints = currentMember?.cumulativePoints || 0;
+    
+    // ✅ PREVENT NEGATIVE POINTS
+    const actualDeduction = Math.min(pointsLost, currentPoints);
+
+    if (actualDeduction > 0) {
+      await prisma.groupMember.updateMany({
+        where: { userId: assignment.userId, groupId: assignment.task!.groupId, isActive: true },
+        data: {
+          cumulativePoints: { decrement: actualDeduction },
+          pointsUpdatedAt: now
+        }
+      });
+      console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} (${currentPoints} → ${currentPoints - actualDeduction} pts)`);
+    } else {
+      console.log(`💰 [POINTS SKIPPED] User ${assignment.userId} has 0 points, no deduction`);
+    }
 
     await prisma.assignment.update({
       where: { id: assignmentId },
@@ -2505,13 +2551,15 @@ private static async markAssignmentAsNeglected(
       userId: assignment.userId,
       type: "TASK_MISSED",
       title: "⚠️ Task Missed",
-      message: `You missed "${assignment.task!.title}" — Lost ${pointsLost} points`,
+      message: actualDeduction > 0
+        ? `You missed "${assignment.task!.title}" — Lost ${actualDeduction} points`
+        : `You missed "${assignment.task!.title}" — You had 0 points, so no points were deducted. Keep going!`,
       data: {
         assignmentId: assignment.id,
         taskId: assignment.taskId,
         taskTitle: assignment.task!.title,
         groupId: assignment.task!.groupId,
-        pointsLost,
+        pointsLost: actualDeduction,
         dueDate: assignment.dueDate,
         detectedAt: now
       }
@@ -2522,7 +2570,7 @@ private static async markAssignmentAsNeglected(
         userId: admin.userId,
         type: "NEGLECT_DETECTED",
         title: "⚠️ Task Missed Immediately",
-        message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" after window closed — ${pointsLost} pts deducted`,
+        message: `${assignment.user?.fullName || 'Unknown'} missed "${assignment.task!.title}" — ${actualDeduction} pts deducted${actualDeduction === 0 ? ' (user had 0 points)' : ''}`,
         data: {
           assignmentId: assignment.id,
           taskId: assignment.taskId,
@@ -2530,15 +2578,15 @@ private static async markAssignmentAsNeglected(
           groupId: assignment.task!.groupId,
           userId: assignment.userId,
           userName: assignment.user?.fullName || 'Unknown',
-          pointsLost,
+          pointsLost: actualDeduction,
           dueDate: assignment.dueDate,
           detectedAt: now
         }
       });
     }
 
-    console.log(`💰 [IMMEDIATE NEGLECT] -${pointsLost} from ${assignment.userId} for "${assignment.task!.title}"`);
-    return { success: true, pointsLost };
+    console.log(`💰 [IMMEDIATE NEGLECT] -${actualDeduction} from ${assignment.userId} for "${assignment.task!.title}"`);
+    return { success: true, pointsLost: actualDeduction };
 
   } catch (error) {
     console.error('Error in markAssignmentAsNeglected:', error);
@@ -2547,4 +2595,4 @@ private static async markAssignmentAsNeglected(
 }
 
 
-}   
+}      
