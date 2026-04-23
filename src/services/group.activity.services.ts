@@ -117,10 +117,10 @@ static async getGroupActivitySummary(groupId: string, userId: string) {
     const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
     
     // ✅ FIXED: Use UTC for date comparison
-    const neglectedAssignments = validAssignments.filter(a => 
-      (a.expired === true || (!a.completed && new Date(a.dueDate).getTime() < now.getTime())) &&
-      a.verified !== true
-    ).length;
+ const neglectedAssignments = validAssignments.filter(a => 
+  a.expired === true && a.verified !== true
+).length;
+
     
     const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
     const earnedPoints = validAssignments
