@@ -12,7 +12,7 @@ export class TaskService {
 private static getUTCToday(): { todayUTC: Date; tomorrowUTC: Date } {
   const now = new Date();
   const todayUTC = new Date(Date.UTC(
-    now.getUTCFullYear(),
+    now.getUTCFullYear(), 
     now.getUTCMonth(),
     now.getUTCDate(),
     0, 0, 0, 0
@@ -2330,7 +2330,7 @@ static async getUserTasks(groupId: string, userId: string, week?: number) {
           console.log(`   ⏭️ DAY SWAP - Requester ${userId} - NO INDICATOR`);
         }
       }
-      
+       
       if (shouldInclude) {
         if (swap.scope === 'week') {
           for (const assignment of currentAssignments) {
@@ -2846,5 +2846,185 @@ static async getTaskStatistics(groupId: string, userId: string) {
   }
 }
 
- 
+ // Add this method to TaskService class in task.services.ts
+
+static async previewRotation(groupId: string, userId: string) {
+  try {
+    const membership = await prisma.groupMember.findFirst({
+      where: { userId, groupId, groupRole: "ADMIN" }
+    });
+
+    if (!membership) {
+      return { success: false, message: "Only group admins can preview rotation" };
+    }
+
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) {
+      return { success: false, message: "Group not found" };
+    }
+
+    // Get all recurring tasks sorted by points (highest to lowest)
+    const tasks = await prisma.task.findMany({
+      where: { 
+        groupId, 
+        isRecurring: true,
+        isDeleted: false 
+      },
+      include: {
+        timeSlots: { 
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            label: true,
+            points: true
+          }
+        }
+      }
+    });
+
+    // Calculate total points for each task and sort HIGHEST to LOWEST
+    const tasksWithPoints = tasks.map(task => {
+      const totalPoints = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+      return {
+        ...task,
+        totalPoints: totalPoints || task.points || 0
+      };
+    }).sort((a, b) => b.totalPoints - a.totalPoints);
+
+    // Get all active members in rotation sorted by rotationOrder
+    const members = await prisma.groupMember.findMany({
+      where: { 
+        groupId, 
+        isActive: true,
+        inRotation: true
+      },
+      include: { 
+        user: { 
+          select: { 
+            id: true, 
+            fullName: true,
+            avatarUrl: true 
+          } 
+        } 
+      },
+      orderBy: { rotationOrder: 'asc' }
+    });
+
+    if (members.length === 0) {
+      return { success: false, message: "No active members in rotation" };
+    }
+
+    // Get current assignments for this week
+    const currentAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek
+      },
+      include: {
+        task: true,
+        user: true
+      }
+    });
+
+    // Create map of taskId -> current assignee
+    const currentTaskAssignee = new Map();
+    currentAssignments.forEach(assignment => {
+      if (assignment.taskId && assignment.userId) {
+        currentTaskAssignee.set(assignment.taskId, assignment.userId);
+      }
+    });
+
+    const currentWeek = group.currentRotationWeek;
+    const nextWeek = currentWeek + 1;
+    const rotationOffset = nextWeek % members.length;
+
+    // Build current assignments display
+    const currentDisplay = [];
+    for (let i = 0; i < members.length; i++) {
+      const member = members[i];
+      const positionIndex = i % tasksWithPoints.length;
+      const task = tasksWithPoints[positionIndex];
+      
+      if (!task) continue;
+      
+      const isManuallyAssigned = currentTaskAssignee.get(task.id) !== member?.userId;
+      
+      currentDisplay.push({
+        memberId: member?.userId,
+        memberName: member?.user.fullName,
+        rotationOrder: member?.rotationOrder,
+        taskId: task.id,
+        taskTitle: task.title,
+        taskPoints: task.totalPoints,
+        isManuallyAssigned,
+        actualAssigneeId: currentTaskAssignee.get(task.id),
+        actualAssigneeName: currentAssignments.find(a => a.taskId === task.id)?.user?.fullName || 'Unassigned'
+      });
+    }
+
+    // Build preview assignments (after rotation)
+    const previewDisplay = [];
+    for (let i = 0; i < members.length; i++) {
+      const member = members[i];
+      // Rotate: member at index i gets task from position (i + rotationOffset)
+      const taskIndex = (i + rotationOffset) % tasksWithPoints.length;
+      const task = tasksWithPoints[taskIndex];
+      
+      if (!task) continue;
+      
+      previewDisplay.push({
+        memberId: member?.userId,
+        memberName: member?.user.fullName,
+        rotationOrder: member?.rotationOrder,
+        taskId: task.id,
+        taskTitle: task.title, 
+        taskPoints: task.totalPoints
+      });
+    }
+
+    // Find conflicts (where manual assignment differs from automatic)
+    const conflicts = [];
+    for (let i = 0; i < members.length; i++) {
+      const member = members[i];
+      const currentTask = currentDisplay[i];
+      const previewTask = previewDisplay[i];
+      
+      if (currentTask && previewTask && currentTask.taskId !== previewTask.taskId) {
+        conflicts.push({
+          memberName: member?.user.fullName,
+          currentTaskTitle: currentTask.taskTitle,
+          previewTaskTitle: previewTask.taskTitle,
+          reason: `Manual override detected`
+        });
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        currentWeek,
+        nextWeek,
+        rotationOffset,
+        membersInRotation: members.length,
+        tasksCount: tasksWithPoints.length,
+        currentAssignments: currentDisplay,
+        previewAssignments: previewDisplay,
+        conflicts,
+        tasksSortedByPoints: tasksWithPoints.map(t => ({
+          id: t.id,
+          title: t.title,
+          points: t.totalPoints,
+          rank: tasksWithPoints.indexOf(t) + 1
+        }))
+      }
+    };
+
+  } catch (error: any) {
+    console.error("TaskService.previewRotation error:", error);
+    return { success: false, message: error.message || "Error previewing rotation" };
+  }
+}
+
 } 

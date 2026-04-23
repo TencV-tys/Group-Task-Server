@@ -19,10 +19,10 @@ export class TaskController {
         executionFrequency = 'WEEKLY' as TaskExecutionFrequency,
         timeFormat = '12h',
         selectedDays,
-        dayOfWeek,
+        dayOfWeek, 
         isRecurring = true,
         timeSlots = [],
-        rotationMemberIds,
+        rotationMemberIds, 
         rotationOrder,
         initialAssigneeId
       } = req.body;
@@ -656,4 +656,51 @@ static async getRotationStatus(req: UserAuthRequest, res: Response) {
     return res.status(500).json({ success: false, message: error.message });
   }
 }
+
+
+// controllers/task.controller.ts - ADD THIS METHOD
+
+static async previewRotation(req: UserAuthRequest, res: Response) {
+  try {
+    const userId = req.user?.id;
+    const { groupId } = req.params as { groupId: string };
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated"
+      });
+    }
+
+    if (!groupId) {
+      return res.status(400).json({
+        success: false,
+        message: "Group ID is required"
+      });
+    }
+
+    const result = await TaskService.previewRotation(groupId, userId);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Rotation preview retrieved",
+      data: result.data
+    });
+
+  } catch (error: any) {
+    console.error("TaskController.previewRotation error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
 }   

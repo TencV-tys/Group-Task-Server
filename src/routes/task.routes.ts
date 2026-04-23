@@ -1,4 +1,5 @@
-// routes/task.routes.ts
+// routes/task.routes.ts - ADD THIS ROUTE
+
 import { Router } from "express";
 import { TaskController } from "../controllers/task.controller";
 import { UserAuthMiddleware } from "../middlewares/user.auth.middleware"; 
@@ -20,6 +21,9 @@ router.get('/group/:groupId/my-tasks', TaskController.getMyTasks);
 
 // Rotate tasks for a group (admin only)
 router.post('/group/:groupId/rotate', TaskController.rotateTasks);
+
+// ✅ ADD THIS - Preview rotation (admin only, doesn't modify data)
+router.get('/group/:groupId/preview-rotation', TaskController.previewRotation);
 
 // Get rotation schedule for a group
 router.get('/group/:groupId/schedule', TaskController.getRotationSchedule);
