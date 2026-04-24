@@ -259,16 +259,11 @@ static async completeAssignment(
         if (updatedCompletedSlots.includes(slot.id)) {
           let slotPointsValue = slot.points || assignment.points;
           
-          // ✅ Apply late penalty ONLY to the slot being submitted if it's late
-          // AND this is the last slot (after this, all slots are completed)
-          const isLastSlot = updatedCompletedSlots.length === assignment.task.timeSlots.length;
+          // ✅ FIXED: Apply late penalty to ANY slot submitted during late window
+          // The grace period is for THIS specific time slot
           if (slot.id === targetTimeSlot.id && isLate) {
-            if (isLastSlot) {
-              slotPointsValue = Math.floor(slotPointsValue * 0.5);
-              console.log(`💰 Late penalty applied to slot ${slot.startTime}-${slot.endTime}: ${slot.points || assignment.points} → ${slotPointsValue} (last slot)`);
-            } else {
-              console.log(`💰 Late submission but not last slot, keeping full points: ${slotPointsValue}`);
-            }
+            slotPointsValue = Math.floor(slotPointsValue * 0.5);
+            console.log(`💰 Late penalty applied to slot ${slot.startTime}-${slot.endTime}: ${slot.points || assignment.points} → ${slotPointsValue} (submitted during late window)`);
           }
           
           totalCompletedPoints += slotPointsValue;
@@ -382,7 +377,7 @@ static async completeAssignment(
           } : null,
           isLate,
           originalPoints: slotPoints,
-          finalPoints: isMultiSlotTask ? (allSlotsCompleted && isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
+          finalPoints: isMultiSlotTask ? (isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
           slotsCompleted: updatedCompletedSlots.length,
           totalSlots: assignment.task.timeSlots.length,
           allSlotsCompleted
@@ -409,7 +404,7 @@ static async completeAssignment(
       isLate,
       penaltyAmount,
       originalPoints: slotPoints,
-      finalPoints: isMultiSlotTask ? (allSlotsCompleted && isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
+      finalPoints: isMultiSlotTask ? (isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
       slotsCompleted: updatedCompletedSlots.length,
       totalSlots: assignment.task.timeSlots.length,
       allSlotsCompleted,
@@ -425,7 +420,6 @@ static async completeAssignment(
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
-
 
 // ========== VERIFY ASSIGNMENT ==========
 static async verifyAssignment(
