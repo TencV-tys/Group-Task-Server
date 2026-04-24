@@ -1,4 +1,5 @@
-// controllers/admin.audit.controller.ts
+// controllers/admin.audit.controller.ts - FIXED with search parameter
+
 import { Response } from "express";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
 import { AdminAuditService } from "../services/admin.audit.services";
@@ -11,11 +12,11 @@ export class AdminAuditController {
       const adminId = req.admin?.id;
       const { startDate, endDate } = req.query;
 
-      if (!adminId) {
-        return res.status(401).json({
+      if (!adminId) { 
+        return res.status(401).json({ 
           success: false, 
           message: "Admin not authenticated"
-        });
+        }); 
       }
 
       const result = await AdminAuditService.getStatistics({
@@ -23,7 +24,6 @@ export class AdminAuditController {
         endDate: endDate ? new Date(endDate as string) : undefined
       });
 
-      // FIX: Convert any BigInt values to numbers before sending response
       const safeResult = JSON.parse(JSON.stringify(result, (key, value) => 
         typeof value === 'bigint' ? Number(value) : value
       ));
@@ -39,7 +39,7 @@ export class AdminAuditController {
     }
   }
 
-  // ========== GET AUDIT LOGS ==========
+  // ========== GET AUDIT LOGS - FIXED with search ==========
   static async getAuditLogs(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
@@ -47,6 +47,7 @@ export class AdminAuditController {
         adminId: filterAdminId,
         targetUserId,
         action,
+        search,        // ✅ ADD THIS
         startDate,
         endDate,
         limit = 50,
@@ -64,13 +65,13 @@ export class AdminAuditController {
         adminId: filterAdminId as string,
         targetUserId: targetUserId as string,
         action: action as string,
+        search: search as string,  // ✅ ADD THIS
         startDate: startDate ? new Date(startDate as string) : undefined,
         endDate: endDate ? new Date(endDate as string) : undefined,
         limit: Number(limit),
         offset: Number(offset)
       });
 
-      // Also fix for logs response
       const safeResult = JSON.parse(JSON.stringify(result, (key, value) => 
         typeof value === 'bigint' ? Number(value) : value
       ));
@@ -101,7 +102,6 @@ export class AdminAuditController {
 
       const result = await AdminAuditService.getLogById(logId);
       
-      // Fix BigInt
       const safeResult = JSON.parse(JSON.stringify(result, (key, value) => 
         typeof value === 'bigint' ? Number(value) : value
       ));
@@ -117,52 +117,49 @@ export class AdminAuditController {
     }
   }
 
-  // controllers/admin.audit.controller.ts - Update deleteAuditLog
+  // ========== DELETE AUDIT LOG ==========
+  static async deleteAuditLog(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+      const { logId } = req.params as { logId: string };
+      const { adminId: bodyAdminId } = req.body;
 
-// ========== DELETE AUDIT LOG ==========
-static async deleteAuditLog(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    const { logId } = req.params as { logId: string };
-    const { adminId: bodyAdminId } = req.body; // ✅ Get from body if needed
+      if (!adminId && !bodyAdminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
 
-    if (!adminId && !bodyAdminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Admin not authenticated"
-      });
-    }
+      const actingAdminId = adminId || bodyAdminId;
 
-    const actingAdminId = adminId || bodyAdminId;
+      if (!logId) {
+        return res.status(400).json({
+          success: false,
+          message: "Log ID is required"
+        });
+      }
 
-    if (!logId) {
-      return res.status(400).json({
-        success: false,
-        message: "Log ID is required"
-      });
-    }
+      const result = await AdminAuditService.deleteLog(logId, actingAdminId);
 
-    const result = await AdminAuditService.deleteLog(logId, actingAdminId);
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
 
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
+      return res.json({
+        success: true,
         message: result.message
       });
+
+    } catch (error: any) {
+      console.error("Error in deleteAuditLog:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
     }
-
-    return res.json({
-      success: true,
-      message: result.message
-    });
-
-  } catch (error: any) {
-    console.error("Error in deleteAuditLog:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
   }
 }
-
-} 

@@ -6,6 +6,7 @@ export interface AuditLogFilters {
   adminId?: string;
   targetUserId?: string;
   action?: string;
+    search?: string; 
   startDate?: Date; 
   endDate?: Date; 
   limit?: number;
@@ -332,21 +333,17 @@ export class AdminAuditService {
     console.log('✅ Force processing complete');
   }
 
-// ========== GET AUDIT LOGS ==========
-static async getLogs(filters: AuditLogFilters = {}) {
+  // services/admin.audit.services.ts - ADD SEARCH FILTER
+
+
+  static async getLogs(filters: AuditLogFilters = {}) {
   try {
     const where: any = {};
 
     // Apply basic filters
     if (filters.adminId) where.adminId = filters.adminId;
     if (filters.targetUserId) where.targetUserId = filters.targetUserId;
-    
-    // ✅ REMOVE IMPORTANT_ACTIONS filter - show ALL actions
-    if (filters.action) {
-      where.action = filters.action;
-      console.log(`🔍 [AuditService] Filtering by exact action: ${filters.action}`);
-    }
-    // ❌ REMOVE the else clause that filters by IMPORTANT_ACTIONS
+    if (filters.action) where.action = filters.action;
     
     // Date range filter
     if (filters.startDate || filters.endDate) {
@@ -355,32 +352,49 @@ static async getLogs(filters: AuditLogFilters = {}) {
       if (filters.endDate) where.createdAt.lte = filters.endDate;
     }
 
-    console.log('📊 [AuditService] GetLogs where (ALL ACTIONS):', JSON.stringify(where, null, 2));
+    console.log('📊 [AuditService] GetLogs where:', JSON.stringify(where, null, 2));
 
-    const [logs, total] = await Promise.all([
-      prisma.adminAuditLog.findMany({
-        where,
-        include: {
-          admin: { select: { id: true, fullName: true, email: true } },
-          targetUser: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: filters.limit || 50,
-        skip: filters.offset || 0
-      }),
-      prisma.adminAuditLog.count({ where })
-    ]);
+    // First get logs with basic filters
+    let logs = await prisma.adminAuditLog.findMany({
+      where,
+      include: {
+        admin: { select: { id: true, fullName: true, email: true } },
+        targetUser: { select: { id: true, fullName: true, email: true, avatarUrl: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: filters.limit || 50,
+      skip: filters.offset || 0
+    });
+
+    // ✅ Apply search filter AFTER fetching (client-side filtering for related fields)
+    if (filters.search && filters.search.trim()) {
+      const searchLower = filters.search.trim().toLowerCase();
+      logs = logs.filter(log => 
+        log.action?.toLowerCase().includes(searchLower) ||
+        JSON.stringify(log.details)?.toLowerCase().includes(searchLower) ||
+        log.admin?.fullName?.toLowerCase().includes(searchLower) ||
+        log.targetUser?.fullName?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Get total count (with search filter applied)
+    let total = logs.length;
+    
+    // If we have pagination, we need to slice after filtering
+    const offset = filters.offset || 0;
+    const limit = filters.limit || 50;
+    const paginatedLogs = logs.slice(offset, offset + limit);
 
     console.log(`📊 [AuditService] Found ${logs.length} logs, total: ${total}`);
 
     return {
       success: true,
-      logs,
+      logs: paginatedLogs,
       pagination: {
         total,
-        limit: filters.limit || 50,
-        offset: filters.offset || 0,
-        hasMore: total > (filters.offset || 0) + (filters.limit || 50)
+        limit: limit,
+        offset: offset,
+        hasMore: total > offset + limit
       }
     };
 
@@ -389,6 +403,7 @@ static async getLogs(filters: AuditLogFilters = {}) {
     return { success: false, message: error.message || 'Failed to fetch audit logs' };
   }
 }
+
   // ========== GET AUDIT LOG BY ID ==========
   static async getLogById(logId: string) {
     try {

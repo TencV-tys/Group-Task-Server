@@ -1,41 +1,48 @@
+// controllers/admin.report.controller.ts - COMPLETE FIXED VERSION
 
-// controllers/admin.report.controller.ts
 import { Response } from "express";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
 import { AdminReportService } from '../services/admin.report.services';
 import prisma from "../prisma";
-import { ReportStatus } from "@prisma/client"; // 👈 ADD THIS IMPORT
+import { ReportStatus } from "@prisma/client";
 
 export class AdminReportController {
   
-  // ========== GET ALL REPORTS (ADMIN ONLY) ==========
+  // ========== GET ALL REPORTS (ADMIN ONLY) - FIXED ==========
   static async getAllReports(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
- 
+
       if (!adminId) {
         return res.status(401).json({ 
           success: false,
           message: "Admin not authenticated"
         });
-      } 
- 
-      const { status, limit = 50, offset = 0 } = req.query;
-
-      const where: any = {};
-      
-      // 👇 Validate status if provided
-      if (status) {
-        const validStatuses = Object.values(ReportStatus);
-        if (!validStatuses.includes(status as any)) {
-          return res.status(400).json({
-            success: false,
-            message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-          });
-        }
-        where.status = status;
       }
 
+      // ✅ Get query parameters
+      const { status, search, page = 1, limit = 20 } = req.query;
+      const skip = (Number(page) - 1) * Number(limit);
+      
+      const where: any = { deletedAt: null };
+      
+      // Status filter
+      if (status && status !== 'ALL') {
+        where.status = status;
+      }
+      
+      // ✅ Search filter
+      if (search && typeof search === 'string' && search.trim()) {
+        where.OR = [
+          { description: { contains: search.trim() } },
+          { reporter: { fullName: { contains: search.trim() } } },
+          { group: { name: { contains: search.trim() } } }
+        ];
+      }
+
+      console.log('📥 [Controller] Fetching reports with where:', JSON.stringify(where));
+
+      // Fetch reports
       const [reports, total] = await Promise.all([
         prisma.report.findMany({
           where,
@@ -70,29 +77,31 @@ export class AdminReportController {
               }
             }
           },
-          orderBy: [
-            { status: 'asc' },
-            { createdAt: 'desc' }
-          ],
+          orderBy: { createdAt: 'desc' },
           take: Number(limit),
-          skip: Number(offset)
+          skip: skip
         }),
         prisma.report.count({ where })
       ]);
 
+      console.log(`✅ [Controller] Found ${reports.length} reports (total: ${total})`);
+
+      // ✅ CORRECT RESPONSE FORMAT - matches frontend expectations
       return res.json({
         success: true,
-        reports,
+        message: "Reports retrieved successfully",
+        reports: reports,
         pagination: {
-          total,
+          page: Number(page),
           limit: Number(limit),
-          offset: Number(offset),
-          hasMore: total > Number(offset) + Number(limit)
+          total: total,
+          pages: Math.ceil(total / Number(limit)),
+          hasMore: skip + reports.length < total
         }
       });
 
     } catch (error: any) {
-      console.error("Error in getAllReports:", error);
+      console.error("❌ Error in getAllReports:", error);
       return res.status(500).json({
         success: false,
         message: "Internal server error"
@@ -114,7 +123,7 @@ export class AdminReportController {
       }
 
       const report = await prisma.report.findUnique({
-        where: { id: reportId },
+        where: { id: reportId, deletedAt: null },
         include: {
           reporter: {
             select: {
@@ -159,11 +168,12 @@ export class AdminReportController {
 
       return res.json({
         success: true,
-        report
+        message: "Report retrieved successfully",
+        report: report
       });
 
     } catch (error: any) {
-      console.error("Error in getReportDetails:", error);
+      console.error("❌ Error in getReportDetails:", error);
       return res.status(500).json({
         success: false,
         message: "Internal server error"
@@ -171,139 +181,63 @@ export class AdminReportController {
     }
   }
 
-// ========== UPDATE REPORT STATUS (ADMIN ONLY) ==========
-static async updateReportStatus(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    const { reportId } = req.params as {reportId:string};
-    const { status, resolutionNotes } = req.body;
+  // ========== UPDATE REPORT STATUS (ADMIN ONLY) ==========
+  static async updateReportStatus(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+      const { reportId } = req.params as {reportId:string};
+      const { status, resolutionNotes } = req.body;
 
-    if (!adminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Admin not authenticated"
-      });
-    }
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
 
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: "Status is required"
-      });
-    }
+      if (!status) {
+        return res.status(400).json({
+          success: false,
+          message: "Status is required"
+        });
+      }
 
-    // 👇 Validate status against ReportStatus enum
-    const validStatuses = Object.values(ReportStatus);
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
-    }
+      const validStatuses = Object.values(ReportStatus);
+      if (!validStatuses.includes(status as any)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        });
+      }
 
-    const result = await AdminReportService.updateReportStatus(
-      reportId,
-      adminId,
-      status,
-      resolutionNotes
-    );
+      const result = await AdminReportService.updateReportStatus(
+        reportId,
+        adminId,
+        status as ReportStatus,
+        resolutionNotes
+      );
 
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        message: result.message
-      });
-    }
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
 
-    // 👇 Add null check for result.report
-    if (!result.report) {
-      return res.status(500).json({
-        success: false,
-        message: "Report updated but no data returned"
-      });
-    }
-
-    // ✅ FIXED: Return the FULL report object from the service
-    return res.json({
-      success: true,
-      message: "Report status updated successfully",
-      report: result.report  // 👈 Return the complete report, not just a subset
-    });
-
-  } catch (error: any) {
-    console.error("Error in updateReportStatus:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
-  }
-}
-  // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
- // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
-static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    const { reportIds, status, resolutionNotes } = req.body;
-
-    if (!adminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Admin not authenticated"
-      });
-    }
-
-    if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Report IDs are required"
-      });
-    }
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: "Status is required"
-      });
-    }
-
-    // Validate status against ReportStatus enum
-    const validStatuses = Object.values(ReportStatus);
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-      });
-    }
-
-    const result = await AdminReportService.bulkUpdateReports(
-      reportIds,
-      adminId,
-      status, // Now it's validated as ReportStatus
-      resolutionNotes
-    );
-
-    // ✅ Access data from the result.data property
-    if (result.success && result.data) {
       return res.json({
         success: true,
-        message: `Updated ${result.data.successCount} of ${result.data.totalCount} reports`,
-        results: result.data
+        message: `Report status updated to ${status}`,
+        report: result.report
       });
-    } else {
-      return res.status(400).json({
+
+    } catch (error: any) {
+      console.error("❌ Error in updateReportStatus:", error);
+      return res.status(500).json({
         success: false,
-        message: result.message || "Failed to update reports"
+        message: "Internal server error"
       });
     }
-
-  } catch (error: any) {
-    console.error("Error in bulkUpdateReports:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
   }
-}
 
   // ========== GET REPORT STATISTICS (ADMIN ONLY) ==========
   static async getReportStatistics(req: AdminAuthRequest, res: Response) {
@@ -317,96 +251,41 @@ static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
         });
       }
 
-      const [
-        totalReports,
-        pendingReports,
-        reviewingReports,
-        resolvedReports,
-        dismissedReports,
-        reportsByType,
-        reportsByGroup,
-        recentReports
-      ] = await Promise.all([
-        prisma.report.count(),
-        prisma.report.count({ where: { status: 'PENDING' } }),
-        prisma.report.count({ where: { status: 'REVIEWING' } }),
-        prisma.report.count({ where: { status: 'RESOLVED' } }),
-        prisma.report.count({ where: { status: 'DISMISSED' } }),
-        prisma.report.groupBy({
-          by: ['type'],
-          _count: true
-        }),
-        prisma.report.groupBy({
-          by: ['groupId'],
-          _count: true,
-          orderBy: {
-            _count: {
-              groupId: 'desc'
-            }
-          },
-          take: 5
-        }),
-        prisma.report.findMany({
-          where: { status: 'PENDING' },
-          include: {
-            reporter: {
-              select: { fullName: true }
-            },
-            group: {
-              select: { name: true }
-            }
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 10
-        })
+      const [total, pending, reviewing, resolved, dismissed] = await Promise.all([
+        prisma.report.count({ where: { deletedAt: null } }),
+        prisma.report.count({ where: { status: 'PENDING', deletedAt: null } }),
+        prisma.report.count({ where: { status: 'REVIEWING', deletedAt: null } }),
+        prisma.report.count({ where: { status: 'RESOLVED', deletedAt: null } }),
+        prisma.report.count({ where: { status: 'DISMISSED', deletedAt: null } })
       ]);
 
-      // Get group names for top reported groups
-      const topGroups = await Promise.all(
-        reportsByGroup.map(async (item) => {
-          const group = await prisma.group.findUnique({
-            where: { id: item.groupId },
-            select: { name: true }
-          });
-          return {
-            groupId: item.groupId,
-            groupName: group?.name || 'Unknown Group',
-            reportCount: item._count
-          };
-        })
-      );
+      const byType = await prisma.report.groupBy({
+        by: ['type'],
+        where: { deletedAt: null },
+        _count: true
+      });
 
       return res.json({
         success: true,
+        message: "Report statistics retrieved",
         statistics: {
           overview: {
-            total: totalReports,
-            pending: pendingReports,
-            reviewing: reviewingReports,
-            resolved: resolvedReports,
-            dismissed: dismissedReports,
-            resolutionRate: totalReports > 0 
-              ? Math.round(((resolvedReports + dismissedReports) / totalReports) * 100) 
-              : 0
+            total,
+            pending,
+            reviewing,
+            resolved,
+            dismissed,
+            resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0
           },
-          byType: reportsByType.map(item => ({
+          byType: byType.map(item => ({
             type: item.type,
             count: item._count
-          })),
-          topReportedGroups: topGroups,
-          recentReports: recentReports.map(r => ({
-            id: r.id,
-            type: r.type,
-            status: r.status,
-            reporterName: (r as any).reporter?.fullName || 'Unknown User',
-            groupName: (r as any).group?.name || 'Unknown Group',
-            createdAt: r.createdAt
           }))
         }
       });
 
     } catch (error: any) {
-      console.error("Error in getReportStatistics:", error);
+      console.error("❌ Error in getReportStatistics:", error);
       return res.status(500).json({
         success: false,
         message: "Internal server error"
@@ -414,96 +293,156 @@ static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
     }
   }
 
-  // Add these methods to your AdminReportController class
+  // ========== DELETE REPORT (ADMIN ONLY) ==========
+  static async deleteReport(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+      const { reportId } = req.params as {reportId:string};
+      const { hardDelete } = req.query;
 
-// ========== DELETE REPORT (ADMIN ONLY) ==========
-static async deleteReport(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    const { reportId } = req.params as { reportId: string };
-    const { hardDelete = false } = req.query;
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
 
-    if (!adminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Admin not authenticated"
-      });
-    }
+      const result = await AdminReportService.deleteReport(
+        reportId,
+        adminId,
+        hardDelete === 'true'
+      );
 
-    const result = await AdminReportService.deleteReport(
-      reportId,
-      adminId,
-      hardDelete === 'true'
-    );
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: result.message
+        });
+      }
 
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        message: result.message
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: result.message,
-      data: result.data
-    });
-
-  } catch (error: any) {
-    console.error("Error in deleteReport:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
-  }
-}
-
-// ========== BULK DELETE REPORTS (ADMIN ONLY) ==========
-static async bulkDeleteReports(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    const { reportIds, hardDelete = false } = req.body;
-
-    if (!adminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Admin not authenticated"
-      });
-    }
-
-    if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Report IDs are required"
-      });
-    }
-
-    const result = await AdminReportService.bulkDeleteReports(
-      reportIds,
-      adminId,
-      hardDelete
-    );
-
-    if (result.success && result.data) {
       return res.json({
         success: true,
-        message: `Deleted ${result.data.successCount} of ${result.data.totalCount} reports`,
-        results: result.data
+        message: result.message
       });
-    } else {
-      return res.status(400).json({
+
+    } catch (error: any) {
+      console.error("❌ Error in deleteReport:", error);
+      return res.status(500).json({
         success: false,
-        message: result.message || "Failed to delete reports"
+        message: "Internal server error"
       });
     }
-
-  } catch (error: any) {
-    console.error("Error in bulkDeleteReports:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error"
-    });
   }
-}
 
+  // ========== BULK UPDATE REPORTS (ADMIN ONLY) ==========
+  static async bulkUpdateReports(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+      const { reportIds, status, resolutionNotes } = req.body;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
+
+      if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Report IDs are required"
+        });
+      }
+
+      if (!status) {
+        return res.status(400).json({
+          success: false,
+          message: "Status is required"
+        });
+      }
+
+      const validStatuses = Object.values(ReportStatus);
+      if (!validStatuses.includes(status as any)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        });
+      }
+
+      const result = await AdminReportService.bulkUpdateReports(
+        reportIds,
+        adminId,
+        status as ReportStatus,
+        resolutionNotes
+      );
+
+      if (result.success && result.data) {
+        return res.json({
+          success: true,
+          message: `Updated ${result.data.successCount} of ${result.data.totalCount} reports`,
+          results: result.data
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: result.message || "Failed to update reports"
+        });
+      }
+
+    } catch (error: any) {
+      console.error("❌ Error in bulkUpdateReports:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
+
+  // ========== BULK DELETE REPORTS (ADMIN ONLY) ==========
+  static async bulkDeleteReports(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+      const { reportIds, hardDelete = false } = req.body;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Admin not authenticated"
+        });
+      }
+
+      if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Report IDs are required"
+        });
+      }
+
+      const result = await AdminReportService.bulkDeleteReports(
+        reportIds,
+        adminId,
+        hardDelete
+      );
+
+      if (result.success && result.data) {
+        return res.json({
+          success: true,
+          message: `Deleted ${result.data.successCount} of ${result.data.totalCount} reports`,
+          results: result.data
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: result.message || "Failed to delete reports"
+        });
+      }
+
+    } catch (error: any) {
+      console.error("❌ Error in bulkDeleteReports:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error"
+      });
+    }
+  }
 }

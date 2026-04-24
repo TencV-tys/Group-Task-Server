@@ -12,7 +12,7 @@ router.use(AdminAuthMiddleware);
 // ========== VIEW ROUTES (WITH AUDIT - SECURITY SENSITIVE) ==========
 
 /**
- * @route   GET /api/admin/audit
+ * @route   GET /api/admin/audit 
  * @desc    Get audit logs with filters
  * @access  Private (Admin)
  * @audit   Logs who viewed audit logs (security sensitive)
@@ -22,7 +22,7 @@ router.get(
   AuditLog('ADMIN_VIEW_AUDIT_LOGS'), // 👈 ADD AUDIT
   AdminAuditController.getAuditLogs
 );
-
+ 
 /**
  * @route   GET /api/admin/audit/statistics
  * @desc    Get audit statistics
