@@ -616,7 +616,7 @@ static async verifyAssignment(
         notifiedOtherAdmins: otherAdmins.length
       }
     };
-
+ 
   } catch (error: any) {
     console.error("AssignmentService.verifyAssignment error:", error);
     return { success: false, message: error.message || "Error verifying assignment" };
@@ -1893,6 +1893,7 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
   return isNeglected;
 }
 
+// In assignment.services.ts - COMPLETELY FIXED checkGroupNeglectedAssignments
 
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
@@ -1994,179 +1995,177 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       });
       let currentPoints = currentMember?.cumulativePoints || 0;
 
-      // ---- Multi-slot task ----
-      // ---- Multi-slot task ----
-if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
-  // ✅ REFRESH assignment to get latest completed slots (user might have submitted during grace period)
-  const freshAssignment = await prisma.assignment.findUnique({
-    where: { id: assignment.id },
-    select: { 
-      completedTimeSlotIds: true,
-      photoUrl: true,
-      expired: true,
-      points: true
-    }
-  });
-  
-  let freshCompletedSlotIds: string[] = [];
-  if (freshAssignment?.completedTimeSlotIds) {
-    // Handle Prisma JsonValue type
-    const rawValue = freshAssignment.completedTimeSlotIds;
-    
-    if (typeof rawValue === 'string') {
-      try {
-        const parsed = JSON.parse(rawValue);
-        if (Array.isArray(parsed)) {
-          freshCompletedSlotIds = parsed.filter((item): item is string => typeof item === 'string');
+      // ========== MULTI-SLOT TASK ==========
+      if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
+        // ✅ Refresh to get latest completed slots (user might have submitted during grace period)
+        const freshAssignment = await prisma.assignment.findUnique({
+          where: { id: assignment.id },
+          select: { 
+            completedTimeSlotIds: true,
+            photoUrl: true,
+            expired: true,
+            points: true
+          }
+        });
+        
+        let freshCompletedSlotIds: string[] = [];
+        if (freshAssignment?.completedTimeSlotIds) {
+          const rawValue = freshAssignment.completedTimeSlotIds;
+          if (typeof rawValue === 'string') {
+            try {
+              const parsed = JSON.parse(rawValue);
+              if (Array.isArray(parsed)) {
+                freshCompletedSlotIds = parsed.filter((item): item is string => typeof item === 'string');
+              }
+            } catch (e) {
+              freshCompletedSlotIds = [];
+            }
+          } else if (Array.isArray(rawValue)) {
+            freshCompletedSlotIds = rawValue.filter((item): item is string => typeof item === 'string');
+          }
         }
-      } catch (e) {
-        freshCompletedSlotIds = [];
-      }
-    } else if (Array.isArray(rawValue)) {
-      freshCompletedSlotIds = rawValue.filter((item): item is string => typeof item === 'string');
-    }
-  }
-  
-  // ✅ If any slot was completed during grace period, skip marking as neglected
-  if (freshCompletedSlotIds.length > 0) {
-    console.log(`   ⏭️ SKIPPING - Multi-slot assignment has ${freshCompletedSlotIds.length} completed slots (submitted during grace period)`);
-    continue;
-  }
-  
-  const newlyMissedSlots: any[] = [];
-  let pointsLost = 0;
-
-  for (const timeSlot of assignment.task!.timeSlots) {
-    // Skip already accounted slots
-    if (completedSlotIds.includes(timeSlot.id)) {
-      console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already COMPLETED, skipping`);
-      continue;
-    }
-    if (missedSlotIds.includes(timeSlot.id)) {
-      console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already MISSED, skipping`);
-      continue;
-    }
-
-    // ✅ Calculate grace period end time
-    const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
-    let endHour = parseInt(endHourRaw || '0', 10);
-    const endMin = parseInt(endMinRaw || '0', 10);
-    
-    // Convert PHT (UTC+8) to UTC
-    endHour = endHour - 8;
-    if (endHour < 0) endHour += 24;
-    
-    const dueDate = new Date(assignment.dueDate);
-    const endTimeUTC = new Date(dueDate);
-    endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
-    
-    // ✅ Grace period ends exactly 30 minutes after end time
-    const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
-    
-    // ✅ ONLY mark as neglected if current time is AFTER grace period ends
-    if (now <= gracePeriodEnd) {
-      console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime} STILL IN GRACE PERIOD (ends at ${gracePeriodEnd.toISOString()})`);
-      continue;
-    }
-
-    console.log(`   ❌ Slot ${timeSlot.startTime}-${timeSlot.endTime} is NEGLECTED (grace period ended at ${gracePeriodEnd.toISOString()})`);
-    newlyMissedSlots.push(timeSlot);
-    const slotPts = timeSlot.points || 0;
-    pointsLost += slotPts;
-    totalPointsNotAwarded += slotPts;
-
-    // ✅ PREVENT NEGATIVE POINTS - Only deduct up to current points
-    const actualDeduction = Math.min(slotPts, currentPoints);
-    if (actualDeduction > 0) {
-      await prisma.groupMember.updateMany({
-        where: { userId: assignment.userId, groupId, isActive: true },
-        data: {
-          cumulativePoints: { decrement: actualDeduction },
-          pointsUpdatedAt: new Date()
+        
+        // ✅ If any slot was completed during grace period, skip marking as neglected
+        if (freshCompletedSlotIds.length > 0 && freshCompletedSlotIds.length !== completedSlotIds.length) {
+          console.log(`   ⏭️ SKIPPING - Multi-slot assignment has new completed slots (submitted during grace period)`);
+          continue;
         }
-      });
-      currentPoints -= actualDeduction;
-      console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} for slot ${timeSlot.startTime}-${timeSlot.endTime} (${currentPoints + actualDeduction} → ${currentPoints} pts)`);
-    } else {
-      console.log(`💰 [POINTS SKIPPED] User ${assignment.userId} has 0 points, no deduction for slot ${timeSlot.startTime}-${timeSlot.endTime}`);
-    }
-  }
+        
+        const newlyMissedSlots: any[] = [];
+        let pointsLost = 0;
 
-  if (newlyMissedSlots.length > 0) {
-    neglectedCount++;
+        for (const timeSlot of assignment.task!.timeSlots) {
+          // Skip already accounted slots
+          if (completedSlotIds.includes(timeSlot.id)) {
+            console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already COMPLETED, skipping`);
+            continue;
+          }
+          if (missedSlotIds.includes(timeSlot.id)) {
+            console.log(`   ✅ Slot ${timeSlot.startTime}-${timeSlot.endTime} already MISSED, skipping`);
+            continue;
+          }
 
-    const updatedMissedIds = [...missedSlotIds, ...newlyMissedSlots.map(s => s.id)];
-    const allSlotIds = assignment.task!.timeSlots.map((s: any) => s.id);
-    const allSlotsAccounted = allSlotIds.every(
-      (id: string) => updatedMissedIds.includes(id) || completedSlotIds.includes(id)
-    );
+          // ✅ Calculate grace period end time (30 minutes AFTER end time)
+          const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
+          let endHour = parseInt(endHourRaw || '0', 10);
+          const endMin = parseInt(endMinRaw || '0', 10);
+          
+          // Convert PHT (UTC+8) to UTC
+          endHour = endHour - 8;
+          if (endHour < 0) endHour += 24;
+          
+          const dueDate = new Date(assignment.dueDate);
+          const endTimeUTC = new Date(dueDate);
+          endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+          
+          // ✅ Grace period ends exactly 30 minutes after end time
+          const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+          
+          // ✅ ONLY mark as neglected if current time is AFTER grace period ends
+          if (now <= gracePeriodEnd) {
+            const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
+            console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime} STILL IN GRACE PERIOD (ends in ${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s)`);
+            continue;
+          }
 
-    const completedPoints = assignment.task!.timeSlots
-      .filter((s: any) => completedSlotIds.includes(s.id))
-      .reduce((sum: number, s: any) => sum + (s.points || 0), 0);
+          console.log(`   ❌ Slot ${timeSlot.startTime}-${timeSlot.endTime} is NEGLECTED (grace period ended)`);
+          newlyMissedSlots.push(timeSlot);
+          const slotPts = timeSlot.points || 0;
+          pointsLost += slotPts;
+          totalPointsNotAwarded += slotPts;
 
-    await prisma.assignment.update({
-      where: { id: assignment.id },
-      data: {
-        missedTimeSlotIds: updatedMissedIds,
-        points: completedPoints,
-        partiallyExpired: !allSlotsAccounted,
-        expired: allSlotsAccounted && completedSlotIds.length === 0,
-        expiredAt: allSlotsAccounted && completedSlotIds.length === 0 ? now : undefined
-      }
-    });
-
-    // Notify user per missed slot
-    for (const slot of newlyMissedSlots) {
-      const actualDeduction = Math.min(slot.points || 0, currentPoints + (slot.points || 0));
-      await UserNotificationService.createNotification({
-        userId: assignment.userId,
-        type: "SLOT_MISSED",
-        title: "⏰ Time Slot Missed",
-        message: actualDeduction > 0 
-          ? `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${actualDeduction} points.`
-          : `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". You had 0 points, so no points were deducted.`,
-        data: {
-          assignmentId: assignment.id,
-          taskId: assignment.taskId,
-          taskTitle: assignment.task!.title,
-          groupId,
-          slotId: slot.id,
-          slotTime: `${slot.startTime}-${slot.endTime}`,
-          slotLabel: slot.label || '',
-          pointsLost: actualDeduction,
-          totalSlots: assignment.task!.timeSlots.length,
-          dueDate: assignment.dueDate.toISOString(),
-          detectedAt: now.toISOString()
+          // ✅ PREVENT NEGATIVE POINTS - Only deduct up to current points
+          const actualDeduction = Math.min(slotPts, currentPoints);
+          if (actualDeduction > 0) {
+            await prisma.groupMember.updateMany({
+              where: { userId: assignment.userId, groupId, isActive: true },
+              data: {
+                cumulativePoints: { decrement: actualDeduction },
+                pointsUpdatedAt: new Date()
+              }
+            });
+            currentPoints -= actualDeduction;
+            console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} (now has ${currentPoints} pts)`);
+          } else {
+            console.log(`💰 [POINTS SKIPPED] User has 0 points, no deduction`);
+          }
         }
-      });
-    }
 
-    // Notify admins
-    for (const admin of admins) {
-      await UserNotificationService.createNotification({
-        userId: admin.userId,
-        type: "NEGLECT_DETECTED",
-        title: "⚠️ Time Slot Missed",
-        message: `${assignment.user?.fullName || 'Unknown'} missed ${newlyMissedSlots.length} slot(s) for "${assignment.task!.title}" — ${pointsLost} pts attempted, actual deduction based on available points`,
-        data: {
-          assignmentId: assignment.id,
-          taskId: assignment.taskId,
-          taskTitle: assignment.task!.title,
-          groupId,
-          userId: assignment.userId,
-          userName: assignment.user?.fullName || 'Unknown',
-          pointsLost,
-          totalSlots: assignment.task!.timeSlots.length,
-          dueDate: assignment.dueDate.toISOString(),
-          detectedAt: now.toISOString()
+        if (newlyMissedSlots.length > 0) {
+          neglectedCount++;
+
+          const updatedMissedIds = [...missedSlotIds, ...newlyMissedSlots.map(s => s.id)];
+          const allSlotIds = assignment.task!.timeSlots.map((s: any) => s.id);
+          const allSlotsAccounted = allSlotIds.every(
+            (id: string) => updatedMissedIds.includes(id) || completedSlotIds.includes(id)
+          );
+
+          const completedPoints = assignment.task!.timeSlots
+            .filter((s: any) => completedSlotIds.includes(s.id))
+            .reduce((sum: number, s: any) => sum + (s.points || 0), 0);
+
+          await prisma.assignment.update({
+            where: { id: assignment.id },
+            data: {
+              missedTimeSlotIds: updatedMissedIds,
+              points: completedPoints,
+              partiallyExpired: !allSlotsAccounted,
+              expired: allSlotsAccounted && completedSlotIds.length === 0,
+              expiredAt: allSlotsAccounted && completedSlotIds.length === 0 ? now : undefined
+            }
+          });
+
+          // Notify user per missed slot
+          for (const slot of newlyMissedSlots) {
+            const slotPointsValue = Math.min(slot.points || 0, currentPoints + (slot.points || 0));
+            await UserNotificationService.createNotification({
+              userId: assignment.userId,
+              type: "SLOT_MISSED",
+              title: "⏰ Time Slot Missed",
+              message: slotPointsValue > 0 
+                ? `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}". Lost ${slotPointsValue} points.`
+                : `You missed the ${slot.startTime}-${slot.endTime}${slot.label ? ` (${slot.label})` : ''} slot for "${assignment.task!.title}".`,
+              data: {
+                assignmentId: assignment.id,
+                taskId: assignment.taskId,
+                taskTitle: assignment.task!.title,
+                groupId,
+                slotId: slot.id,
+                slotTime: `${slot.startTime}-${slot.endTime}`,
+                slotLabel: slot.label || '',
+                pointsLost: slotPointsValue,
+                totalSlots: assignment.task!.timeSlots.length,
+                dueDate: assignment.dueDate.toISOString(),
+                detectedAt: now.toISOString()
+              }
+            });
+          }
+
+          // Notify admins
+          for (const admin of admins) {
+            await UserNotificationService.createNotification({
+              userId: admin.userId,
+              type: "NEGLECT_DETECTED",
+              title: "⚠️ Time Slot Missed",
+              message: `${assignment.user?.fullName || 'Unknown'} missed ${newlyMissedSlots.length} slot(s) for "${assignment.task!.title}"`,
+              data: {
+                assignmentId: assignment.id,
+                taskId: assignment.taskId,
+                taskTitle: assignment.task!.title,
+                groupId,
+                userId: assignment.userId,
+                userName: assignment.user?.fullName || 'Unknown',
+                pointsLost: pointsLost,
+                totalSlots: assignment.task!.timeSlots.length,
+                dueDate: assignment.dueDate.toISOString(),
+                detectedAt: now.toISOString()
+              }
+            });
+          }
         }
-      });
-    }
-  } else {
-    console.log(`   ✅ No slots neglected yet for assignment ${assignment.task!.title}`);
-  }
-}else {
+      } 
+      // ========== SINGLE-SLOT TASK ==========
+      else {
         // ✅ Calculate grace period end time
         let gracePeriodEnd: Date;
         
@@ -2193,9 +2192,8 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
         
         // ✅ ONLY mark as neglected if current time is AFTER grace period ends
         if (now <= gracePeriodEnd) {
-          console.log(`   ⏰ Assignment ${assignment.task!.title} STILL IN GRACE PERIOD (ends at ${gracePeriodEnd.toISOString()})`);
-          console.log(`      Current time: ${now.toISOString()}`);
-          console.log(`      Time remaining: ${Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000)} seconds`);
+          const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
+          console.log(`   ⏰ Assignment ${assignment.task!.title} STILL IN GRACE PERIOD (ends in ${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s)`);
           continue;
         }
         
@@ -2206,7 +2204,7 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
         });
         
         if (freshAssignment?.photoUrl) {
-          console.log(`   ⏭️ SKIPPING - Single-slot assignment now has photo (submitted during grace period), will not mark as neglected`);
+          console.log(`   ⏭️ SKIPPING - Assignment now has photo (submitted during grace period)`);
           continue;
         }
         
@@ -2215,28 +2213,26 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
           continue;
         }
 
-        console.log(`   ❌ Assignment ${assignment.task!.title} is NEGLECTED (grace period ended at ${gracePeriodEnd.toISOString()})`);
-        console.log(`      Current time: ${now.toISOString()}`);
-        console.log(`      Time overdue: ${Math.ceil((now.getTime() - gracePeriodEnd.getTime()) / 1000)} seconds`);
+        console.log(`   ❌ Assignment ${assignment.task!.title} is NEGLECTED (grace period ended)`);
         
         neglectedCount++;
         const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
         totalPointsNotAwarded += pointsLost;
-
+ 
         // ✅ PREVENT NEGATIVE POINTS - Only deduct up to current points
         const actualDeduction = Math.min(pointsLost, currentPoints);
         
         if (actualDeduction > 0) {
           await prisma.groupMember.updateMany({
-            where: { userId: assignment.userId, groupId, isActive: true },
+            where: { userId: assignment.userId, groupId, isActive: true }, 
             data: {
               cumulativePoints: { decrement: actualDeduction },
               pointsUpdatedAt: new Date()
             }
           });
-          console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId} for task ${assignment.task!.title} (${currentPoints} → ${currentPoints - actualDeduction} pts)`);
+          console.log(`💰 [POINTS DEDUCTED] -${actualDeduction} from ${assignment.userId}`);
         } else {
-          console.log(`💰 [POINTS SKIPPED] User ${assignment.userId} has 0 points, no deduction for task ${assignment.task!.title}`);
+          console.log(`💰 [POINTS SKIPPED] User has 0 points, no deduction`);
         }
 
         await prisma.assignment.update({
@@ -2244,7 +2240,7 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
           data: {
             expired: true,
             expiredAt: now,
-            notes: `[EXPIRED: Grace period ended at ${gracePeriodEnd.toISOString()}] ${assignment.notes || ''}`
+            notes: `[EXPIRED: Grace period ended] ${assignment.notes || ''}`
           }
         });
 
@@ -2254,7 +2250,7 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
           title: "⚠️ Task Missed",
           message: actualDeduction > 0
             ? `You missed "${assignment.task!.title}" — Lost ${actualDeduction} points`
-            : `You missed "${assignment.task!.title}" — You had 0 points, so no points were deducted. Keep completing tasks to earn points!`,
+            : `You missed "${assignment.task!.title}" — No points deducted. Keep completing tasks to earn points!`,
           data: {
             assignmentId: assignment.id,
             taskId: assignment.taskId,
@@ -2262,7 +2258,6 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
             groupId,
             pointsLost: actualDeduction,
             dueDate: assignment.dueDate.toISOString(),
-            gracePeriodEnd: gracePeriodEnd.toISOString(),
             detectedAt: now.toISOString()
           }
         });
@@ -2282,12 +2277,11 @@ if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
               userName: assignment.user?.fullName || 'Unknown',
               pointsLost: actualDeduction,
               dueDate: assignment.dueDate.toISOString(),
-              gracePeriodEnd: gracePeriodEnd.toISOString(),
               detectedAt: now.toISOString()
             }
           });
         }
-      } 
+      }
     }
 
     console.log(`\n📊 Neglect detection summary for group ${groupId}: ${neglectedCount} assignments marked as neglected`);
@@ -2341,18 +2335,19 @@ private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
 }
 
 
-// ----------------------------------------------------------------
 static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersSent: number; message?: string }> {
   try {
     const processedSlotsThisRun = new Set<string>();
     const now = new Date();
 
-    // PHT = UTC+8
-    const phtOffset = 8 * 60;
-    const phtNow = new Date(now.getTime() + phtOffset * 60_000);
-    const currentHour   = phtNow.getUTCHours();
-    const currentMinute = phtNow.getUTCMinutes();
+    // ✅ FIXED: Get current time in PHT (Asia/Manila)
+    const phtTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+    const currentHour = phtTime.getHours();
+    const currentMinute = phtTime.getMinutes();
     const currentInMinutes = currentHour * 60 + currentMinute;
+
+    console.log(`⏰ [REMINDER] Current PHT time: ${phtTime.toISOString()}`);
+    console.log(`   Current hour: ${currentHour}, minute: ${currentMinute}, total minutes: ${currentInMinutes}`);
 
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
@@ -2374,7 +2369,9 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
       }
     });
 
-    // ✅ FIX: batch-fetch all admin userIds across all groups upfront
+    console.log(`📊 Found ${assignments.length} active assignments for today`);
+
+    // Batch fetch admins
     const groupIds = [...new Set(assignments.map(a => a.task?.groupId).filter(Boolean))] as string[];
     const adminMemberships = await prisma.groupMember.findMany({
       where: { groupId: { in: groupIds }, groupRole: "ADMIN", isActive: true },
@@ -2388,12 +2385,9 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
 
     const validAssignments = assignments.filter(a => a.task !== null);
     let remindersSent = 0;
-
-    // ✅ FIX: dedup window is 35 min — safely wider than the 30-min cron interval
     const DEDUP_WINDOW_MS = 35 * 60_000;
 
     for (const assignment of validAssignments) {
-      // Skip admins 
       const groupAdmins = adminUserIdsByGroup[assignment.task!.groupId] || new Set();
       if (groupAdmins.has(assignment.userId)) {
         console.log(`⏭️ Skipping admin: ${assignment.user?.fullName}`);
@@ -2402,7 +2396,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
 
       const assignmentAny = assignment as any;
       const completedSlotIds: string[] = Array.isArray(assignmentAny.completedTimeSlotIds) ? assignmentAny.completedTimeSlotIds : [];
-      const missedSlotIds:    string[] = Array.isArray(assignmentAny.missedTimeSlotIds)    ? assignmentAny.missedTimeSlotIds    : [];
+      const missedSlotIds: string[] = Array.isArray(assignmentAny.missedTimeSlotIds) ? assignmentAny.missedTimeSlotIds : [];
 
       const allTimeSlots = assignment.task!.timeSlots || [];
       const timeSlotsToCheck = allTimeSlots.length > 0
@@ -2420,19 +2414,18 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
 
         // ---- Upcoming reminder (slot starts within 60 min) ----
         const [startHourStr, startMinStr] = timeSlot.startTime.split(':');
-        const startHour   = parseInt(startHourStr || '0', 10);
-        const startMinute = parseInt(startMinStr  || '0', 10);
+        const startHour = parseInt(startHourStr || '0', 10);
+        const startMinute = parseInt(startMinStr || '0', 10);
         if (isNaN(startHour) || isNaN(startMinute)) continue;
 
-        const startInMinutes  = startHour * 60 + startMinute;
-        const timeUntilStart  = startInMinutes - currentInMinutes;
+        const startInMinutes = startHour * 60 + startMinute;
+        const timeUntilStart = startInMinutes - currentInMinutes;
 
         if (timeUntilStart > 0 && timeUntilStart <= 60) {
           const existingReminder = await prisma.userNotification.findFirst({
             where: {
               userId: assignment.userId,
               type: "TASK_REMINDER",
-              // ✅ FIX: 35-min window prevents boundary duplicates
               createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
               data: { path: "$.slotId", equals: timeSlot.id }
             }
@@ -2461,19 +2454,19 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
               }
             });
             remindersSent++;
-            console.log(`📢 Reminder: "${assignment.task!.title}" ${timeSlot.startTime}-${timeSlot.endTime} in ${timeUntilStart}min → ${assignment.user?.fullName}`);
+            console.log(`📢 Reminder: "${assignment.task!.title}" starts in ${timeUntilStart}min → ${assignment.user?.fullName}`);
           }
         }
 
         // ---- Active/submission-window reminder ----
         const [endHourStr, endMinStr] = timeSlot.endTime.split(':');
-        const endHour   = parseInt(endHourStr || '0', 10);
-        const endMinute = parseInt(endMinStr  || '0', 10);
+        const endHour = parseInt(endHourStr || '0', 10);
+        const endMinute = parseInt(endMinStr || '0', 10);
         if (isNaN(endHour) || isNaN(endMinute)) continue;
 
-        const endInMinutes          = endHour * 60 + endMinute;
-        const submissionStartMins   = endInMinutes;       // opens AT end time
-        const graceEndMins          = endInMinutes + 30;  // closes 30 min after
+        const endInMinutes = endHour * 60 + endMinute;
+        const submissionStartMins = endInMinutes;       // opens AT end time
+        const graceEndMins = endInMinutes + 30;         // closes 30 min after
 
         if (currentInMinutes >= submissionStartMins && currentInMinutes <= graceEndMins) {
           const activeKey = `${assignment.id}_${timeSlot.id}_active`;
@@ -2483,7 +2476,6 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
             where: {
               userId: assignment.userId,
               type: "TASK_ACTIVE",
-              // ✅ FIX: 35-min dedup window
               createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
               data: { path: "$.slotId", equals: timeSlot.id }
             }
@@ -2492,7 +2484,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
           if (!existingActive) {
             processedSlotsThisRun.add(activeKey);
             const timeLeft = graceEndMins - currentInMinutes;
-            const isLate   = currentInMinutes > (endInMinutes + 25);
+            const isLate = currentInMinutes > (endInMinutes + 25);
 
             await UserNotificationService.createNotification({
               userId: assignment.userId,
@@ -2518,7 +2510,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
               }
             });
             remindersSent++;
-            console.log(`📢 Active: "${assignment.task!.title}" ${timeSlot.startTime}-${timeSlot.endTime} ${timeLeft}min left → ${assignment.user?.fullName}`);
+            console.log(`📢 Active: "${assignment.task!.title}" - ${timeLeft}min left → ${assignment.user?.fullName}`);
           }
         }
       }

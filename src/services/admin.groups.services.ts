@@ -1,5 +1,4 @@
-// services/admin.groups.service.ts - COMPLETE WITH COUNT-BASED THRESHOLDS
-
+// services/admin.groups.service.ts - COMPLETE FIXED VERSION
 import prisma from "../prisma";
 import { ReportType, ReportStatus, GroupStatus, Prisma } from "@prisma/client";
 import { SocketService } from "./socket.services";
@@ -48,155 +47,160 @@ export interface ReportAnalysis {
 
 export class AdminGroupsService {
   
-  // ========== GET ALL GROUPS WITH FILTERS ==========
-  static async getGroups(filters: GroupFilters = {}) {
-    try {
-      const {
-        search,
-        page = 1,
-        limit = 20,
-        sortBy = 'createdAt',
-        sortOrder = 'desc',
-        minMembers,
-        maxMembers,
-        createdAfter,
-        createdBefore,
-        status,
-        hasReports,
-        minReports
-      } = filters;
+ // ========== GET ALL GROUPS WITH FILTERS (FIXED FOR MySQL) ==========
+static async getGroups(filters: GroupFilters = {}) {
+  try {
+    const {
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      minMembers,
+      maxMembers,
+      createdAfter,
+      createdBefore,
+      status,
+      hasReports,
+      minReports
+    } = filters;
 
-      if (minMembers !== undefined && minMembers !== 6) {
-        return {
-          success: false,
-          message: 'Minimum members can only be 6'
-        };
-      }
-
-      if (maxMembers !== undefined && (maxMembers < 6 || maxMembers > 10)) {
-        return {
-          success: false,
-          message: 'Maximum members must be between 6 and 10'
-        };
-      }
-
-      const where: any = {};
-
-      if (search) {
-        where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } },
-        ];
-      }
-
-      if (createdAfter || createdBefore) {
-        where.createdAt = {};
-        if (createdAfter) where.createdAt.gte = createdAfter;
-        if (createdBefore) where.createdAt.lte = createdBefore;
-      }
-
-      if (status) {
-        if (status === 'DELETED') {
-          where.isDeleted = true;
-        } else {
-          where.status = status;
-          where.isDeleted = false;
-        }
-      }
-
-      if (hasReports === true) {
-        where.reports = {
-          some: {
-            status: { in: ['PENDING', 'REVIEWING'] }
-          }
-        };
-      }
-
-      const skip = (page - 1) * limit;
-
-      const [groups, total] = await Promise.all([
-        prisma.group.findMany({
-          where,
-          include: {
-            creator: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true
-              }
-            },
-            _count: {
-              select: {
-                members: true,
-                tasks: {
-                  where: { isDeleted: false }
-                },
-                reports: {
-                  where: { status: { in: ['PENDING', 'REVIEWING'] } }
-                }
-              }
-            }
-          },
-          orderBy: { [sortBy]: sortOrder },
-          skip,
-          take: limit
-        }),
-        prisma.group.count({ where })
-      ]);
-
-      let filteredGroups = groups;
-      if (minMembers !== undefined || maxMembers !== undefined) {
-        filteredGroups = groups.filter(group => {
-          const memberCount = group._count.members;
-          if (minMembers !== undefined && memberCount < minMembers) return false;
-          if (maxMembers !== undefined && memberCount > maxMembers) return false;
-          return true;
-        });
-      }
-
-      if (minReports !== undefined) {
-        filteredGroups = filteredGroups.filter(group => 
-          group._count.reports >= minReports!
-        );
-      }
-
-      const formattedGroups = filteredGroups.map(group => ({
-        id: group.id,
-        name: group.name,
-        description: group.description,
-        avatarUrl: group.avatarUrl,
-        inviteCode: group.inviteCode,
-        status: group.status,
-        isDeleted: group.isDeleted,
-        createdAt: group.createdAt,
-        updatedAt: group.updatedAt,
-        currentRotationWeek: group.currentRotationWeek,
-        lastRotationUpdate: group.lastRotationUpdate,
-        creator: group.creator,
-        _count: group._count,
-      }));
-
-      return {
-        success: true,
-        message: 'Groups retrieved successfully',
-        groups: formattedGroups,
-        pagination: {
-          total: total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit),
-          hasMore: page < Math.ceil(total / limit)
-        }
-      };
-
-    } catch (error: any) {
-      console.error('Error fetching groups:', error);
+    // Validation
+    if (minMembers !== undefined && minMembers !== 6) {
       return {
         success: false,
-        message: error.message || 'Failed to fetch groups'
+        message: 'Minimum members can only be 6'
       };
     }
+
+    if (maxMembers !== undefined && (maxMembers < 6 || maxMembers > 10)) {
+      return {
+        success: false,
+        message: 'Maximum members must be between 6 and 10'
+      };
+    }
+
+    const where: any = {};
+
+    // ✅ FIXED SEARCH FOR MySQL - Remove 'mode' and use case-insensitive via Prisma
+    if (search && search.trim()) {
+      // For MySQL, Prisma uses case-insensitive by default for string contains
+      where.OR = [
+        { name: { contains: search.trim() } },
+        { description: { contains: search.trim() } },
+        { inviteCode: { contains: search.trim() } },
+      ];
+    }
+
+    if (createdAfter || createdBefore) {
+      where.createdAt = {};
+      if (createdAfter) where.createdAt.gte = createdAfter;
+      if (createdBefore) where.createdAt.lte = createdBefore;
+    }
+
+    if (status) {
+      if (status === 'DELETED') {
+        where.isDeleted = true;
+      } else {
+        where.status = status;
+        where.isDeleted = false;
+      }
+    }
+
+    if (hasReports === true) {
+      where.reports = {
+        some: {
+          status: { in: ['PENDING', 'REVIEWING'] }
+        }
+      };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [groups, total] = await Promise.all([
+      prisma.group.findMany({
+        where,
+        include: {
+          creator: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
+          },
+          _count: {
+            select: {
+              members: true,
+              tasks: {
+                where: { isDeleted: false }
+              },
+              reports: {
+                where: { status: { in: ['PENDING', 'REVIEWING'] } }
+              }
+            }
+          }
+        },
+        orderBy: { [sortBy]: sortOrder },
+        skip,
+        take: limit
+      }),
+      prisma.group.count({ where })
+    ]);
+
+    // Rest of the function remains the same...
+    let filteredGroups = groups;
+    if (minMembers !== undefined || maxMembers !== undefined) {
+      filteredGroups = groups.filter(group => {
+        const memberCount = group._count.members;
+        if (minMembers !== undefined && memberCount < minMembers) return false;
+        if (maxMembers !== undefined && memberCount > maxMembers) return false;
+        return true;
+      });
+    }
+
+    if (minReports !== undefined) {
+      filteredGroups = filteredGroups.filter(group => 
+        group._count.reports >= minReports!
+      );
+    }
+
+    const formattedGroups = filteredGroups.map(group => ({
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      avatarUrl: group.avatarUrl,
+      inviteCode: group.inviteCode,
+      status: group.status,
+      isDeleted: group.isDeleted,
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+      currentRotationWeek: group.currentRotationWeek,
+      lastRotationUpdate: group.lastRotationUpdate,
+      creator: group.creator,
+      _count: group._count,
+    }));
+
+    return {
+      success: true,
+      message: 'Groups retrieved successfully',
+      groups: formattedGroups,
+      pagination: {
+        total: total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit),
+        hasMore: page < Math.ceil(total / limit)
+      }
+    };
+
+  } catch (error: any) {
+    console.error('Error fetching groups:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to fetch groups'
+    };
   }
+}
 
   // ========== GET GROUP BY ID ==========
   static async getGroupById(groupId: string) {
@@ -319,7 +323,6 @@ export class AdminGroupsService {
 
       const totalReportCount = group.reports.length;
       
-      // Count reports by type (for display only)
       const reportCountByType = new Map<ReportType, number>();
       group.reports.forEach(report => {
         const count = reportCountByType.get(report.type as ReportType) || 0;
@@ -331,10 +334,8 @@ export class AdminGroupsService {
         count
       }));
 
-      // Determine available actions based on TOTAL report count
       const availableActions = [];
       
-      // REVIEW action for groups with reports but below suspend threshold (1-2 reports)
       if (totalReportCount > 0 && totalReportCount < REPORT_COUNT_THRESHOLDS.SUSPEND) {
         availableActions.push({
           action: 'REVIEW' as const,
@@ -345,7 +346,6 @@ export class AdminGroupsService {
         });
       }
       
-      // SUSPEND action (3-5 reports)
       if (totalReportCount >= REPORT_COUNT_THRESHOLDS.SUSPEND && 
           totalReportCount < REPORT_COUNT_THRESHOLDS.SOFT_DELETE) {
         availableActions.push({
@@ -357,7 +357,6 @@ export class AdminGroupsService {
         });
       }
       
-      // SOFT_DELETE action (6-9 reports)
       if (totalReportCount >= REPORT_COUNT_THRESHOLDS.SOFT_DELETE && 
           totalReportCount < REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
         availableActions.push({
@@ -369,7 +368,6 @@ export class AdminGroupsService {
         });
       }
       
-      // HARD_DELETE action (10+ reports)
       if (totalReportCount >= REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
         availableActions.push({
           action: 'HARD_DELETE' as const,
@@ -380,11 +378,21 @@ export class AdminGroupsService {
         });
       }
 
-      // RESTORE action for deleted groups
       if (group.isDeleted || group.status === GroupStatus.DELETED) {
         availableActions.push({
           action: 'RESTORE' as const,
           reason: 'Group is currently deleted. Restore to bring it back.',
+          severity: 'LOW',
+          canExecute: true,
+          reportCount: totalReportCount
+        });
+      }
+
+      // ✅ FIX: Also show RESTORE for suspended groups
+      if (group.status === GroupStatus.SUSPENDED && !group.isDeleted) {
+        availableActions.push({
+          action: 'RESTORE' as const,
+          reason: 'Group is currently suspended. Restore to unsuspend it.',
           severity: 'LOW',
           canExecute: true,
           reportCount: totalReportCount
@@ -425,7 +433,6 @@ export class AdminGroupsService {
 
       const groupIds = groupsResult.groups.map(g => g.id);
 
-      // Get total report counts per group
       const reportCounts = await prisma.report.groupBy({
         by: ['groupId'],
         where: {
@@ -440,7 +447,6 @@ export class AdminGroupsService {
         reportCountMap.set(row.groupId, row._count.id);
       }
 
-      // Get report counts by type for display
       const reportTypeCounts = await prisma.report.groupBy({
         by: ['groupId', 'type'],
         where: {
@@ -465,10 +471,8 @@ export class AdminGroupsService {
           count
         }));
 
-        // Determine available actions based on TOTAL report count
         const availableActions: ReportAnalysis['availableActions'] = [];
         
-        // REVIEW action (1-2 reports)
         if (reportCount > 0 && reportCount < REPORT_COUNT_THRESHOLDS.SUSPEND) {
           availableActions.push({
             action: 'REVIEW',
@@ -479,7 +483,6 @@ export class AdminGroupsService {
           });
         }
         
-        // SUSPEND action (3-5 reports)
         if (reportCount >= REPORT_COUNT_THRESHOLDS.SUSPEND && 
             reportCount < REPORT_COUNT_THRESHOLDS.SOFT_DELETE) {
           availableActions.push({
@@ -491,7 +494,6 @@ export class AdminGroupsService {
           });
         }
         
-        // SOFT_DELETE action (6-9 reports)
         if (reportCount >= REPORT_COUNT_THRESHOLDS.SOFT_DELETE && 
             reportCount < REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
           availableActions.push({
@@ -503,7 +505,6 @@ export class AdminGroupsService {
           });
         }
         
-        // HARD_DELETE action (10+ reports)
         if (reportCount >= REPORT_COUNT_THRESHOLDS.HARD_DELETE) {
           availableActions.push({
             action: 'HARD_DELETE',
@@ -514,11 +515,20 @@ export class AdminGroupsService {
           });
         }
 
-        // RESTORE action for deleted groups
         if (group.isDeleted || group.status === GroupStatus.DELETED) {
           availableActions.push({
             action: 'RESTORE',
             reason: 'Group is currently deleted.',
+            severity: 'LOW',
+            canExecute: true,
+            reportCount
+          });
+        }
+
+        if (group.status === GroupStatus.SUSPENDED && !group.isDeleted) {
+          availableActions.push({
+            action: 'RESTORE',
+            reason: 'Group is currently suspended. Unsuspend to bring it back.',
             severity: 'LOW',
             canExecute: true,
             reportCount
@@ -748,6 +758,7 @@ export class AdminGroupsService {
         adminId,
         adminName,
         newInviteCode: data?.inviteCode,
+        wasSuspended: data?.wasSuspended,
         timestamp: new Date()
       };
 
@@ -755,8 +766,10 @@ export class AdminGroupsService {
         group.createdById,
         `group_${groupId}_restored`,
         'GROUP_RESTORED',
-        '✅ Group Restored',
-        `Your group "${group.name}" has been restored by ${adminName}. New invite code: ${data?.inviteCode || 'Check group settings'}`,
+        data?.wasSuspended ? '✅ Group Unsuspended' : '✅ Group Restored',
+        data?.wasSuspended 
+          ? `Your group "${group.name}" has been unsuspended by ${adminName}.`
+          : `Your group has been restored by ${adminName}. New invite code: ${data?.inviteCode || 'Check group settings'}`,
         payload
       );
 
@@ -769,8 +782,8 @@ export class AdminGroupsService {
         admins.map(a => a.id),
         `group_${groupId}_restored_admin`,
         'GROUP_ADMIN_ACTION',
-        'Group Restored',
-        `Group "${group.name}" was restored by ${adminName}`,
+        data?.wasSuspended ? 'Group Unsuspended' : 'Group Restored',
+        `Group "${group.name}" was ${data?.wasSuspended ? 'unsuspended' : 'restored'} by ${adminName}`,
         payload
       );
 
@@ -828,7 +841,7 @@ export class AdminGroupsService {
     }
   }
 
-  // ========== SUSPEND GROUP ==========
+  // ========== SUSPEND GROUP (FIXED) ==========
   static async suspendGroup(groupId: string, adminId: string, adminName: string, reason?: string) {
     try {
       const group = await prisma.group.findUnique({
@@ -837,6 +850,7 @@ export class AdminGroupsService {
           name: true, 
           createdById: true,
           status: true,
+          isDeleted: true,
           members: {
             select: { userId: true }
           }
@@ -847,10 +861,28 @@ export class AdminGroupsService {
         return { success: false, message: 'Group not found' };
       }
 
-      if (group.status === GroupStatus.SUSPENDED) {
-        return { success: false, message: 'Group is already suspended' };
+      // ✅ FIX 2: Can't suspend deleted groups
+      if (group.isDeleted) {
+        return { success: false, message: 'Cannot suspend a deleted group. Restore it first.' };
       }
 
+      // ✅ FIX 3: If already suspended, just update the reason
+      if (group.status === GroupStatus.SUSPENDED) {
+        await prisma.group.update({
+          where: { id: groupId },
+          data: {
+            statusChangedAt: new Date(),
+            statusChangedBy: adminId,
+            statusReason: reason || 'Group re-suspended'
+          }
+        });
+        return {
+          success: true,
+          message: 'Group suspension updated successfully'
+        };
+      }
+
+      // Suspend the group
       await prisma.group.update({
         where: { id: groupId },
         data: {
@@ -861,6 +893,7 @@ export class AdminGroupsService {
         }
       });
 
+      // Notify creator
       await prisma.userNotification.create({
         data: {
           userId: group.createdById,
@@ -876,6 +909,7 @@ export class AdminGroupsService {
         }
       });
 
+      // Notify all members
       for (const member of group.members) {
         if (member.userId !== group.createdById) {
           await prisma.userNotification.create({
@@ -890,6 +924,7 @@ export class AdminGroupsService {
         }
       }
 
+      // Audit log
       await prisma.adminAuditLog.create({
         data: {
           adminId,
@@ -918,7 +953,7 @@ export class AdminGroupsService {
     }
   }
 
-  // ========== RESTORE GROUP ==========
+  // ========== RESTORE GROUP (FIXED - WORKS FOR BOTH SUSPENDED AND DELETED) ==========
   static async restoreGroup(groupId: string, adminId: string, adminName: string, reason?: string) {
     try {
       const group = await prisma.group.findUnique({
@@ -943,56 +978,76 @@ export class AdminGroupsService {
         };
       }
 
-      if (!group.isDeleted && group.status !== GroupStatus.DELETED) {
+      const isSuspended = group.status === GroupStatus.SUSPENDED;
+      const isDeleted = group.isDeleted || group.status === GroupStatus.DELETED;
+
+      // ✅ FIX 4: Allow restore for BOTH suspended AND deleted groups
+      if (!isSuspended && !isDeleted) {
         return { 
           success: false, 
-          message: 'Group is not deleted. Only deleted groups can be restored.' 
+          message: 'Group is active. Only suspended or deleted groups can be restored.' 
         };
       }
 
-      let originalName = group.name
-        .replace(/^\[DELETED\]\s*/, '')
-        .replace(/\s+\d+$/, '')
-        .trim();
-      
-      if (!originalName) {
-        originalName = `Restored Group ${new Date().toLocaleDateString()}`;
-      }
+      let originalName = group.name;
+      let newInviteCode = group.inviteCode;
+      let restoredTasksCount = 0;
 
-      const existingGroup = await prisma.group.findFirst({
-        where: { 
-          name: originalName,
-          NOT: { id: groupId },
-          isDeleted: false
+      // If deleted, restore name and invite code
+      if (isDeleted) {
+        originalName = group.name
+          .replace(/^\[DELETED\]\s*/, '')
+          .replace(/\s+\d+$/, '')
+          .trim();
+        
+        if (!originalName) {
+          originalName = `Restored Group ${new Date().toLocaleDateString()}`;
         }
-      });
 
-      if (existingGroup) {
-        originalName = `${originalName} (Restored)`;
-      }
-
-      const newInviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-
-      await prisma.$transaction(async (tx) => {
-        await tx.group.update({
-          where: { id: groupId },
-          data: {
+        const existingGroup = await prisma.group.findFirst({
+          where: { 
             name: originalName,
-            description: group.description?.replace('[This group has been deleted by admin]', '').trim() || null,
-            inviteCode: newInviteCode,
-            status: GroupStatus.ACTIVE,
-            isDeleted: false,
-            deletedAt: null,
-            deletedBy: null,
-            deletedByName: null,
-            deleteReason: null,
-            statusChangedAt: new Date(),
-            statusChangedBy: adminId,
-            statusReason: reason || 'Group restored by admin'
+            NOT: { id: groupId },
+            isDeleted: false
           }
         });
 
-        if (group.tasks.length > 0) {
+        if (existingGroup) {
+          originalName = `${originalName} (Restored)`;
+        }
+
+        newInviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+        restoredTasksCount = group.tasks.length;
+      }
+
+      // Update group - clear suspension AND deletion
+      await prisma.$transaction(async (tx) => {
+        const updateData: any = {
+          status: GroupStatus.ACTIVE,
+          statusChangedAt: new Date(),
+          statusChangedBy: adminId,
+          statusReason: reason || `Group ${isSuspended ? 'unsuspended' : 'restored'} by admin`
+        };
+
+        // Only restore deleted fields if it was deleted
+        if (isDeleted) {
+          updateData.name = originalName;
+          updateData.inviteCode = newInviteCode;
+          updateData.description = group.description?.replace('[This group has been deleted by admin]', '').trim() || null;
+          updateData.isDeleted = false;
+          updateData.deletedAt = null;
+          updateData.deletedBy = null;
+          updateData.deletedByName = null;
+          updateData.deleteReason = null;
+        }
+
+        await tx.group.update({
+          where: { id: groupId },
+          data: updateData
+        });
+
+        // Only restore tasks if it was deleted
+        if (isDeleted && group.tasks.length > 0) {
           await tx.task.updateMany({
             where: { 
               groupId,
@@ -1007,47 +1062,79 @@ export class AdminGroupsService {
         }
       });
 
+      // Notify creator
       await prisma.userNotification.create({
         data: {
           userId: group.createdById,
-          title: '✅ Group Restored',
-          message: `Your group "${originalName}" has been restored by ${adminName}. New invite code: ${newInviteCode}`,
-          type: 'GROUP_RESTORED',
+          title: isSuspended ? '✅ Group Unsuspended' : '✅ Group Restored',
+          message: isSuspended 
+            ? `Your group "${group.name}" has been unsuspended by ${adminName}. Group features are now available again.`
+            : `Your group "${originalName}" has been restored by ${adminName}. New invite code: ${newInviteCode}`,
+          type: isSuspended ? 'GROUP_UNSUSPENDED' : 'GROUP_RESTORED',
           data: { 
             groupId, 
-            groupName: originalName, 
-            newInviteCode, 
+            groupName: isSuspended ? group.name : originalName, 
+            ...(!isSuspended && { newInviteCode }),
             reason,
-            restoredBy: adminName
+            restoredBy: adminName,
+            wasSuspended: isSuspended,
+            wasDeleted: isDeleted
           }
         }
       });
 
+      // Notify all members if group was suspended
+      if (isSuspended) {
+        const members = await prisma.groupMember.findMany({
+          where: { groupId },
+          select: { userId: true }
+        });
+        
+        for (const member of members) {
+          if (member.userId !== group.createdById) {
+            await prisma.userNotification.create({
+              data: {
+                userId: member.userId,
+                type: 'GROUP_UNSUSPENDED',
+                title: '✅ Group Unsuspended',
+                message: `Group "${group.name}" has been unsuspended and is now active again.`,
+                data: { groupId, groupName: group.name, reason }
+              }
+            });
+          }
+        }
+      }
+
+      // Audit log
       await prisma.adminAuditLog.create({
         data: {
           adminId,
-          action: 'GROUP_RESTORED',
+          action: isSuspended ? 'GROUP_UNSUSPENDED' : 'GROUP_RESTORED',
           targetUserId: group.createdById,
           details: { 
             groupId, 
-            groupName: originalName, 
-            oldName: group.name,
-            newInviteCode,
+            groupName: isSuspended ? group.name : originalName,
+            oldStatus: isSuspended ? 'SUSPENDED' : 'DELETED',
+            newStatus: 'ACTIVE',
             reason,
-            restoredTasks: group.tasks.length,
-            restoredBy: adminName
+            restoredBy: adminName,
+            restoredTasks: restoredTasksCount,
+            wasSuspended: isSuspended,
+            wasDeleted: isDeleted
           }
         }
       });
 
       return {
         success: true,
-        message: 'Group restored successfully',
+        message: isSuspended ? 'Group unsuspended successfully' : 'Group restored successfully',
         data: {
           id: groupId,
-          name: originalName,
-          inviteCode: newInviteCode,
-          restoredTasks: group.tasks.length
+          name: isSuspended ? group.name : originalName,
+          inviteCode: isSuspended ? group.inviteCode : newInviteCode,
+          restoredTasks: restoredTasksCount,
+          wasSuspended: isSuspended,
+          wasDeleted: isDeleted
         }
       };
 

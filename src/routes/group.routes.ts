@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { GroupController } from '../controllers/group.controller';
 import { UserAuthMiddleware } from '../middlewares/user.auth.middleware';
+import { checkGroupAccess } from '../middlewares/group.status.middleware'; // ✅ ADD THIS
 import GroupMemberRoutes from './group.members.routes';
 
 const router = Router();
@@ -9,24 +10,27 @@ const router = Router();
 // All group routes require authentication
 router.use(UserAuthMiddleware);
 
-// Main group routes - These come FIRST
+// ============= PUBLIC/GENERAL ROUTES (No group check needed) =============
+// These don't require a specific group ID
 router.post('/create', GroupController.createGroup);
 router.post('/join', GroupController.joinGroup);
 router.get('/my-groups', GroupController.getUserGroup);
 
-// NEW: Rotation management routes
-router.get('/:groupId/members-with-rotation', GroupController.getGroupMembersWithRotation);
-router.put('/:groupId/members/:memberId/rotation', GroupController.updateMemberRotation);
-router.post('/:groupId/reorder-rotation', GroupController.reorderRotationSequence);
-router.get('/:groupId/rotation-preview', GroupController.getRotationSchedulePreview);
-// NEW: Get group with member limits
-router.get('/:groupId/with-limits', GroupController.getGroupWithLimits);
+// ============= GROUP-SPECIFIC ROUTES (Need suspension check) =============
+// Apply checkGroupAccess to all routes that access a specific group
 
-// NEW: Update max members (admin only)
-router.put('/:groupId/update-max-members', GroupController.updateMaxMembers);
+// Rotation management routes
+router.get('/:groupId/members-with-rotation', checkGroupAccess, GroupController.getGroupMembersWithRotation);
+router.put('/:groupId/members/:memberId/rotation', checkGroupAccess, GroupController.updateMemberRotation);
+router.post('/:groupId/reorder-rotation', checkGroupAccess, GroupController.reorderRotationSequence);
+router.get('/:groupId/rotation-preview', checkGroupAccess, GroupController.getRotationSchedulePreview);
 
-// Mount group member routes under /:groupId
-// This must come AFTER the main routes to avoid conflicts
-router.use('/:groupId', GroupMemberRoutes);
+// Group limits routes
+router.get('/:groupId/with-limits', checkGroupAccess, GroupController.getGroupWithLimits);
+router.put('/:groupId/update-max-members', checkGroupAccess, GroupController.updateMaxMembers);
 
-export default router;  
+// ✅ IMPORTANT: Mount group member routes with suspension check applied to ALL sub-routes
+// This ensures ALL member operations are blocked for suspended/deleted groups
+router.use('/:groupId', checkGroupAccess, GroupMemberRoutes);
+
+export default router;

@@ -157,10 +157,10 @@ model Group {
   avatarUrl   String?
   
   // ===== STATUS FIELDS =====
-  status      GroupStatus @default(ACTIVE)  // Current status of the group
-  statusChangedAt DateTime?                  // When status was last changed
-  statusChangedBy String?                    // Admin who changed status
-  statusReason String?                        // Reason for status change
+  status          GroupStatus   @default(ACTIVE)
+  statusChangedAt DateTime?
+  statusChangedBy String?
+  statusReason    String?
   
   // ===== SOFT DELETE FIELDS =====
   isDeleted   Boolean   @default(false)
@@ -183,6 +183,8 @@ model Group {
   tasks   Task[]        @relation("GroupTasks")
   creator User          @relation("GroupCreator", fields: [createdById], references: [id])
   reports Report[]      @relation("GroupReports")
+  
+  statusChangedByAdmin SystemAdmin? @relation("GroupStatusChangedBy", fields: [statusChangedBy], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -524,6 +526,8 @@ model SystemAdmin {
   adminNotifications AdminNotification[] // Admin notifications
   refreshTokens      AdminRefreshToken[] @relation("AdminRefreshTokens")
   resolvedReports    Report[]            @relation("ResolvedReports") // 👈 FIXED: Matches the resolver relation name
+  
+  groupsStatusChanged Group[] @relation("GroupStatusChangedBy")
 
   // Status
   lastLoginAt DateTime?
