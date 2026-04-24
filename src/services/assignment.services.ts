@@ -1997,7 +1997,13 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
       // ========== MULTI-SLOT TASK ==========
       if (assignment.task!.timeSlots && assignment.task!.timeSlots.length > 1) {
-        // ✅ Refresh to get latest completed slots (user might have submitted during grace period)
+        // ✅ FIRST: Skip if assignment already has a photo (already checked above, but double-check)
+        if (assignment.photoUrl) {
+          console.log(`   ⏭️ SKIPPING - Multi-slot assignment has photo (pending verification)`);
+          continue;
+        }
+        
+        // ✅ SECOND: Refresh to get latest completed slots (user might have submitted during grace period)
         const freshAssignment = await prisma.assignment.findUnique({
           where: { id: assignment.id },
           select: { 
@@ -2007,6 +2013,18 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             points: true
           }
         });
+        
+        // ✅ THIRD: Check if photo was added during this cron run
+        if (freshAssignment?.photoUrl) {
+          console.log(`   ⏭️ SKIPPING - Multi-slot assignment now has photo (submitted during this cron run)`);
+          continue;
+        }
+        
+        // ✅ FOURTH: Check if already expired
+        if (freshAssignment?.expired) {
+          console.log(`   ⏭️ SKIPPING - Multi-slot assignment already expired`);
+          continue;
+        }
         
         let freshCompletedSlotIds: string[] = [];
         if (freshAssignment?.completedTimeSlotIds) {
@@ -2025,9 +2043,9 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           }
         }
         
-        // ✅ If any slot was completed during grace period, skip marking as neglected
+        // ✅ FIFTH: If any slot was completed during grace period, skip marking as neglected
         if (freshCompletedSlotIds.length > 0 && freshCompletedSlotIds.length !== completedSlotIds.length) {
-          console.log(`   ⏭️ SKIPPING - Multi-slot assignment has new completed slots (submitted during grace period)`);
+          console.log(`   ⏭️ SKIPPING - Multi-slot assignment has ${freshCompletedSlotIds.length - completedSlotIds.length} new completed slots (submitted during grace period)`);
           continue;
         }
         
@@ -2166,7 +2184,31 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       } 
       // ========== SINGLE-SLOT TASK ==========
       else {
-        // ✅ Calculate grace period end time
+        // ✅ FIRST: Skip if already has photo (already checked above, but double-check)
+        if (assignment.photoUrl) {
+          console.log(`   ⏭️ SKIPPING - Single-slot assignment already has photo (pending verification)`);
+          continue;
+        }
+        
+        // ✅ SECOND: Refresh assignment to get latest status
+        const freshAssignment = await prisma.assignment.findUnique({
+          where: { id: assignment.id },
+          select: { photoUrl: true, expired: true, completed: true }
+        });
+        
+        // ✅ THIRD: Check if photo was added during this cron run
+        if (freshAssignment?.photoUrl) {
+          console.log(`   ⏭️ SKIPPING - Single-slot assignment now has photo (submitted during this cron run)`);
+          continue;
+        }
+        
+        // ✅ FOURTH: Check if already completed or expired
+        if (freshAssignment?.completed || freshAssignment?.expired) {
+          console.log(`   ⏭️ SKIPPING - Single-slot assignment already completed or expired`);
+          continue;
+        }
+        
+        // ✅ FIFTH: Calculate grace period end time
         let gracePeriodEnd: Date;
         
         if (!assignment.timeSlot) {
@@ -2190,24 +2232,14 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
         }
         
-        // ✅ ONLY mark as neglected if current time is AFTER grace period ends
+        // ✅ SIXTH: Check if still in grace period
         if (now <= gracePeriodEnd) {
           const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
           console.log(`   ⏰ Assignment ${assignment.task!.title} STILL IN GRACE PERIOD (ends in ${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s)`);
           continue;
         }
         
-        // ✅ Check AGAIN if assignment has a photo (in case it was submitted during this cron run)
-        const freshAssignment = await prisma.assignment.findUnique({
-          where: { id: assignment.id },
-          select: { photoUrl: true, expired: true }
-        });
-        
-        if (freshAssignment?.photoUrl) {
-          console.log(`   ⏭️ SKIPPING - Assignment now has photo (submitted during grace period)`);
-          continue;
-        }
-        
+        // ✅ SEVENTH: Final check before marking as neglected
         if (assignment.expired || assignment.expiredAt !== null) {
           console.log(`   ⏭️ Assignment already expired, skipping`);
           continue;
@@ -2292,7 +2324,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
-
 
 private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
   if (assignment.completed) return false;
@@ -2513,7 +2544,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
             console.log(`📢 Active: "${assignment.task!.title}" - ${timeLeft}min left → ${assignment.user?.fullName}`);
           }
         }
-      }
+      }  
     }
 
     console.log(`✅ Sent ${remindersSent} reminders`);
