@@ -187,6 +187,7 @@ export const initReminderCron = () => {
     console.error('❌ Error in reminder cron job:', error);
     // Don't re-throw - let cron continue
   }
+    
 });
 
   // 2️⃣ RUN AT 7:00 AM PHT (23:00 UTC) - Early morning daily summary
