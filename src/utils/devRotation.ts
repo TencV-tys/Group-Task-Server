@@ -16,13 +16,13 @@ export async function checkAndFixRotation() {
   await updateSwapRequests();
   
   // ========== 3. EXPIRED ASSIGNMENTS (WHOLE TASK NEGLECTED) ==========
-  await updateExpiredAssignments();
+  //await updateExpiredAssignments();
   
   // ========== 4. OLD NOTIFICATIONS ==========
   await cleanupOldNotifications();
   
   // ========== 5. MARK MISSED TIME SLOTS (MULTI-SLOT NEGLECT) ==========
-  await markMissedTimeSlots();
+  //await markMissedTimeSlots();
   
   console.log('✅ All time-based data updated to current time');
 }
@@ -610,9 +610,9 @@ async function markMissedTimeSlots() {
             }
           });
         }
-      }
-    }
-  }
+      } 
+    } 
+  } 
   
   console.log(`✅ Missed time slots marked: ${totalMissedSlots} new slots missed, total points lost: ${totalPointsLost}`);
 }

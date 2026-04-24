@@ -877,8 +877,7 @@ return {
   }
 
  
-  
-// services/task.services.ts - COMPLETELY UPDATED rotateGroupTasks
+// services/task.services.ts - UPDATED rotateGroupTasks (matches previewRotation logic)
 
 static async rotateGroupTasks(groupId: string, userId: string) {
   try {
@@ -900,9 +899,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     
     const expiredCount = await prisma.assignment.updateMany({
       where: {
-        task: {
-          groupId: groupId
-        },
+        task: { groupId },
         rotationWeek: previousWeek,
         completed: false,
         expired: false
@@ -918,51 +915,59 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     // STEP 2: Get all recurring tasks sorted by points (HIGHEST to LOWEST)
     const tasks = await prisma.task.findMany({
-      where: { 
-        groupId, 
-        isRecurring: true,
-        isDeleted: false 
-      },
+      where: { groupId, isRecurring: true, isDeleted: false },
       include: {
-        timeSlots: { 
-          orderBy: { sortOrder: 'asc' },
-          select: {
-            id: true,
-            startTime: true,
-            endTime: true,
-            label: true,
-            points: true
-          }
-        }
+        timeSlots: { orderBy: { sortOrder: 'asc' } }
       },
-      orderBy: { points: 'desc' }  // ✅ Sort by points HIGHEST to LOWEST
+      orderBy: { points: 'desc' }
     });
 
     if (tasks.length === 0) {
       return { success: false, message: "No recurring tasks to rotate" };
     }
 
-    // STEP 3: Get all active members in rotation sorted by rotationOrder
-    const members = await prisma.groupMember.findMany({
-      where: { 
-        groupId, 
-        isActive: true,
-        inRotation: true
-      },
-      include: { 
-        user: { 
-          select: { 
-            id: true, 
-            fullName: true,
-            avatarUrl: true 
-          } 
-        } 
-      },
+    // STEP 3: Get all active members in rotation
+    const allMembers = await prisma.groupMember.findMany({
+      where: { groupId, isActive: true, inRotation: true },
+      include: { user: true },
       orderBy: { rotationOrder: 'asc' }
     });
 
-    if (members.length === 0) {
+    if (allMembers.length === 0) {
       return { success: false, message: "No active members in rotation" };
+    }
+
+    // STEP 4: Get current assignments for this week
+    const currentAssignments = await prisma.assignment.findMany({
+      where: {
+        task: { groupId },
+        rotationWeek: group.currentRotationWeek
+      },
+      include: { task: true, user: true }
+    });
+
+    // ✅ ONLY include members with ACTUAL assignments
+    const assignedMembers: any[] = [];
+    const currentDisplay: any[] = [];
+
+    for (const member of allMembers) {
+      const actualAssignment = currentAssignments.find(a => a.userId === member.userId);
+      
+      if (actualAssignment && actualAssignment.task) {
+        assignedMembers.push(member);
+        currentDisplay.push({
+          memberId: member.userId,
+          memberName: member.user.fullName,
+          rotationOrder: member.rotationOrder,
+          taskId: actualAssignment.task.id,
+          taskTitle: actualAssignment.task.title,
+          taskPoints: actualAssignment.task.points,
+        });
+      }
+    }
+
+    if (assignedMembers.length === 0) {
+      return { success: false, message: "No assigned members to rotate" };
     }
 
     const newWeek = group.currentRotationWeek + 1;
@@ -971,34 +976,26 @@ static async rotateGroupTasks(groupId: string, userId: string) {
 
     // Get day names mapping for UTC
     const dayNames: Record<number, DayOfWeek> = {
-      0: 'SUNDAY',
-      1: 'MONDAY',
-      2: 'TUESDAY',
-      3: 'WEDNESDAY',
-      4: 'THURSDAY',
-      5: 'FRIDAY',
-      6: 'SATURDAY'
+      0: 'SUNDAY', 1: 'MONDAY', 2: 'TUESDAY', 3: 'WEDNESDAY',
+      4: 'THURSDAY', 5: 'FRIDAY', 6: 'SATURDAY'
     };
 
     console.log(`\n🔄 TASK ROTATION - Week ${newWeek}`);
-    console.log(`   Formula: Member at position i gets task at index (i + (week-1)) % tasks.length`);
-    console.log(`   Total Tasks: ${tasks.length}, Total Members: ${members.length}`);
-    console.log(`   Rotation offset: ${newWeek - 1}`);
+    console.log(`   Assigned members: ${assignedMembers.length}, Tasks: ${tasks.length}`);
 
-    // STEP 4: Assign tasks using TASK ROTATION (tasks shift down members each week)
-    for (let i = 0; i < members.length; i++) {
-      const member = members[i];
-      if (!member || !member.user) {
-        console.warn(`Skipping member at index ${i}: member or user data missing`);
-        continue;
-      }
+    // ✅ Sort assigned members by their CURRENT task points (highest to lowest) - MATCHES PREVIEW
+    const sortedAssignedMembers = [...assignedMembers].sort((a, b) => {
+      const aTask = currentDisplay.find(c => c.memberId === a.userId);
+      const bTask = currentDisplay.find(c => c.memberId === b.userId);
+      return (bTask?.taskPoints || 0) - (aTask?.taskPoints || 0);
+    });
+
+    // STEP 5: Create assignments for next week - highest points member gets lowest points task
+    for (let i = 0; i < sortedAssignedMembers.length; i++) {
+      const member = sortedAssignedMembers[i];
       
-      // 🔑 KEY FORMULA: Tasks rotate DOWN the member list each week
-      // Member at index i gets task at index (i + (newWeek - 1)) % tasks.length
-      // Week 1 (newWeek=1): i + 0 → Alex gets T1, John gets T2, etc.
-      // Week 2 (newWeek=2): i + 1 → Alex gets T2, John gets T3, etc.
-      // Week 3 (newWeek=3): i + 2 → Alex gets T3, John gets T4, etc.
-      const taskIndex = (i + (newWeek - 1)) % tasks.length;
+      // ✅ Reverse order: first member (highest points) gets last task (lowest points)
+      const taskIndex = (tasks.length - 1 - i) % tasks.length;
       const task = tasks[taskIndex];
       
       if (!task) {
@@ -1006,24 +1003,14 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         continue;
       }
 
-      console.log(`\n   📋 ${member.user.fullName} (rotationOrder: ${member.rotationOrder}, position: ${i})`);
+      console.log(`\n   📋 ${member.user.fullName} (current: ${currentDisplay.find(c => c.memberId === member.userId)?.taskPoints || 0} pts)`);
       console.log(`      → Task at index ${taskIndex}: ${task.title} (${task.points} pts)`);
 
-      // Update task with new assignee
-      await prisma.task.update({
-        where: { id: task.id },
-        data: { 
-          currentAssignee: member.userId, 
-          lastAssignedAt: new Date() 
-        }
-      });
-
+      // ✅ DO NOT update currentAssignee - only create assignments for next week
+      
       // Delete existing assignments for next week
       await prisma.assignment.deleteMany({
-        where: { 
-          taskId: task.id, 
-          rotationWeek: newWeek 
-        }
+        where: { taskId: task.id, rotationWeek: newWeek }
       });
 
       // Get the time slots for this task
@@ -1039,16 +1026,12 @@ static async rotateGroupTasks(groupId: string, userId: string) {
         for (let day = 0; day < 7; day++) {
           const dueDate = new Date(weekStart);
           dueDate.setUTCDate(dueDate.getUTCDate() + day);
-          
-          const utcDayIndex = dueDate.getUTCDay();
-          const actualDayName = dayNames[utcDayIndex];
+          const actualDayName = dayNames[dueDate.getUTCDay()];
           
           for (const timeSlot of timeSlots) {
             const timeParts = timeSlot.endTime.split(':');
             let hours = Number(timeParts[0]) || 0;
             const minutes = Number(timeParts[1]) || 0;
-
-            // Convert PHT to UTC (subtract 8 hours)
             hours = hours - 8;
             if (hours < 0) hours += 24;
 
@@ -1086,46 +1069,46 @@ static async rotateGroupTasks(groupId: string, userId: string) {
             } else {
               selectedDays = JSON.parse(JSON.stringify(task.selectedDays));
             }
-          } catch {
-            selectedDays = [];
-          }
+          } catch { selectedDays = []; }
         }
         
         if (selectedDays.length === 0 && task.dayOfWeek) {
           selectedDays = [task.dayOfWeek];
         }
-        
         if (selectedDays.length === 0) {
           selectedDays = ['MONDAY'];
         }
         
-        // Get creation date for week boundaries
         const now = new Date();
         const creationDateUTC = new Date(Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          0, 0, 0, 0
+          now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0
         ));
-        
         const creationDayIndex = creationDateUTC.getUTCDay();
         
-        // Map day names to indices
         const dayToIndex: Record<string, number> = {
           'SUNDAY': 0, 'MONDAY': 1, 'TUESDAY': 2, 'WEDNESDAY': 3,
           'THURSDAY': 4, 'FRIDAY': 5, 'SATURDAY': 6
         };
         
-        // Filter valid days and sort in order starting from creation day
-        const validDays = selectedDays.filter(day => dayToIndex[day as string] !== undefined);
-        const daysInOrder = [...validDays].sort((a, b) => {
-          const indexA = dayToIndex[a as string];
-          const indexB = dayToIndex[b as string];
-          if (indexA === undefined || indexB === undefined) return 0;
-          let relativeA = indexA < creationDayIndex ? indexA + 7 : indexA;
-          let relativeB = indexB < creationDayIndex ? indexB + 7 : indexB;
-          return relativeA - relativeB;
-        });
+        // ✅ FIXED: Safely handle undefined days
+const validDays = selectedDays.filter(day => {
+  if (!day) return false;
+  const dayStr = String(day).toUpperCase();
+  return dayToIndex[dayStr] !== undefined;
+});
+
+const daysInOrder = [...validDays].sort((a, b) => {
+  const dayStrA = String(a).toUpperCase();
+  const dayStrB = String(b).toUpperCase();
+  const indexA = dayToIndex[dayStrA];
+  const indexB = dayToIndex[dayStrB];
+  
+  if (indexA === undefined || indexB === undefined) return 0;
+  
+  let relativeA = indexA < creationDayIndex ? indexA + 7 : indexA;
+  let relativeB = indexB < creationDayIndex ? indexB + 7 : indexB;
+  return relativeA - relativeB;
+});
         
         for (const day of daysInOrder) {
           const targetDayIndex = dayToIndex[day as string];
@@ -1145,7 +1128,6 @@ static async rotateGroupTasks(groupId: string, userId: string) {
             const timeParts = timeSlot.endTime.split(':');
             let hours = Number(timeParts[0]) || 0;
             const minutes = Number(timeParts[1]) || 0;
-
             hours = hours - 8;
             if (hours < 0) hours += 24;
 
@@ -1187,15 +1169,12 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     // Update group rotation week
     await prisma.group.update({
       where: { id: groupId },
-      data: { 
-        currentRotationWeek: newWeek, 
-        lastRotationUpdate: new Date() 
-      }
+      data: { currentRotationWeek: newWeek, lastRotationUpdate: new Date() }
     });
 
     console.log(`\n✅ Rotation completed for week ${newWeek}`);
     console.log(`   Rotated ${rotatedTasks.length} tasks`);
-    console.log(`   Next rotation will shift tasks by ${newWeek} positions`);
+    console.log(`   NOT updating currentAssignee - keeping original assignees for current week`);
 
     return {
       success: true,
@@ -1204,7 +1183,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
       newWeek,
       weekStart,
       weekEnd,
-      note: "Tasks rotate down the member list each week. After " + tasks.length + " weeks, everyone returns to their original task."
+      note: "Tasks rotated based on points (highest ↔ lowest). Current week assignments unchanged."
     };
 
   } catch (error: any) {
@@ -1212,6 +1191,7 @@ static async rotateGroupTasks(groupId: string, userId: string) {
     return { success: false, message: error.message || "Error rotating tasks" };
   }
 }
+
 
 static async getRotationSchedule(groupId: string, userId: string, weeks: number = 4) {
   try {
@@ -2873,7 +2853,7 @@ static async getTaskStatistics(groupId: string, userId: string) {
   }
 }
 
-// services/task.services.ts - UPDATED previewRotation
+// services/task.services.ts - COMPLETELY UPDATED previewRotation
 
 static async previewRotation(groupId: string, userId: string) {
   try {
@@ -2909,11 +2889,15 @@ static async previewRotation(groupId: string, userId: string) {
           }
         }
       },
-      orderBy: { points: 'desc' }  // ✅ Sort by points
+      orderBy: { points: 'desc' }
     });
 
-    // Get all active members in rotation sorted by rotationOrder
-    const members = await prisma.groupMember.findMany({
+    if (tasks.length === 0) {
+      return { success: false, message: "No recurring tasks to preview rotation" };
+    }
+
+    // Get all active members in rotation
+    const allMembers = await prisma.groupMember.findMany({
       where: { 
         groupId, 
         isActive: true,
@@ -2931,7 +2915,7 @@ static async previewRotation(groupId: string, userId: string) {
       orderBy: { rotationOrder: 'asc' }
     });
 
-    if (members.length === 0) {
+    if (allMembers.length === 0) {
       return { success: false, message: "No active members in rotation" };
     }
 
@@ -2947,87 +2931,103 @@ static async previewRotation(groupId: string, userId: string) {
       }
     });
 
-    // Create map of taskId -> current assignee
-    const currentTaskAssignee = new Map();
-    currentAssignments.forEach(assignment => {
-      if (assignment.taskId && assignment.userId) {
-        currentTaskAssignee.set(assignment.taskId, assignment.userId);
-      }
-    });
-
     const currentWeek = group.currentRotationWeek;
     const nextWeek = currentWeek + 1;
 
-    // Build current assignments display
-    const currentDisplay = [];
-    for (let i = 0; i < members.length; i++) {
-      const member = members[i];
-      // For current week, show actual assignments from database
-      const taskIndex = i % tasks.length;
-      const task = tasks[taskIndex];
+    // ✅ ONLY include members with ACTUAL assignments (taskId not null)
+    const assignedMembers: any[] = [];
+    const currentDisplay: any[] = [];
+
+    for (const member of allMembers) {
+      const actualAssignment = currentAssignments.find(a => a.userId === member.userId);
       
-      if (!task) continue;
-      
-      const isManuallyAssigned = currentTaskAssignee.get(task.id) !== member?.userId;
-      
-      currentDisplay.push({
-        memberId: member?.userId,
-        memberName: member?.user.fullName,
-        rotationOrder: member?.rotationOrder,
-        taskId: task.id,
-        taskTitle: task.title,
-        taskPoints: task.points,
-        isManuallyAssigned,
-        actualAssigneeId: currentTaskAssignee.get(task.id),
-        actualAssigneeName: currentAssignments.find(a => a.taskId === task.id)?.user?.fullName || 'Unassigned'
-      });
+      if (actualAssignment && actualAssignment.task) {
+        assignedMembers.push(member);
+        currentDisplay.push({
+          memberId: member.userId,
+          memberName: member.user.fullName,
+          rotationOrder: member.rotationOrder,
+          taskId: actualAssignment.task.id,
+          taskTitle: actualAssignment.task.title,
+          taskPoints: actualAssignment.task.points,
+          isManuallyAssigned: true,
+        });
+      }
     }
 
-    // Build preview assignments (after rotation) using TASK ROTATION formula
+    // If no assigned members, return empty preview
+    if (assignedMembers.length === 0) {
+      return {
+        success: true,
+        data: {
+          currentWeek,
+          nextWeek,
+          rotationOffset: nextWeek - 1,
+          membersInRotation: 0,
+          tasksCount: tasks.length,
+          currentAssignments: [],
+          previewAssignments: [],
+          conflicts: [],
+          tasksSortedByPoints: tasks.map((t, idx) => ({
+            id: t.id,
+            title: t.title,
+            points: t.points,
+            rank: idx + 1
+          }))
+        }
+      };
+    }
+
+    // ✅ Sort assigned members by their CURRENT task points (highest to lowest)
+    const sortedAssignedMembers = [...assignedMembers].sort((a, b) => {
+      const aTask = currentDisplay.find(c => c.memberId === a.userId);
+      const bTask = currentDisplay.find(c => c.memberId === b.userId);
+      return (bTask?.taskPoints || 0) - (aTask?.taskPoints || 0);
+    });
+
+    // ✅ Build preview: highest points member gets lowest points task
     const previewDisplay = [];
-    for (let i = 0; i < members.length; i++) {
-      const member = members[i];
-      // 🔑 KEY FORMULA: Task rotates DOWN the member list
-      // Member at position i gets task at index (i + (nextWeek - 1)) % tasks.length
-      const taskIndex = (i + (nextWeek - 1)) % tasks.length;
+    for (let i = 0; i < sortedAssignedMembers.length; i++) {
+      const member = sortedAssignedMembers[i];
+      // Reverse order: first member gets last task, last member gets first task
+      const taskIndex = (tasks.length - 1 - i) % tasks.length;
       const task = tasks[taskIndex];
       
-      if (!task) continue;
-      
-      previewDisplay.push({
-        memberId: member?.userId,
-        memberName: member?.user.fullName,
-        rotationOrder: member?.rotationOrder,
-        taskId: task.id,
-        taskTitle: task.title, 
-        taskPoints: task.points
-      });
+      if (task) {
+        previewDisplay.push({
+          memberId: member.userId,
+          memberName: member.user.fullName,
+          rotationOrder: member.rotationOrder,
+          taskId: task.id,
+          taskTitle: task.title, 
+          taskPoints: task.points
+        });
+      }
     }
 
-    // Find conflicts (where manual assignment differs from automatic)
+    // ✅ Find conflicts (compare current vs preview)
     const conflicts = [];
-    for (let i = 0; i < members.length; i++) {
-      const member = members[i];
-      const currentTask = currentDisplay[i];
-      const previewTask = previewDisplay[i];
+    for (let i = 0; i < currentDisplay.length; i++) {
+      const current = currentDisplay[i];
+      const preview = previewDisplay[i];
       
-      if (currentTask && previewTask && currentTask.taskId !== previewTask.taskId) {
+      if (current && preview && current.taskId !== preview.taskId) {
         conflicts.push({
-          memberName: member?.user.fullName,
-          currentTaskTitle: currentTask.taskTitle,
-          previewTaskTitle: previewTask.taskTitle,
+          memberName: current.memberName,
+          currentTaskTitle: current.taskTitle,
+          previewTaskTitle: preview.taskTitle,
           reason: `Manual override detected`
         });
       }
     }
- 
+
     return {
       success: true,
       data: {
         currentWeek, 
         nextWeek,
-        rotationOffset: nextWeek - 1,  // Offset shows how many positions tasks shift
-        membersInRotation: members.length,
+        rotationOffset: nextWeek - 1,
+        membersInRotation: assignedMembers.length,
         tasksCount: tasks.length,
         currentAssignments: currentDisplay,
         previewAssignments: previewDisplay,
@@ -3040,7 +3040,7 @@ static async previewRotation(groupId: string, userId: string) {
         }))
       }
     };
- 
+
   } catch (error: any) {
     console.error("TaskService.previewRotation error:", error);
     return { success: false, message: error.message || "Error previewing rotation" };
