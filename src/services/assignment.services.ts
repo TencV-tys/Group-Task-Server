@@ -1361,7 +1361,12 @@ static async getGroupNeglectedTasks(
       console.log(`   Due Hour PHT: ${dueHourPHT}:00`);
       console.log(`   Expired At (UTC): ${assignment.expiredAt?.toISOString()}`);
       console.log(`   Total missed slots: ${missedSlots.length}`);
-      
+      console.log(`📊 Raw assignment data from DB:`, {
+  id: assignment.id,
+  expired: assignment.expired,
+  expiredAt: assignment.expiredAt,
+  completed: assignment.completed
+});
       if (missedSlots.length === 0) {
         console.log(`   ⚠️ No missed slots found, skipping`);
         return [];
@@ -1421,6 +1426,7 @@ static async getGroupNeglectedTasks(
       console.log(`   ${idx + 1}. ${task.user?.fullName} - ${task.taskTitle} - Slot: ${task.timeSlot?.startTime}-${task.timeSlot?.endTime} - Points: ${task.points} - Expired: ${task.expiredAt}`);
     });
     console.log(`   Points by user:`, pointsByUser);
+    
     console.log(`==================================================\n`);
 
     return {
@@ -1939,28 +1945,30 @@ private static isTimeSlotNeglected(assignment: any, timeSlot: any, now: Date): b
 
   const dueDate = new Date(assignment.dueDate);
   
-  // Only check assignments due TODAY
+  // Only check assignments due TODAY (in UTC)
   const dueDateUTC = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
   const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 
   if (dueDateUTC !== todayUTC) return false;
 
+  // ✅ FIXED: Get due date components for correct date construction
+  const dueYear = dueDate.getUTCFullYear();
+  const dueMonth = dueDate.getUTCMonth();
+  const dueDay = dueDate.getUTCDate();
+
   // Parse end time (stored in PHT / UTC+8) → convert to UTC
-  const [endHourRaw, endMinRaw] = timeSlot.endTime.split(':');
-  let endHour = parseInt(endHourRaw || '0', 10);
-  const endMin = parseInt(endMinRaw || '0', 10);
+  let endHour = parseInt(timeSlot.endTime.split(':')[0]);
+  const endMin = parseInt(timeSlot.endTime.split(':')[1]);
 
   // PHT (UTC+8) to UTC
   endHour = endHour - 8;
   if (endHour < 0) endHour += 24;
 
-  const endTimeUTC = new Date(dueDate);
-  endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
-
-  // ✅ Grace period = endTime + 30 minutes (NO BUFFER)
+  // ✅ FIXED: Create UTC date using due date's date components
+  const endTimeUTC = new Date(Date.UTC(dueYear, dueMonth, dueDay, endHour, endMin, 0, 0));
   const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
 
-  // ✅ Mark as neglected ONLY AFTER grace period ends
+  // Mark as neglected ONLY AFTER grace period ends
   const isNeglected = now > gracePeriodEnd;
   
   console.log(`   ⏰ Slot ${timeSlot.startTime}-${timeSlot.endTime}:`);
@@ -1989,10 +1997,8 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
     const now = new Date();
     
-    // Get current UTC date
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
 
-    // Get ALL assignments due TODAY that are not completed, not expired
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -2053,13 +2059,11 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       console.log(`   Verified: ${assignment.verified}`);
       console.log(`   Completed: ${assignment.completed}`);
       
-      // ✅ SKIP if assignment has a photo (pending verification)
       if (assignment.photoUrl) {
         console.log(`   ⏭️ SKIPPING - Assignment has photo (pending verification), will not be marked as neglected`);
         continue;
       }
       
-      // ✅ SKIP if assignment is already verified
       if (assignment.verified === true) {
         console.log(`   ⏭️ SKIPPING - Assignment already verified`);
         continue;
@@ -2071,7 +2075,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       const missedSlotIds: string[] = Array.isArray(assignmentAny.missedTimeSlotIds)
         ? assignmentAny.missedTimeSlotIds : [];
 
-      // Get current user points first
       const currentMember = await prisma.groupMember.findFirst({
         where: { userId: assignment.userId, groupId, isActive: true },
         select: { cumulativePoints: true }
@@ -2127,10 +2130,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
         
-        // ✅ Find the EXACT time slot for this due date
-        const dueDate = new Date(assignment.dueDate);
-        const dueHourPHT = dueDate.getUTCHours() + 8;
-        const dueMinute = dueDate.getUTCMinutes();
+        const dueDateObj = new Date(assignment.dueDate);
+        const dueYear = dueDateObj.getUTCFullYear();
+        const dueMonth = dueDateObj.getUTCMonth();
+        const dueDay = dueDateObj.getUTCDate();
+        const dueHourPHT = dueDateObj.getUTCHours() + 8;
+        const dueMinute = dueDateObj.getUTCMinutes();
         
         console.log(`   📅 Due time PHT: ${dueHourPHT}:${dueMinute.toString().padStart(2, '0')}`);
         
@@ -2167,19 +2172,31 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
         
-        // ✅ Calculate grace period
-        const endTimeParts = targetSlot.endTime.split(':');
-        const endHourRaw = endTimeParts[0];
-        const endMinRaw = endTimeParts[1];
-        let endHour = endHourRaw ? parseInt(endHourRaw, 10) : 0;
-        const endMin = endMinRaw ? parseInt(endMinRaw, 10) : 0;
+        // ✅ Safe parsing for end time
+        const endTimeStr = targetSlot.endTime;
+        if (!endTimeStr) {
+          console.log(`   ⚠️ No end time for slot, skipping`);
+          continue;
+        }
+        
+        const endTimeParts = endTimeStr.split(':');
+        if (endTimeParts.length < 2) {
+          console.log(`   ⚠️ Invalid end time format: ${endTimeStr}, skipping`);
+          continue;
+        }
+        
+        let endHour = parseInt(endTimeParts[0] || '0', 10);
+        const endMin = parseInt(endTimeParts[1] || '0', 10);
+        
+        if (isNaN(endHour) || isNaN(endMin)) {
+          console.log(`   ⚠️ Invalid end time numbers: ${endTimeStr}, skipping`);
+          continue;
+        }
         
         endHour = endHour - 8;
         if (endHour < 0) endHour += 24;
         
-        const dueDateObj = new Date(assignment.dueDate);
-        const endTimeUTC = new Date(dueDateObj);
-        endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
+        const endTimeUTC = new Date(Date.UTC(dueYear, dueMonth, dueDay, endHour, endMin, 0, 0));
         const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
         
         console.log(`   📅 Grace period ends: ${gracePeriodEnd.toISOString()}`);
@@ -2229,7 +2246,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             points: completedPoints,
             partiallyExpired: !allSlotsAccounted,
             expired: allSlotsAccounted && completedSlotIds.length === 0,
-            expiredAt: allSlotsAccounted && completedSlotIds.length === 0 ? now : undefined
+            expiredAt: gracePeriodEnd
           }
         });
         
@@ -2285,6 +2302,12 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
         
+        // ✅ Check if timeSlot exists
+        if (!assignment.timeSlot) {
+          console.log(`   ⏭️ SKIPPING - No time slot for single-slot assignment`);
+          continue;
+        }
+        
         const freshAssignment = await prisma.assignment.findUnique({
           where: { id: assignment.id },
           select: { photoUrl: true, expired: true, completed: true }
@@ -2300,29 +2323,39 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
         
-        let gracePeriodEnd: Date;
+        const dueDate = new Date(assignment.dueDate);
+        const dueYear = dueDate.getUTCFullYear();
+        const dueMonth = dueDate.getUTCMonth();
+        const dueDay = dueDate.getUTCDate();
         
-        if (!assignment.timeSlot) {
-          const endOfDayUTC = new Date(assignment.dueDate);
-          endOfDayUTC.setUTCHours(23, 59, 59, 999);
-          gracePeriodEnd = new Date(endOfDayUTC.getTime() + 30 * 60000);
-        } else {
-          const endTimeParts = assignment.timeSlot.endTime.split(':');
-          const endHourRaw = endTimeParts[0];
-          const endMinRaw = endTimeParts[1];
-          let endHour = endHourRaw ? parseInt(endHourRaw, 10) : 0;
-          const endMin = endMinRaw ? parseInt(endMinRaw, 10) : 0;
-          
-          endHour = endHour - 8;
-          if (endHour < 0) endHour += 24;
-          
-          const dueDate = new Date(assignment.dueDate);
-          const endTimeUTC = new Date(dueDate);
-          endTimeUTC.setUTCHours(endHour, endMin, 0, 0);
-          gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
-          
-          console.log(`   📅 Grace period ends: ${gracePeriodEnd.toISOString()}`);
+        // ✅ Safe access with null check
+        const endTimeStr = assignment.timeSlot.endTime;
+        if (!endTimeStr) {
+          console.log(`   ⏭️ SKIPPING - No end time for time slot`);
+          continue;
         }
+        
+        const endTimeParts = endTimeStr.split(':');
+        if (endTimeParts.length < 2) {
+          console.log(`   ⏭️ SKIPPING - Invalid time format: ${endTimeStr}`);
+          continue;
+        }
+        
+        let endHour = parseInt(endTimeParts[0] || '0', 10);
+        const endMin = parseInt(endTimeParts[1] || '0', 10);
+        
+        if (isNaN(endHour) || isNaN(endMin)) {
+          console.log(`   ⏭️ SKIPPING - Invalid time numbers: ${endTimeStr}`);
+          continue;
+        }
+        
+        endHour = endHour - 8;
+        if (endHour < 0) endHour += 24;
+        
+        const endTimeUTC = new Date(Date.UTC(dueYear, dueMonth, dueDay, endHour, endMin, 0, 0));
+        const gracePeriodEnd = new Date(endTimeUTC.getTime() + 30 * 60000);
+        
+        console.log(`   📅 Grace period ends: ${gracePeriodEnd.toISOString()}`);
         
         if (now <= gracePeriodEnd) {
           const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
@@ -2338,7 +2371,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         console.log(`   ❌ Assignment is NEGLECTED (grace period ended)`);
         
         neglectedCount++;
-        const pointsLost = assignment.timeSlot?.points || assignment.points || 0;
+        const pointsLost = assignment.timeSlot.points || assignment.points || 0;
         totalPointsNotAwarded += pointsLost;
         
         const actualDeduction = Math.min(pointsLost, currentPoints);
@@ -2360,7 +2393,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           where: { id: assignment.id },
           data: {
             expired: true,
-            expiredAt: now,
+            expiredAt: gracePeriodEnd,
             notes: `[EXPIRED: Grace period ended]`
           } 
         });
@@ -2413,7 +2446,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
-
 
 private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
   if (assignment.completed) return false;
