@@ -1,4 +1,4 @@
-// services/admin.users.service.ts - COMPLETE WORKING VERSION
+// services/admin.users.service.ts - FIXED VERSION (Excludes deleted tasks)
 
 import prisma from "../prisma";
 
@@ -23,6 +23,13 @@ export interface UserStats {
     USER: number;
   };
 }
+
+// Helper function to check if task is deleted
+const isTaskActive = (task: any) => {
+  if (!task) return false;
+  if (task.isDeleted === true) return false;
+  return true;
+};
 
 export class AdminUsersService {
   
@@ -61,11 +68,7 @@ export class AdminUsersService {
         active,
         suspended,
         disabled,
-        groupAdmins: {
-          total: groupAdmins,
-          byRole: roleAdmins.length,
-          byMembership: membershipAdmins.length
-        }
+        groupAdmins
       });
       
       const groupAdminCount = await prisma.user.count({ where: { role: 'GROUP_ADMIN' } });
@@ -136,12 +139,6 @@ export class AdminUsersService {
         
         groupAdminUserIds = Array.from(allAdminIds);
         
-        console.log('📊 [AdminUsersService] GROUP_ADMIN filter:', {
-          byRole: roleAdmins.length,
-          byMembership: membershipAdmins.length,
-          total: groupAdminUserIds.length
-        });
-        
         if (groupAdminUserIds.length === 0) {
           return {
             success: true,
@@ -181,8 +178,7 @@ export class AdminUsersService {
             lastLoginAt: true,
             _count: {
               select: {
-                groups: true,
-                assignments: { where: { completed: true } }
+                groups: true
               }
             }
           }
@@ -190,9 +186,31 @@ export class AdminUsersService {
         prisma.user.count({ where })
       ]);
 
-      const formattedUsers = users.map(user => {
+      // ✅ FIXED: Count assignments only from active (non-deleted) tasks
+      const formattedUsers = await Promise.all(users.map(async (user) => {
         const isGroupAdminByRole = user.role === 'GROUP_ADMIN';
         const isGroupAdminByMembership = groupAdminUserIds ? groupAdminUserIds.includes(user.id) : false;
+        
+        // ✅ Count ONLY completed assignments from ACTIVE tasks (not deleted)
+        const completedAssignments = await prisma.assignment.count({
+          where: {
+            userId: user.id,
+            completed: true,
+            task: {
+              isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+            }
+          }
+        });
+        
+        // ✅ Count total tasks from ACTIVE tasks (not deleted) for completion rate
+        const totalActiveAssignments = await prisma.assignment.count({
+          where: {
+            userId: user.id,
+            task: {
+              isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+            }
+          }
+        });
         
         return {
           id: user.id,
@@ -206,12 +224,13 @@ export class AdminUsersService {
           updatedAt: user.updatedAt,
           lastLoginAt: user.lastLoginAt,
           groupsCount: user._count.groups,
-          tasksCompleted: user._count.assignments,
+          tasksCompleted: completedAssignments,  // ✅ Only active tasks
+          totalActiveTasks: totalActiveAssignments,  // ✅ Only active tasks
           isGroupAdmin: isGroupAdminByRole || isGroupAdminByMembership
         };
-      });
+      }));
 
-      console.log('📊 [AdminUsersService] Returning users:', {
+      console.log('📊 [AdminUsersService] Returning users (excluding deleted tasks):', {
         total,
         returned: formattedUsers.length,
         filters: { role, status, search }
@@ -258,23 +277,6 @@ export class AdminUsersService {
               groupRole: true,
               joinedAt: true
             }
-          },
-          assignments: {
-            where: { completed: true },
-            take: 5,
-            orderBy: { completedAt: 'desc' },
-            select: {
-              id: true,
-              task: {
-                select: {
-                  title: true,
-                  points: true,
-                  group: { select: { name: true } }
-                }
-              },
-              completedAt: true,
-              points: true
-            }
           }
         }
       });
@@ -290,26 +292,78 @@ export class AdminUsersService {
       
       const isGroupAdmin = isGroupAdminByRole || isGroupAdminByMembership;
       const groupsCount = await prisma.groupMember.count({ where: { userId, isActive: true } });
-      const totalTasks = await prisma.assignment.count({ where: { userId } });
-      const completedTasks = await prisma.assignment.count({ where: { userId, completed: true } });
+      
+      // ✅ FIXED: Count ONLY assignments from ACTIVE tasks (not deleted)
+      const totalActiveTasks = await prisma.assignment.count({
+        where: { 
+          userId,
+          task: {
+            isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+          }
+        }
+      });
+      
+      const completedActiveTasks = await prisma.assignment.count({
+        where: { 
+          userId, 
+          completed: true,
+          task: {
+            isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+          }
+        }
+      });
+      
+      // ✅ FIXED: Sum points ONLY from completed assignments of ACTIVE tasks
       const totalPoints = await prisma.assignment.aggregate({
-        where: { userId, completed: true },
+        where: { 
+          userId, 
+          completed: true,
+          task: {
+            isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+          }
+        },
         _sum: { points: true }
+      });
+
+      // ✅ FIXED: Get recent assignments ONLY from ACTIVE tasks
+      const recentAssignments = await prisma.assignment.findMany({
+        where: {
+          userId,
+          completed: true,
+          task: {
+            isDeleted: false  // ✅ EXCLUDE DELETED TASKS
+          }
+        },
+        take: 5,
+        orderBy: { completedAt: 'desc' },
+        select: {
+          id: true,
+          task: {
+            select: {
+              title: true,
+              points: true,
+              group: { select: { name: true } }
+            }
+          },
+          completedAt: true,
+          points: true
+        }
       });
 
       return {
         success: true,
-        message: "User details retrieved successfully",
+        message: "User details retrieved successfully (excluding deleted tasks)",
         data: {
           ...user,
           isGroupAdmin,
-          stats: {
+          stats: { 
             groupsCount,
-            totalTasks,
-            completedTasks,
-            pendingTasks: totalTasks - completedTasks,
+            totalTasks: totalActiveTasks,
+            completedTasks: completedActiveTasks,
+            pendingTasks: totalActiveTasks - completedActiveTasks,
             totalPoints: totalPoints._sum.points || 0
-          }
+          },
+          recentAssignments
         }
       };
 

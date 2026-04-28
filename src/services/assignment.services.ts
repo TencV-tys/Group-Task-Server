@@ -244,11 +244,11 @@ static async completeAssignment(
       
       console.log(`Assignment ${assignmentId} - Slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}: isLate=${isLate}, finalPoints=${finalPoints}`);
     }
-
-    // Update completed time slots
+ 
+    // Update completed time slots 
     let updatedCompletedSlots = [...completedSlotIds];
     let updatedPoints = assignment.points;
-    let allSlotsCompleted = false;
+    let allSlotsCompleted = false; 
     
     if (isMultiSlotTask && targetTimeSlot) {
       updatedCompletedSlots = [...completedSlotIds, targetTimeSlot.id];
@@ -256,7 +256,7 @@ static async completeAssignment(
       
       let totalCompletedPoints = 0;
       for (const slot of assignment.task.timeSlots) {
-        if (updatedCompletedSlots.includes(slot.id)) {
+        if (updatedCompletedSlots.includes(slot.id)) { 
           let slotPointsValue = slot.points || assignment.points;
           
           // ✅ FIXED: Apply late penalty to ANY slot submitted during late window
@@ -275,7 +275,7 @@ static async completeAssignment(
       allSlotsCompleted = updatedCompletedSlots.length === assignment.task.timeSlots.length;
       console.log(`🏁 All slots completed? ${allSlotsCompleted}`);
     } else {
-      allSlotsCompleted = true;
+      allSlotsCompleted = true; 
       updatedPoints = finalPoints;
       console.log(`🏁 Single slot task - marking as completed with points: ${updatedPoints}`);
     }
@@ -973,8 +973,7 @@ if (filters.status) {
     }
   }
 
-
-  // In assignment.services.ts - COMPLETELY FIXED getUserNeglectedTasks
+// In assignment.services.ts - COMPLETELY FIXED getUserNeglectedTasks
 
 static async getUserNeglectedTasks(userId: string, filters?: {
   groupId?: string;
@@ -1000,8 +999,6 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       }
     }
 
-    const now = new Date();
-    
     const where: any = { 
       userId,
       completed: false,
@@ -1030,7 +1027,27 @@ static async getUserNeglectedTasks(userId: string, filters?: {
     const [neglectedTasks, total] = await Promise.all([
       prisma.assignment.findMany({
         where,
-        include: {
+        select: {
+          id: true,
+          userId: true,
+          taskId: true,
+          dueDate: true,
+          expiredAt: true,        // ✅ ADDED - CRITICAL!
+          expired: true,
+          points: true,
+          notes: true,
+          photoUrl: true,
+          completed: true,
+          verified: true,
+          completedTimeSlotIds: true,
+          missedTimeSlotIds: true,
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              avatarUrl: true
+            }
+          },
           task: {
             select: {
               id: true,
@@ -1061,13 +1078,6 @@ static async getUserNeglectedTasks(userId: string, filters?: {
               label: true,
               points: true
             }
-          },
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatarUrl: true
-            }
           }
         },
         orderBy: { expiredAt: 'desc' },
@@ -1097,6 +1107,7 @@ static async getUserNeglectedTasks(userId: string, filters?: {
       console.log(`   Task Title: ${assignment.task?.title}`);
       console.log(`   Due Date (UTC): ${assignment.dueDate?.toISOString()}`);
       console.log(`   Due Hour PHT: ${dueHourPHT}:00`);
+      console.log(`   Expired At (UTC): ${assignment.expiredAt?.toISOString()}`);
       console.log(`   Total missed slots: ${missedSlots.length}`);
       
       if (missedSlots.length === 0) {
@@ -1126,8 +1137,8 @@ static async getUserNeglectedTasks(userId: string, filters?: {
           groupId: assignment.task?.group?.id || filters?.groupId,
           groupName: assignment.task?.group?.name || 'Unknown Group',
           dueDate: assignment.dueDate,
-          expiredAt: assignment.expiredAt,
-          points: slot.points || 0,  // Individual slot points
+          expiredAt: assignment.expiredAt,    // ✅ NOW HAS VALUE
+          points: slot.points || 0,
           timeSlot: {
             id: slot.id,
             startTime: slot.startTime,
@@ -1143,7 +1154,7 @@ static async getUserNeglectedTasks(userId: string, filters?: {
           missedSlotIds: [slot.id],
           missedSlotsCount: 1,
           daysAgo: assignment.expiredAt 
-            ? Math.floor((new Date().getTime() - assignment.expiredAt.getTime()) / (1000 * 60 * 60 * 24))
+            ? Math.floor((new Date().getTime() - new Date(assignment.expiredAt).getTime()) / (1000 * 60 * 60 * 24))
             : 0
         };
       });
@@ -1153,7 +1164,7 @@ static async getUserNeglectedTasks(userId: string, filters?: {
     console.log(`   Original assignments: ${neglectedTasks.length}`);
     console.log(`   Individual slot entries: ${formattedTasks.length}`);
     formattedTasks.forEach((task, idx) => {
-      console.log(`   ${idx + 1}. ${task.taskTitle} - Slot: ${task.timeSlot?.startTime}-${task.timeSlot?.endTime} - Points: ${task.points}`);
+      console.log(`   ${idx + 1}. ${task.taskTitle} - Slot: ${task.timeSlot?.startTime}-${task.timeSlot?.endTime} - Points: ${task.points} - Expired: ${task.expiredAt}`);
     });
     console.log(`==================================================\n`);
 
@@ -1161,7 +1172,8 @@ static async getUserNeglectedTasks(userId: string, filters?: {
     
     const groupedByMonth = formattedTasks.reduce((acc: any, task) => {
       if (!task.expiredAt) return acc;
-      const monthYear = task.expiredAt.toLocaleString('default', { 
+      const date = new Date(task.expiredAt);
+      const monthYear = date.toLocaleString('default', { 
         month: 'long', 
         year: 'numeric' 
       });
@@ -1218,7 +1230,8 @@ static async getUserNeglectedTasks(userId: string, filters?: {
   }
 }
 
-// ========== GET GROUP NEGLECTED TASKS ==========
+// In assignment.services.ts - COMPLETELY FIXED getGroupNeglectedTasks
+
 static async getGroupNeglectedTasks(
   groupId: string,
   userId: string, 
@@ -1241,8 +1254,6 @@ static async getGroupNeglectedTasks(
       return { success: false, message: "Only admins can view all neglected tasks" };
     }
 
-    const now = new Date();
-    
     const where: any = {
       task: { groupId },
       completed: false,
@@ -1271,7 +1282,20 @@ static async getGroupNeglectedTasks(
     const [neglectedTasks, total] = await Promise.all([
       prisma.assignment.findMany({
         where,
-        include: {
+        select: {
+          id: true,
+          userId: true,
+          taskId: true,
+          dueDate: true,
+          expiredAt: true,        // ✅ ADDED - CRITICAL!
+          expired: true,
+          points: true,
+          notes: true,
+          photoUrl: true,
+          completed: true,
+          verified: true,
+          completedTimeSlotIds: true,
+          missedTimeSlotIds: true,
           user: {
             select: {
               id: true,
@@ -1335,6 +1359,7 @@ static async getGroupNeglectedTasks(
       console.log(`   Task Title: ${assignment.task?.title}`);
       console.log(`   Due Date (UTC): ${assignment.dueDate?.toISOString()}`);
       console.log(`   Due Hour PHT: ${dueHourPHT}:00`);
+      console.log(`   Expired At (UTC): ${assignment.expiredAt?.toISOString()}`);
       console.log(`   Total missed slots: ${missedSlots.length}`);
       
       if (missedSlots.length === 0) {
@@ -1367,7 +1392,7 @@ static async getGroupNeglectedTasks(
           taskTitle: assignment.task?.title || 'Deleted Task',
           user: assignment.user,
           dueDate: assignment.dueDate,
-          expiredAt: assignment.expiredAt,
+          expiredAt: assignment.expiredAt,    // ✅ NOW HAS VALUE
           points: slotPoints,
           timeSlot: {
             id: slot.id,
@@ -1381,7 +1406,10 @@ static async getGroupNeglectedTasks(
           slotTime: `${slot.startTime}-${slot.endTime}`,
           slotLabel: slot.label || '',
           missedSlotIds: [slot.id],
-          missedSlotsCount: 1
+          missedSlotsCount: 1,
+          daysAgo: assignment.expiredAt 
+            ? Math.floor((new Date().getTime() - new Date(assignment.expiredAt).getTime()) / (1000 * 60 * 60 * 24))
+            : 0
         };
       });
     });
@@ -1390,7 +1418,7 @@ static async getGroupNeglectedTasks(
     console.log(`   Original assignments: ${neglectedTasks.length}`);
     console.log(`   Individual slot entries: ${formattedTasks.length}`);
     formattedTasks.forEach((task, idx) => {
-      console.log(`   ${idx + 1}. ${task.user?.fullName} - ${task.taskTitle} - Slot: ${task.timeSlot?.startTime}-${task.timeSlot?.endTime} - Points: ${task.points}`);
+      console.log(`   ${idx + 1}. ${task.user?.fullName} - ${task.taskTitle} - Slot: ${task.timeSlot?.startTime}-${task.timeSlot?.endTime} - Points: ${task.points} - Expired: ${task.expiredAt}`);
     });
     console.log(`   Points by user:`, pointsByUser);
     console.log(`==================================================\n`);
@@ -1411,7 +1439,6 @@ static async getGroupNeglectedTasks(
     return { success: false, message: error.message };
   }
 }
-
 
 static async getUpcomingAssignments(
   userId: string,

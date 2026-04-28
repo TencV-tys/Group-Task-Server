@@ -101,42 +101,52 @@ export class GroupController{
 
       }
 
+      // In group.controller.ts - UPDATE getUserGroup
 
-      static async getUserGroup(req:UserAuthRequest, res:Response){
-             try{
-                const userId = req.user?.id;
-                
-                if(!userId){
-                    return res.status(400).json({
-                        success:false,
-                        message:"User is not authenticated"
-                    });
-                }
+static async getUserGroup(req: UserAuthRequest, res: Response){
+  try {
+    const userId = req.user?.id;
+    
+    if(!userId){
+      return res.status(400).json({
+        success: false,
+        message: "User is not authenticated"
+      });
+    }
 
-                const group = await GroupServices.getUserGroups(userId);
+    const result = await GroupServices.getUserGroups(userId);
 
-                if(!group.success){
-                    return res.status(400).json({
-                        success:false,
-                        message:group.message
-                    });
-                }
-                
-                return res.json({
-                    success:true,
-                    message:group.message,
-                    groups:group.groups
-                });
+    if(!result.success){
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+    
+    // ✅ ENSURE each group has status fields (with fallbacks)
+    const groupsWithStatus = result.groups?.map((group: any) => ({
+      ...group,
+      status: group.status || 'ACTIVE',           // Fallback to ACTIVE
+      isDeleted: group.isDeleted || false,        // Fallback to false
+      statusReason: group.statusReason || null,
+      // Add computed field for frontend convenience
+      isAccessible: group.status !== 'SUSPENDED' && !group.isDeleted
+    }));
+    
+    return res.json({
+      success: true,
+      message: result.message,
+      groups: groupsWithStatus
+    });
 
-             }catch(e:any){
-                return res.status(500).json({
-                    success:false,
-                    message:"Internal server error"
-                });
-
-             }
-
-      }
+  } catch(e: any){
+    console.error("Error in getUserGroup:", e);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
         
 // Get group members with rotation info
 static async getGroupMembersWithRotation(req: UserAuthRequest, res: Response) {

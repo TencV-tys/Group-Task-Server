@@ -339,7 +339,9 @@ static async getGroupWithLimits(groupId: string, userId: string) {
   }
 }
 
-  static async getUserGroups(userId: string) {
+// services/group.services.ts - FIXED getUserGroups
+
+static async getUserGroups(userId: string) {
     try {
         const membership = await prisma.groupMember.findMany({
             where: { userId },
@@ -354,6 +356,16 @@ static async getGroupWithLimits(groupId: string, userId: string) {
                         createdAt: true,
                         currentRotationWeek: true,
                         lastRotationUpdate: true,
+                        maxMembers: true,
+                        // ✅ ADD THESE FIELDS
+                        status: true,           // For suspension status
+                        isDeleted: true,        // For deletion status
+                        statusReason: true,     // For suspension reason
+                        statusChangedAt: true,  // When status changed
+                        statusChangedBy: true,  // Who changed it
+                        deletedAt: true,        // When deleted
+                        deletedByName: true,    // Who deleted
+                        deleteReason: true,     // Why deleted
                         creator: {
                             select: {
                                 id: true,
@@ -367,15 +379,25 @@ static async getGroupWithLimits(groupId: string, userId: string) {
                 joinedAt: 'desc'
             }
         });
-
+ 
         const groups = membership.map(membership => ({
             ...membership.group,
             userRole: membership.groupRole,
             rotationOrder: membership.rotationOrder,
             isActive: membership.isActive,
-            inRotation: membership.inRotation, // ← ADD THIS
-            joinedAt: membership.joinedAt
+            inRotation: membership.inRotation,
+            joinedAt: membership.joinedAt,
+            // ✅ ENSURE these are included (in case group is null)
+            status: membership.group.status || 'ACTIVE',
+            isDeleted: membership.group.isDeleted || false,
+            statusReason: membership.group.statusReason || null
         }));
+
+         console.log('📊 getUserGroups returning:', groups.map(g => ({
+            name: g.name,
+            status: g.status,
+            isDeleted: g.isDeleted
+        })));
 
         return {
             success: true,

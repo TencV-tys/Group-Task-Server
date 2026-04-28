@@ -45,6 +45,9 @@ export class HomeServices {
               avatarUrl: true,
               currentRotationWeek: true,
               lastRotationUpdate: true,
+                 status: true,          // ← Add this
+        isDeleted: true,       // ← Add this
+        statusReason: true,  
               _count: {
                 select: {
                   tasks: {
@@ -355,6 +358,9 @@ export class HomeServices {
           inRotation: member.inRotation,
           currentRotationWeek: group.currentRotationWeek,
           lastRotationUpdate: group.lastRotationUpdate,
+           status: group.status,        // ← This is missing!
+    isDeleted: group.isDeleted,  // ← This is missing!
+    statusReason: group.statusReason,
           stats: {
             totalTasks: group._count.tasks,
             totalMembers: group._count.members,
@@ -637,7 +643,7 @@ export class HomeServices {
       'FEEDBACK_RESPONSE': 'message-reply',
       'NEGLECT_DETECTED': 'alert-circle'
     };
-    return icons[type] || 'bell';
+    return icons[type] || 'bell'; 
   }
 
   private static getTimeAgo(date: Date): string {
