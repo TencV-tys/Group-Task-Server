@@ -756,6 +756,7 @@ static async getMemberDashboard(groupId: string, userId: string) {
     const notStartedTasks = assignmentsWithTasks.filter(a => 
       !a.completed && 
       !a.expired && 
+       !a.partiallyExpired &&
       !a.photoUrl && 
       a.verified !== true && 
       a.verified !== false
