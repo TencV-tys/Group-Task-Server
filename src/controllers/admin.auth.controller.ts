@@ -1,21 +1,44 @@
+// controllers/admin.auth.controller.ts - WITH RATE LIMITING
 
 import { AdminAuthServices } from "../services/admin.auth.services";
-import { Request,Response } from "express";
+import { Request, Response } from "express";
 import { AdminJwtUtils } from "../utils/admin.jwtutils";
 import { AdminRefreshToken } from "../services/admin.create.refreshToken.services";
 import { AdminRefreshServices } from "../services/admin.refresh.services";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
 import prisma from "../prisma";
 import { AdminLogoutServices } from '../services/admin.logout.services';
-export class AdminAuthController{
 
-    static async login(req: Request, res: Response) {
+export class AdminAuthController {
+
+  static async login(req: Request, res: Response) {
     try {
       const { email, password } = req.body;
 
       const result = await AdminAuthServices.login(email, password);
 
+      // Handle rate limiting responses
       if (!result.success || !result.admin) {
+        // Check if this is a rate limit response
+        if (result.isLocked) {
+          return res.status(429).json({
+            success: false,
+            message: result.message,
+            remainingAttempts: 0,
+            isLocked: true,
+            lockoutMinutes: result.lockoutMinutes
+          });
+        }
+        
+        if (result.remainingAttempts !== undefined) {
+          return res.status(401).json({
+            success: false,
+            message: result.message,
+            remainingAttempts: result.remainingAttempts,
+            isLocked: false
+          });
+        }
+        
         return res.status(401).json({
           success: false,
           message: result.message
@@ -41,11 +64,10 @@ export class AdminAuthController{
         maxAge: 30 * 24 * 60 * 60 * 1000
       });
 
-      // ✅ FIXED: Include token in the response body for React Native
       return res.json({
         success: true,
         message: "Admin Login Successfully",
-        token: result.token,  // ← ADD THIS!
+        token: result.token,
         admin: {
           id: admin.id,
           fullName: admin.fullName,
@@ -64,142 +86,133 @@ export class AdminAuthController{
     }
   }
 
-   static async refreshToken(req:Request,res:Response){
-    try{
-       const adminRefreshToken = req.cookies.adminRefreshToken;
+  static async refreshToken(req: Request, res: Response) {
+    try {
+      const adminRefreshToken = req.cookies.adminRefreshToken;
 
-        if(!adminRefreshToken){
-                return res.status(400).json({ 
-                    success:false,
-                    message:"Refresh token required"
-                })
-            }
-
-            const result = await AdminRefreshServices.refreshAdminToken(adminRefreshToken);
-
-            if(!result.success){
-              res.clearCookie('adminToken');
-              res.clearCookie('adminRefreshToken');
-
-                  return res.status(401).json({
-                        success:false,
-                        message:result.message
-                    });
-            }
-
-            res.cookie('adminToken',result.newAccessToken,{
-               httpOnly:true,
-               secure:process.env.NODE_ENV === "production",
-               sameSite:"strict",
-               maxAge: 15 * 60 * 1000
-            });
-            
-            return res.json({
-              success:true,
-              message:"Token refreshed successfully",
-              accessToken: result.newAccessToken,
-              admin: result.admin
-            });
-
-    }catch(e:any){
-                 res.clearCookie('adminToken');
-            res.clearCookie('adminRefreshToken');
-            
-            return res.status(500).json({
-                success:false,
-                message:"Token refresh failed"
-            })
-
-    }
-
-   }
-
-   static async logout(req:Request,res:Response){
-         try{
-            const refreshToken = req.cookies.adminRefreshToken;
-            
-            let adminId: string | undefined;
-
-            const accessToken = req.cookies.adminToken;
-
-            if(accessToken){
-              try{
-                  const decoded = AdminJwtUtils.verifyToken(accessToken);
-                  adminId = decoded.adminId;
-              }catch(e:any){
-                      console.error("Access token expired during logout");
-              }
-            }
-           
-            const result = await AdminLogoutServices.adminLogout(refreshToken,adminId);
-
-            res.clearCookie('adminToken');
-            res.clearCookie('adminRefreshToken');
-
-            return res.json({
-              success:true,
-              message:"Admin logged out successfully"
-            });
-
-
-
-         }catch(e:any){
-             console.error("Admin logout error:", e);
-            
-            // Still clear cookies
-            res.clearCookie('adminToken');
-            res.clearCookie('adminRefreshToken');
-            
-            return res.status(500).json({
-                success: false,
-                message: "Logout failed"
-            });
-         }
-
-   }
-
-static async getMe(req: AdminAuthRequest, res: Response) {
-  try {
-    const adminId = req.admin?.id;
-    
-    if (!adminId) {
-      return res.status(401).json({
-        success: false,
-        message: "Not authenticated"
-      });
-    }
-
-    const admin = await prisma.systemAdmin.findUnique({
-      where: { id: adminId },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        role: true,
-        isActive: true,
-        lastLoginAt: true
+      if (!adminRefreshToken) {
+        return res.status(400).json({
+          success: false,
+          message: "Refresh token required"
+        });
       }
-    });
 
-    if (!admin) {
-      return res.status(404).json({
+      const result = await AdminRefreshServices.refreshAdminToken(adminRefreshToken);
+
+      if (!result.success) {
+        res.clearCookie('adminToken');
+        res.clearCookie('adminRefreshToken');
+
+        return res.status(401).json({
+          success: false,
+          message: result.message
+        });
+      }
+
+      res.cookie('adminToken', result.newAccessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 15 * 60 * 1000
+      });
+
+      return res.json({
+        success: true,
+        message: "Token refreshed successfully",
+        accessToken: result.newAccessToken,
+        admin: result.admin
+      });
+
+    } catch (e: any) {
+      res.clearCookie('adminToken');
+      res.clearCookie('adminRefreshToken');
+
+      return res.status(500).json({
         success: false,
-        message: "Admin not found"
+        message: "Token refresh failed"
       });
     }
-
-    return res.json({
-      success: true,
-      admin
-    });
-  } catch (error: any) {
-    return res.status(500).json({
-      success: false,
-      message: error.message
-    });
   }
-}
 
+  static async logout(req: Request, res: Response) {
+    try {
+      const refreshToken = req.cookies.adminRefreshToken;
 
+      let adminId: string | undefined;
 
+      const accessToken = req.cookies.adminToken;
+
+      if (accessToken) {
+        try {
+          const decoded = AdminJwtUtils.verifyToken(accessToken);
+          adminId = decoded.adminId;
+        } catch (e: any) {
+          console.error("Access token expired during logout");
+        }
+      }
+
+      const result = await AdminLogoutServices.adminLogout(refreshToken, adminId);
+
+      res.clearCookie('adminToken');
+      res.clearCookie('adminRefreshToken');
+
+      return res.json({
+        success: true,
+        message: "Admin logged out successfully"
+      });
+
+    } catch (e: any) {
+      console.error("Admin logout error:", e);
+
+      res.clearCookie('adminToken');
+      res.clearCookie('adminRefreshToken');
+
+      return res.status(500).json({
+        success: false,
+        message: "Logout failed"
+      });
+    }
+  }
+
+  static async getMe(req: AdminAuthRequest, res: Response) {
+    try {
+      const adminId = req.admin?.id;
+
+      if (!adminId) {
+        return res.status(401).json({
+          success: false,
+          message: "Not authenticated"
+        });
+      }
+
+      const admin = await prisma.systemAdmin.findUnique({
+        where: { id: adminId },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          role: true,
+          isActive: true,
+          lastLoginAt: true
+        }
+      });
+
+      if (!admin) {
+        return res.status(404).json({
+          success: false,
+          message: "Admin not found"
+        });
+      }
+
+      return res.json({
+        success: true,
+        admin
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
 }
