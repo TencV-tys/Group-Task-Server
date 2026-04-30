@@ -15,8 +15,8 @@
     // "types": ["node"],
     // and npm install -D @types/node
 
-    // Other Outputs
-    "sourceMap": true,
+    // Other Outputs 
+    "sourceMap": true, 
     "declaration": true,
     "declarationMap": true,
 
@@ -35,6 +35,6 @@
     "strict": true,
     "jsx": "react-jsx",
     "skipLibCheck": true,
-     
+    "noImplicitAny": false
   }
 }

@@ -1,4 +1,4 @@
-// src/config/cloudinary.config.ts
+// src/config/cloudinary.config.ts - FIXED VERSION
 import { v2 as cloudinary } from 'cloudinary';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import multer from 'multer';
@@ -19,34 +19,34 @@ console.log('📸 Cloudinary configured:', {
   api_secret: process.env.CLOUDINARY_API_SECRET ? '✅' : '❌',
 });
 
-// Storage for user avatars
-const userAvatarStorage = new CloudinaryStorage({
+// Storage for user avatars - FIXED with type assertion
+const userAvatarStorage = new (CloudinaryStorage as any)({
   cloudinary: cloudinary,
   params: {
     folder: 'user-avatars',
     allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'webp'],
     transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }],
-  } as any,
+  },
 });
 
-// Storage for group avatars
-const groupAvatarStorage = new CloudinaryStorage({
+// Storage for group avatars - FIXED with type assertion
+const groupAvatarStorage = new (CloudinaryStorage as any)({
   cloudinary: cloudinary,
   params: {
     folder: 'group-avatars',
     allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'webp'],
     transformation: [{ width: 400, height: 400, crop: 'fill' }],
-  } as any,
+  },
 });
 
-// Storage for task photos
-const taskPhotoStorage = new CloudinaryStorage({
+// Storage for task photos - FIXED with type assertion
+const taskPhotoStorage = new (CloudinaryStorage as any)({
   cloudinary: cloudinary,
   params: {
     folder: 'task-photos',
     allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
     transformation: [{ width: 1200, height: 1200, crop: 'limit' }],
-  } as any,
+  },
 });
 
 // Multer instances
@@ -65,7 +65,7 @@ export const deleteFromCloudinary = async (publicId: string) => {
   }
 };
 
-// src/config/cloudinary.config.ts - FIXED
+// Extract public ID from Cloudinary URL
 export const extractPublicId = (url: string): string | null => {
   if (!url) return null;
   try {

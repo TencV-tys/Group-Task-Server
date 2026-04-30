@@ -14,7 +14,10 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "seed": "ts-node prisma/seed.ts",
     "seed:admin": "ts-node prisma/seed.ts --admin-only",
-    "seed:mock:js": "node prisma/seedMockUser.js"
+    "seed:mock:js": "node prisma/seedMockUser.js",
+    "docker:build": "docker build -t group-task-server .",
+    "docker:up": "docker-compose up",
+    "docker:down": "docker-compose down"
   },
   "keywords": [],
   "author": "",
@@ -24,7 +27,7 @@
     "@types/nodemailer": "^7.0.10",
     "@types/socket.io": "^3.0.1",
     "bcryptjs": "^3.0.3",
-    "cloudinary": "^1.41.3",
+    "cloudinary": "1.41.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "cron": "^4.4.0",
