@@ -235,7 +235,7 @@ model Task {
   timeSlots TimeSlot[] @relation("TaskTimeSlots")
 
   // For quick access, store primary time slot
-  primaryTimeSlotId String? @unique
+  // primaryTimeSlotId String? @unique
 
   // Keep for backward compatibility
   scheduledTime String? // Legacy single time (e.g., "09:00", "14:30", "18:45")
@@ -268,7 +268,7 @@ model Task {
   group           Group        @relation("GroupTasks", fields: [groupId], references: [id], onDelete: Cascade)
   creator         User         @relation("TaskCreator", fields: [createdById], references: [id])
   assignments     Assignment[] @relation("TaskAssignments")
-  primaryTimeSlot TimeSlot?    @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id])
+  // primaryTimeSlot TimeSlot?    @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -295,7 +295,7 @@ model TimeSlot {
 
   // Relationships
   task           Task         @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
-  primaryForTask Task?        @relation("TaskPrimaryTimeSlot")
+  // primaryForTask Task?        @relation("TaskPrimaryTimeSlot")
   assignments    Assignment[] @relation("TimeSlotAssignments")
 
   createdAt DateTime @default(now())
