@@ -567,7 +567,7 @@ model AdminAuditLog {
 model RefreshToken {
   id        String    @id @default(uuid())
   userId    String
-  token     String    @unique @db.VarChar(1000)
+  token     String    @unique @db.VarChar(191)
   type      TokenType @default(REFRESH)
   expiresAt DateTime
   revoked   Boolean   @default(false)
@@ -586,7 +586,7 @@ model RefreshToken {
 model AdminRefreshToken {
   id        String    @id @default(uuid())
   adminId   String
-  token     String    @unique @db.VarChar(1000)
+  token     String    @unique @db.VarChar(191)
   type      TokenType @default(REFRESH)
   expiresAt DateTime
   revoked   Boolean   @default(false)
@@ -606,7 +606,7 @@ model AdminRefreshToken {
 model UserDevice {
   id            String   @id @default(uuid())
   userId        String
-  expoPushToken String   @unique @db.VarChar(255)
+  expoPushToken String   @unique @db.VarChar(191)
   deviceType    String   // 'ios', 'android'
   isActive      Boolean  @default(true)
   lastUsedAt    DateTime @default(now())
