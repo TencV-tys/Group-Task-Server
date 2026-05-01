@@ -210,148 +210,138 @@ export class UserPasswordResetService {
     }
   }
 
-  // Reset password
   static async resetPassword(token: string, email: string, newPassword: string, confirmPassword: string) {
-    try {
-      if (!token || !email || !newPassword || !confirmPassword) {
-        return {
-          success: false,
-          message: "All fields are required"
-        };
-      }
+  console.log("🔐 ========== RESET PASSWORD START ==========");
+  console.log("📧 Email:", email);
+  console.log("🔑 Token (first 20 chars):", token?.substring(0, 20));
+  console.log("🔐 New password length:", newPassword?.length);
+  
+  try {
+    if (!token || !email || !newPassword || !confirmPassword) {
+      console.log("❌ Missing fields");
+      return {
+        success: false,
+        message: "All fields are required"
+      };
+    }
 
-      if (newPassword !== confirmPassword) {
-        return {
-          success: false,
-          message: "Passwords do not match"
-        };
-      }
+    if (newPassword !== confirmPassword) {
+      console.log("❌ Passwords don't match");
+      return {
+        success: false,
+        message: "Passwords do not match"
+      };
+    }
 
-      if (newPassword.length < 8) {
-        return {
-          success: false,
-          message: "Password must be at least 8 characters"
-        };
+    // Check token in database
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+    
+    console.log("🔐 Looking for user with hashed token...");
+    
+    const user = await prisma.user.findFirst({
+      where: {
+        email,
+        resetPasswordToken: hashedToken,
+        resetPasswordExpires: {
+          gt: new Date()
+        }
       }
+    });
 
-      if (newPassword.length > 128) {
+    if (!user) {
+      console.log("❌ User NOT found - checking why...");
+      
+      // Check if user exists at all
+      const existingUser = await prisma.user.findUnique({
+        where: { email }
+      });
+      
+      if (!existingUser) {
+        console.log("❌ User with this email does not exist");
         return {
           success: false,
-          message: "Password is too long (max 128 characters)"
+          message: "No account found with this email"
         };
       }
-
-      const hasUpperCase = /[A-Z]/.test(newPassword);
-      const hasLowerCase = /[a-z]/.test(newPassword);
-      const hasNumber = /[0-9]/.test(newPassword);
-      const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(newPassword);
-
-      if (!hasUpperCase) {
-        return {
-          success: false,
-          message: "Password must contain at least one uppercase letter (A-Z)"
-        };
-      }
-      if (!hasLowerCase) {
-        return {
-          success: false,
-          message: "Password must contain at least one lowercase letter (a-z)"
-        };
-      }
-      if (!hasNumber) {
-        return {
-          success: false,
-          message: "Password must contain at least one number (0-9)"
-        };
-      }
-      if (!hasSpecial) {
-        return {
-          success: false,
-          message: "Password must contain at least one special character (!@#$%^&* etc.)"
-        };
-      }
-
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(token)
-        .digest('hex');
-
-      const user = await prisma.user.findFirst({
+      
+      // Check if token exists but expired
+      const expiredUser = await prisma.user.findFirst({
         where: {
           email,
           resetPasswordToken: hashedToken,
           resetPasswordExpires: {
-            gt: new Date()
+            lt: new Date()
           }
         }
       });
-
-      if (!user) {
-        const expiredUser = await prisma.user.findFirst({
-          where: {
-            email,
-            resetPasswordToken: hashedToken,
-            resetPasswordExpires: {
-              lt: new Date()
-            }
-          }
-        });
-        
-        if (expiredUser) {
-          return {
-            success: false,
-            message: "Reset link has expired. Please request a new one."
-          };
-        }
-        
+      
+      if (expiredUser) {
+        console.log("❌ Token EXPIRED at:", expiredUser.resetPasswordExpires);
         return {
           success: false,
-          message: "Invalid or expired reset token"
+          message: "Reset link has expired. Please request a new one."
         };
       }
-
-      const hashedNewPassword = await hashedPassword(newPassword, 12);
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          passwordHash: hashedNewPassword,
-          resetPasswordToken: null,
-          resetPasswordExpires: null
+      
+      // Check if token is completely wrong
+      const wrongTokenUser = await prisma.user.findFirst({
+        where: {
+          email,
+          resetPasswordToken: { not: null }
         }
       });
-
-      // Send confirmation email via Resend
-      const { error } = await resend.emails.send({
-        from: 'onboarding@resend.dev',
-        to: email,
-        subject: "Password Reset Successful",
-        html: `
-          <div style="font-family: Arial, sans-serif;">
-            <h2>Password Reset Successful</h2>
-            <p>Hello ${user.fullName},</p>
-            <p>Your password has been successfully reset.</p>
-            <p>If you didn't make this change, please contact support immediately.</p>
-            <p>You can now log in to GroupTask with your new password.</p>
-          </div>
-        `,
-      });
-
-      if (error) {
-        console.error("Confirmation email error:", error);
+      
+      if (wrongTokenUser) {
+        console.log("❌ Token mismatch - stored token hash:", wrongTokenUser.resetPasswordToken);
+        console.log("❌ Computed hash:", hashedToken);
+        return {
+          success: false,
+          message: "Invalid reset token. Please request a new link."
+        };
       }
-
-      return {
-        success: true,
-        message: "Password reset successful"
-      };
-
-    } catch (error: any) {
-      console.error("Reset password error:", error);
+      
+      console.log("❌ No token found for this user at all");
       return {
         success: false,
-        message: "Failed to reset password"
+        message: "Invalid or expired reset token"
       };
     }
+
+    console.log("✅ User found with valid token!");
+    console.log("✅ Token expires at:", user.resetPasswordExpires);
+
+    // Hash new password
+    const hashedNewPassword = await hashedPassword(newPassword, 12);
+    console.log("✅ New password hashed");
+
+    // Update password and clear reset token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: hashedNewPassword,
+        resetPasswordToken: null,
+        resetPasswordExpires: null
+      }
+    });
+    console.log("✅ Password updated, token cleared");
+
+    console.log("🎉 Password reset successful!");
+    
+    return {
+      success: true,
+      message: "Password reset successful"
+    };
+
+  } catch (error: any) {
+    console.error("❌ Reset password error:", error);
+    return {
+      success: false,
+      message: "Failed to reset password: " + error.message
+    };
   }
+}
+
 }
