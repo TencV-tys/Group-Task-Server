@@ -1,4 +1,4 @@
-# Dockerfile - Minimal Vulnerabilities
+# Dockerfile - Fixed with public folder
 FROM node:20-alpine AS builder
 
 # Update Alpine to fix known vulns
@@ -18,6 +18,9 @@ RUN npm clean-install && \
 
 RUN npx prisma generate
 COPY . .
+# ✅ ADD THIS LINE - Copy public folder explicitly
+COPY --chown=nodejs:nodejs public ./public
+
 RUN npm run build
 
 FROM node:20-alpine
@@ -35,6 +38,8 @@ RUN npm clean-install --only=production && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma/
+# ✅ ADD THIS LINE - Copy public folder to final image
+COPY --from=builder /app/public ./public
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
