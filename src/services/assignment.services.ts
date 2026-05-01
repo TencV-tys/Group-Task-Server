@@ -20,7 +20,7 @@ private static getUTCToday(): { todayUTC: Date; tomorrowUTC: Date } {
   return { todayUTC, tomorrowUTC };
 }
 
-// services/assignment.services.ts - COMPLETELY FIXED completeAssignment
+// services/assignment.services.ts - COMPLETE FIX for multi-slot late submissions
 
 static async completeAssignment(
   assignmentId: string,
@@ -35,11 +35,6 @@ static async completeAssignment(
   let admins: any[] = []; 
   try {
     console.log('🔵🔵🔵 [COMPLETE ASSIGNMENT] START 🔵🔵🔵');
-    console.log(`📝 Assignment ID: ${assignmentId}`);
-    console.log(`👤 User ID: ${userId}`);
-    console.log(`📸 Photo URL: ${data.photoUrl}`);
-    console.log(`📝 Notes: ${data.notes}`);
-    console.log(`⏰ TimeSlot ID: ${data.timeSlotId}`);
     
     const assignment = await prisma.assignment.findUnique({
       where: { id: assignmentId },
@@ -60,59 +55,33 @@ static async completeAssignment(
     });
 
     if (!assignment) {
-      console.log('❌ Assignment not found');
       return { success: false, message: "Assignment not found" };
     }
 
-    // ✅ Check if assignment is already expired/neglected
     if (assignment.expired === true) {
-      console.log('❌ Assignment already expired/neglected');
       return { 
         success: false, 
         message: "This assignment has already expired and cannot be completed." 
       };
     }
 
-    console.log(`✅ Assignment found - Task: ${assignment.task?.title}`);
-    console.log(`✅ Assignment completed status: ${assignment.completed}`);
-    console.log(`✅ Assignment points: ${assignment.points}`);
-    console.log(`✅ Assignment dueDate: ${assignment.dueDate}`);
-    console.log(`✅ Assignment timeSlot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
-
-    if (!assignment.task) {
-      console.log('❌ Task is null/deleted');
-      return { 
-        success: false, 
-        message: "This task has been deleted and cannot be completed" 
-      };
-    }
-
     if (assignment.userId !== userId) {
-      console.log(`❌ User mismatch - Assignment user: ${assignment.userId}, Request user: ${userId}`);
       return { success: false, message: "You can only complete your own assignments" };
     }
 
     if (assignment.completed) {
-      console.log('❌ Assignment already completed');
       return { success: false, message: "Assignment already completed" };
     }
 
     const now = new Date();
     const dueDate = new Date(assignment.dueDate);
     
-    console.log(`⏰ Current time: ${now.toISOString()}`);
-    console.log(`⏰ Due date: ${dueDate.toISOString()}`);
-    
-    // ✅ FIXED: Use UTC comparison instead of toDateString()
     const isSameDayUTC = 
       now.getUTCFullYear() === dueDate.getUTCFullYear() &&
       now.getUTCMonth() === dueDate.getUTCMonth() &&
       now.getUTCDate() === dueDate.getUTCDate();
     
-    console.log(`📅 Same day (UTC)? ${isSameDayUTC}`);
-    
     if (!isSameDayUTC) {
-      console.log(`❌ Wrong day - Due UTC: ${dueDate.toISOString()}, Today UTC: ${now.toISOString()}`);
       return { 
         success: false, 
         message: `Cannot complete assignment on this date. It's due on ${dueDate.toISOString().split('T')[0]}`
@@ -123,48 +92,36 @@ static async completeAssignment(
     const completedSlotIds: string[] = assignmentAny.completedTimeSlotIds || [];
     const missedSlotIds: string[] = assignmentAny.missedTimeSlotIds || [];
     
-    console.log(`📊 Existing completed slots: ${completedSlotIds.length}`);
-    console.log(`📊 Existing missed slots: ${missedSlotIds.length}`);
-    
     // Determine which time slot is being completed
     let targetTimeSlot = null;
     let slotPoints = 0;
     let isMultiSlotTask = assignment.task.timeSlots && assignment.task.timeSlots.length > 1;
     
-    console.log(`🔧 Is multi-slot task? ${isMultiSlotTask} - Total slots: ${assignment.task.timeSlots?.length || 0}`);
-    
     if (isMultiSlotTask) {
       if (!data.timeSlotId) {
-        console.log('❌ No timeSlotId provided for multi-slot task');
         return { 
           success: false, 
           message: "Please select which time slot you are completing" 
         };
       }
       
-      console.log(`🎯 Looking for time slot: ${data.timeSlotId}`);
       const foundSlot = assignment.task.timeSlots.find((slot: any) => slot.id === data.timeSlotId);
       
       if (!foundSlot) {
-        console.log(`❌ Time slot not found: ${data.timeSlotId}`);
         return { success: false, message: "Invalid time slot specified" };
       }
       
       targetTimeSlot = foundSlot;
-      console.log(`✅ Found time slot: ${targetTimeSlot.startTime} - ${targetTimeSlot.endTime}, points: ${targetTimeSlot.points || assignment.points}`);
       
       // Check if this slot was already completed
       if (completedSlotIds.includes(targetTimeSlot.id)) {
-        console.log(`❌ Slot already completed: ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}`);
         return { 
           success: false, 
           message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was already completed` 
         };
       }
       
-      // ✅ Check if this slot was already missed
       if (missedSlotIds.includes(targetTimeSlot.id)) {
-        console.log(`❌ Slot already missed: ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}`);
         return { 
           success: false, 
           message: `Time slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} was already missed and cannot be completed` 
@@ -175,12 +132,11 @@ static async completeAssignment(
     } else {
       targetTimeSlot = assignment.timeSlot;
       slotPoints = assignment.points;
-      console.log(`📌 Single slot task - using existing time slot: ${targetTimeSlot?.startTime} - ${targetTimeSlot?.endTime}`);
     }
 
-    // Validate submission time
-    let finalPoints = slotPoints;
-    let isLate = false;
+    // ✅ Validate submission time for THIS SPECIFIC slot
+    let finalPointsForThisSlot = slotPoints;
+    let isLateForThisSlot = false;
     let penaltyAmount = 0;
 
     if (targetTimeSlot) {
@@ -196,8 +152,6 @@ static async completeAssignment(
         allowed: timeValidation.allowed,
         reason: timeValidation.reason,
         willBePenalized: timeValidation.willBePenalized,
-        timeLeft: timeValidation.timeLeft,
-        opensIn: timeValidation.opensIn,
         submissionStatus: timeValidation.submissionStatus
       });
       
@@ -208,18 +162,6 @@ static async completeAssignment(
           errorMessage = `Submission opens at ${targetTimeSlot.endTime}. Please wait until then.`;
         } else if (timeValidation.reason === 'Submission window closed') {
           errorMessage = `Submission window for ${targetTimeSlot.startTime}-${targetTimeSlot.endTime} has closed.`;
-          
-          const isDueDate = 
-            now.getUTCFullYear() === dueDate.getUTCFullYear() &&
-            now.getUTCMonth() === dueDate.getUTCMonth() &&
-            now.getUTCDate() === dueDate.getUTCDate();
-          
-          if (isDueDate) {
-            errorMessage = `Submission window closed. You missed the submission window for this task.`;
-          } else {
-            errorMessage = `Submission window closed. You can only submit on the due date: ${dueDate.toISOString().split('T')[0]}.`;
-          }
-          
         } else if (timeValidation.reason === 'Not due date') {
           errorMessage = `This assignment is due on ${dueDate.toISOString().split('T')[0]}. Please complete it on that day.`;
         }
@@ -231,21 +173,19 @@ static async completeAssignment(
         };
       }
       
-      // Check if late based on the time validation result
-      isLate = timeValidation.willBePenalized || false;
+      // ✅ This is for THIS SPECIFIC slot only
+      isLateForThisSlot = timeValidation.willBePenalized || false;
       
-      if (isLate) {
+      if (isLateForThisSlot) {
         penaltyAmount = Math.floor(slotPoints * 0.5);
-        finalPoints = slotPoints - penaltyAmount;
-        console.log(`⚠️ LATE SUBMISSION! Points reduced from ${slotPoints} to ${finalPoints}`);
+        finalPointsForThisSlot = slotPoints - penaltyAmount;
+        console.log(`⚠️ LATE SUBMISSION for slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}! Points reduced from ${slotPoints} to ${finalPointsForThisSlot}`);
       } else {
-        console.log(`✅ ON TIME submission! Points: ${slotPoints}`);
+        console.log(`✅ ON TIME submission for slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}! Points: ${slotPoints}`);
       }
-      
-      console.log(`Assignment ${assignmentId} - Slot ${targetTimeSlot.startTime}-${targetTimeSlot.endTime}: isLate=${isLate}, finalPoints=${finalPoints}`);
     }
  
-    // Update completed time slots 
+    // ✅ Update completed time slots - apply penalty ONLY to this slot
     let updatedCompletedSlots = [...completedSlotIds];
     let updatedPoints = assignment.points;
     let allSlotsCompleted = false; 
@@ -254,41 +194,41 @@ static async completeAssignment(
       updatedCompletedSlots = [...completedSlotIds, targetTimeSlot.id];
       console.log(`📊 Updated completed slots: ${updatedCompletedSlots.length}/${assignment.task.timeSlots.length}`);
       
+      // ✅ Calculate total points - penalty applied ONLY to this slot if late
       let totalCompletedPoints = 0;
       for (const slot of assignment.task.timeSlots) {
         if (updatedCompletedSlots.includes(slot.id)) { 
           let slotPointsValue = slot.points || assignment.points;
           
-          // ✅ FIXED: Apply late penalty to ANY slot submitted during late window
-          // The grace period is for THIS specific time slot
-          if (slot.id === targetTimeSlot.id && isLate) {
-            slotPointsValue = Math.floor(slotPointsValue * 0.5);
-            console.log(`💰 Late penalty applied to slot ${slot.startTime}-${slot.endTime}: ${slot.points || assignment.points} → ${slotPointsValue} (submitted during late window)`);
+          // ✅ Apply penalty ONLY to the slot being submitted NOW, and ONLY if late
+          if (slot.id === targetTimeSlot.id && isLateForThisSlot) {
+            slotPointsValue = finalPointsForThisSlot;
+            console.log(`💰 Late penalty applied to slot ${slot.startTime}-${slot.endTime}: ${slot.points || assignment.points} → ${slotPointsValue}`);
           }
           
           totalCompletedPoints += slotPointsValue;
         }
       }
       updatedPoints = totalCompletedPoints;
-      console.log(`💰 Updated total points: ${updatedPoints}`);
+      console.log(`💰 Updated total points: ${updatedPoints} (${updatedCompletedSlots.length}/${assignment.task.timeSlots.length} slots completed)`);
       
       allSlotsCompleted = updatedCompletedSlots.length === assignment.task.timeSlots.length;
       console.log(`🏁 All slots completed? ${allSlotsCompleted}`);
     } else {
       allSlotsCompleted = true; 
-      updatedPoints = finalPoints;
+      updatedPoints = finalPointsForThisSlot;
       console.log(`🏁 Single slot task - marking as completed with points: ${updatedPoints}`);
     }
 
-    // ✅ For multi-slot tasks, mark as ready for verification after EACH slot
+    // ✅ For multi-slot tasks, mark for verification after EACH slot submission
     const shouldMarkForVerification = isMultiSlotTask ? true : allSlotsCompleted;
 
-    // Update assignment
+    // ✅ Update assignment
     const updateData: any = {
       completed: allSlotsCompleted,
       completedAt: allSlotsCompleted ? new Date() : undefined,
       photoUrl: data.photoUrl || undefined,
-      notes: data.notes || (isLate ? `[LATE: Submitted after ${targetTimeSlot?.endTime}]` : undefined),
+      notes: data.notes || (isLateForThisSlot ? `[LATE: Submitted after ${targetTimeSlot?.endTime}]` : undefined),
       points: updatedPoints 
     };
     
@@ -329,11 +269,6 @@ static async completeAssignment(
         timeSlot: true
       }
     });
-    
-    console.log(`✅ Assignment updated! New completed: ${updatedAssignment.completed}`);
-    console.log(`✅ New verified: ${updatedAssignment.verified}`);
-    console.log(`✅ New points: ${updatedAssignment.points}`);
-    console.log(`✅ Photo URL saved: ${updatedAssignment.photoUrl}`);
 
     // ✅ Get admins to notify
     if (assignment.task?.groupId) {
@@ -355,13 +290,13 @@ static async completeAssignment(
       });
     }
 
-    // ✅ Send notification to admins for verification
+    // ✅ Send notification to admins
     for (const admin of admins) {
       await UserNotificationService.createNotification({
         userId: admin.userId,
         type: "SUBMISSION_PENDING",
         title: "📸 New Submission Ready for Review",
-        message: `${assignment.user?.fullName || 'A member'} submitted "${assignment.task!.title}" (${targetTimeSlot?.startTime}-${targetTimeSlot?.endTime}) for verification. ${isLate ? '⚠️ Late submission - points reduced.' : '✅ On-time submission.'}`,
+        message: `${assignment.user?.fullName || 'A member'} submitted "${assignment.task!.title}" (${targetTimeSlot?.startTime}-${targetTimeSlot?.endTime}) for verification. ${isLateForThisSlot ? '⚠️ Late submission - points reduced.' : '✅ On-time submission.'}`,
         data: {
           assignmentId: assignment.id,
           taskId: assignment.taskId,
@@ -375,9 +310,9 @@ static async completeAssignment(
             endTime: targetTimeSlot.endTime,
             label: targetTimeSlot.label
           } : null,
-          isLate,
+          isLate: isLateForThisSlot,
           originalPoints: slotPoints,
-          finalPoints: isMultiSlotTask ? (isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
+          finalPoints: finalPointsForThisSlot,
           slotsCompleted: updatedCompletedSlots.length,
           totalSlots: assignment.task.timeSlots.length,
           allSlotsCompleted
@@ -387,31 +322,30 @@ static async completeAssignment(
 
     let successMessage = "";
     if (allSlotsCompleted) {
-      successMessage = isLate 
-        ? `All time slots completed late. Points reduced from ${slotPoints} to ${finalPoints}. Waiting for admin verification.`
+      successMessage = isLateForThisSlot 
+        ? `All time slots completed! Last slot submitted late. Final points: ${updatedPoints}. Waiting for admin verification.`
         : "All time slots completed successfully! Waiting for admin verification.";
     } else {
-      successMessage = `Completed ${targetTimeSlot?.startTime}-${targetTimeSlot?.endTime}. ${updatedCompletedSlots.length}/${assignment.task.timeSlots.length} slots done. ${updatedCompletedSlots.length === assignment.task.timeSlots.length - 1 ? 'One more slot to go!' : ''}`;
+      successMessage = `Completed ${targetTimeSlot?.startTime}-${targetTimeSlot?.endTime} ${isLateForThisSlot ? '(late)' : '(on time)'}. ${updatedCompletedSlots.length}/${assignment.task.timeSlots.length} slots done. ${updatedCompletedSlots.length === assignment.task.timeSlots.length - 1 ? 'One more slot to go!' : ''}`;
     }
     
     console.log(`🎉 SUCCESS! ${successMessage}`);
-    console.log(`🔵🔵🔵 [COMPLETE ASSIGNMENT] END 🔵🔵🔵`);
 
     return {
       success: true,
       message: successMessage,
       assignment: updatedAssignment,
-      isLate,
+      isLate: isLateForThisSlot,
       penaltyAmount,
       originalPoints: slotPoints,
-      finalPoints: isMultiSlotTask ? (isLate ? Math.floor(slotPoints * 0.5) : slotPoints) : finalPoints,
+      finalPoints: finalPointsForThisSlot,
       slotsCompleted: updatedCompletedSlots.length,
       totalSlots: assignment.task.timeSlots.length,
       allSlotsCompleted,
       notifications: {
         notifiedAdmins: admins.length,
         showSuccessNotification: true
-      } 
+      }
     }; 
 
   } catch (error: any) {
@@ -420,6 +354,7 @@ static async completeAssignment(
     return { success: false, message: error.message || "Error completing assignment" };
   }
 }
+
 
 // ========== VERIFY ASSIGNMENT ==========
 static async verifyAssignment(
@@ -1568,6 +1503,8 @@ static async getUpcomingAssignments(
   }
 }
 
+// services/assignment.services.ts - COMPLETE FIX for multi-slot
+
 static async getTodayAssignments(
   userId: string,
   filters?: {
@@ -1581,7 +1518,6 @@ static async getTodayAssignments(
     
     const now = new Date();
     
-    // ✅ FIXED: Use UTC for date boundaries
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
     
     console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
@@ -1621,38 +1557,61 @@ static async getTodayAssignments(
         return false;
       }
       
-      // ✅ Skip already submitted assignments (pending verification)
-      if (assignment.photoUrl !== null && assignment.photoUrl !== undefined) {
-        console.log(`⏭️ Skipping SUBMITTED (pending verification) assignment: ${assignment.taskTitle} (${assignment.id})`);
+      // ✅ CRITICAL: For multi-slot tasks, check if THIS SPECIFIC SLOT is already completed
+      const completedSlotIds = assignment.completedTimeSlotIds || [];
+      const currentTimeSlotId = assignment.timeSlot?.id;
+      
+      if (currentTimeSlotId && completedSlotIds.includes(currentTimeSlotId)) {
+        console.log(`⏭️ Skipping - time slot ${assignment.timeSlot?.startTime}-${assignment.timeSlot?.endTime} already completed: ${assignment.taskTitle}`);
         return false;
       }
-       
+      
+      // ✅ Skip if this specific slot has already been submitted (has photo)
+      // For multi-slot tasks, each submission has its own photo
+      if (assignment.photoUrl !== null && assignment.photoUrl !== undefined) {
+        // Check if this photo is for the current slot (multi-slot)
+        const photoSlotId = assignment.photoSlotId; // You may need to add this field
+        if (!photoSlotId || photoSlotId === currentTimeSlotId) {
+          console.log(`⏭️ Skipping - this slot already has a submission (pending verification): ${assignment.taskTitle}`);
+          return false;
+        }
+      }
+      
+      // ✅ Check partially expired - but only for REMAINING slots
       if (assignment.partiallyExpired === true) {
         const remainingSlots = assignment.timeSlots?.filter((slot: any) => 
           !assignment.completedTimeSlotIds?.includes(slot.id) && 
           !assignment.missedTimeSlotIds?.includes(slot.id)
         );
-        if (!remainingSlots || remainingSlots.length === 0) {
-          console.log(`⏭️ Skipping PARTIALLY EXPIRED with no remaining slots: ${assignment.taskTitle} (${assignment.id})`);
+        
+        // If current slot is not in remaining slots, skip
+        if (currentTimeSlotId && !remainingSlots?.some((s: any) => s.id === currentTimeSlotId)) {
+          console.log(`⏭️ Skipping - slot ${assignment.timeSlot?.startTime} not in remaining slots: ${assignment.taskTitle}`);
           return false;
         }
-      } 
-       
+        
+        if (!remainingSlots || remainingSlots.length === 0) {
+          console.log(`⏭️ Skipping PARTIALLY EXPIRED with no remaining slots: ${assignment.taskTitle}`);
+          return false;
+        }
+      }
+      
       if (!assignment.dueDate) {
-        console.log(`⏭️ Skipping assignment without due date: ${assignment.taskTitle} (${assignment.id})`);
+        console.log(`⏭️ Skipping assignment without due date: ${assignment.taskTitle}`);
         return false;
       }
       
       const dueDate = new Date(assignment.dueDate);
-      // ✅ FIXED: Use UTC comparison
       const isDueToday = dueDate >= todayUTC && dueDate < tomorrowUTC;
       
       const belongsToGroup = !filters?.groupId || assignment.group?.id === filters.groupId;
       
       if (isDueToday) {
-        console.log(`✅ Active pending assignment due today: ${assignment.taskTitle} (${assignment.id})`);
-        console.log(`   Due date: ${dueDate.toISOString()}`);
-        console.log(`   Time slot: ${assignment.timeSlot?.startTime} - ${assignment.timeSlot?.endTime}`);
+        const isSlotCompleted = currentTimeSlotId && completedSlotIds.includes(currentTimeSlotId);
+        console.log(`✅ Assignment due today: ${assignment.taskTitle}`);
+        console.log(`   Current slot: ${assignment.timeSlot?.startTime}-${assignment.timeSlot?.endTime}`);
+        console.log(`   Slot completed? ${isSlotCompleted ? 'YES (skipping)' : 'NO'}`);
+        console.log(`   Has photo? ${assignment.photoUrl ? 'YES' : 'NO'}`);
       }
       
       return isDueToday && belongsToGroup;
@@ -1661,6 +1620,40 @@ static async getTodayAssignments(
     console.log(`📋 Found ${todayAssignments.length} active pending assignments due today`);
     
     const assignmentsWithTimeInfo = todayAssignments.map((assignment: any) => {
+      // ✅ For already submitted slots, use stored points directly
+      const completedSlotIds = assignment.completedTimeSlotIds || [];
+      const currentTimeSlotId = assignment.timeSlot?.id;
+      const isSlotCompleted = currentTimeSlotId && completedSlotIds.includes(currentTimeSlotId);
+      
+      if (isSlotCompleted || assignment.photoUrl) {
+        console.log(`📸 Slot already submitted: ${assignment.taskTitle} - ${assignment.timeSlot?.startTime} - Points: ${assignment.points}`);
+        return {
+          id: assignment.id,
+          taskId: assignment.taskId,
+          taskTitle: assignment.taskTitle,
+          taskPoints: assignment.points,
+          group: assignment.group,
+          dueDate: assignment.dueDate,
+          canSubmit: false,
+          timeLeft: null,
+          timeLeftText: null,
+          reason: 'Already submitted',
+          timeSlot: assignment.timeSlot,
+          willBePenalized: false,
+          finalPoints: assignment.points,
+          submissionStatus: 'completed',
+          completed: assignment.completed,
+          verified: assignment.verified,
+          expired: assignment.expired,
+          photoUrl: assignment.photoUrl,
+          partiallyExpired: assignment.partiallyExpired,
+          completedTimeSlotIds: assignment.completedTimeSlotIds,
+          missedTimeSlotIds: assignment.missedTimeSlotIds,
+          timeSlots: assignment.timeSlots
+        };
+      }
+      
+      // For non-submitted slots, calculate time info
       const assignmentForValidation = {
         ...assignment,
         timeSlot: assignment.timeSlot,
@@ -1670,11 +1663,29 @@ static async getTodayAssignments(
       
       const validation = TimeHelpers.canSubmitAssignment(assignmentForValidation, now);
       
+      // ✅ For multi-slot tasks, the points might already be partially calculated
+      let finalPointsToShow = validation.finalPoints;
+      
+      // If this is a multi-slot task and some slots are already completed,
+      // the stored points should reflect completed slots only
+      if (assignment.timeSlots?.length > 1 && assignment.points) {
+        // Calculate points from already completed slots
+        const completedPoints = assignment.timeSlots
+          .filter((slot: any) => completedSlotIds.includes(slot.id))
+          .reduce((sum: number, slot: any) => sum + (slot.points || 0), 0);
+        
+        // Add potential points for current slot if submitted now
+        const currentSlotPoints = assignment.timeSlot?.points || assignment.taskPoints || 0;
+        const potentialTotal = completedPoints + (validation.willBePenalized ? Math.floor(currentSlotPoints * 0.5) : currentSlotPoints);
+        
+        finalPointsToShow = potentialTotal;
+      }
+      
       return {
         id: assignment.id,
         taskId: assignment.taskId,
         taskTitle: assignment.taskTitle,
-        taskPoints: assignment.points,
+        taskPoints: assignment.points || assignment.taskPoints,
         group: assignment.group,
         dueDate: assignment.dueDate,
         canSubmit: validation.allowed,
@@ -1683,9 +1694,8 @@ static async getTodayAssignments(
         reason: validation.reason,
         timeSlot: assignment.timeSlot,
         willBePenalized: validation.willBePenalized,
-        finalPoints: validation.finalPoints,
+        finalPoints: finalPointsToShow,
         submissionStatus: validation.submissionStatus,
-        // ✅ ADD THESE MISSING FIELDS
         completed: assignment.completed,
         verified: assignment.verified,
         expired: assignment.expired,
@@ -1698,7 +1708,16 @@ static async getTodayAssignments(
     });
     
     console.log(`✅ Final active pending assignments count: ${assignmentsWithTimeInfo.length}`);
-    console.log(`🔍🔍🔍 [getTodayAssignments] END 🔍🔍🔍`);
+    
+    // ✅ Log multi-slot details for debugging
+    assignmentsWithTimeInfo.forEach((assignment: any) => {
+      if (assignment.timeSlots?.length > 1) {
+        console.log(`📊 Multi-slot task: ${assignment.taskTitle}`);
+        console.log(`   Completed slots: ${assignment.completedTimeSlotIds?.length || 0}/${assignment.timeSlots.length}`);
+        console.log(`   Current slot: ${assignment.timeSlot?.startTime}-${assignment.timeSlot?.endTime}`);
+        console.log(`   Points: ${assignment.finalPoints}`);
+      }
+    });
     
     return {
       success: true,
@@ -2816,6 +2835,6 @@ private static async markAssignmentAsNeglected(
     return { success: false, pointsLost: 0 };
   }
 }
-
+ 
 
 }      
