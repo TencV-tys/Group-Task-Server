@@ -6,6 +6,7 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
+    relationMode = "prisma"
 } 
  
 // ============= ENUMS =============
@@ -123,7 +124,7 @@ model User {
   settings Json? @default("{}")
 
   // Password Reset Fields
-  resetPasswordToken   String?   @unique
+  resetPasswordToken   String?   @unique @db.VarChar(191)
   resetPasswordExpires DateTime?
 
   // Relationships
@@ -153,7 +154,7 @@ model Group {
   id          String  @id @default(uuid())
   name        String
   description String?
-  inviteCode  String  @unique
+  inviteCode  String  @unique @db.VarChar(191)
   avatarUrl   String?
   
   // ===== STATUS FIELDS =====
@@ -605,7 +606,7 @@ model AdminRefreshToken {
 model UserDevice {
   id            String   @id @default(uuid())
   userId        String
-  expoPushToken String   @unique
+  expoPushToken String   @unique @db.VarChar(255)
   deviceType    String   // 'ios', 'android'
   isActive      Boolean  @default(true)
   lastUsedAt    DateTime @default(now())
