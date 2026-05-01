@@ -75,7 +75,7 @@ export class UserPasswordResetService {
 
       // Email content
       const mailOptions = {
-        from: `"GroupTask App" <${process.env.SMTP_USER}>`, // Use your Gmail as sender
+        from: `"GroupTask App" <vincenttayros078@gmail.com>`, // Use your Gmail as sender
         to: email,
         subject: "🔐 Password Reset Request - GroupTask",
         html: `
@@ -373,7 +373,7 @@ static async resetPassword(token: string, email: string, newPassword: string, co
 
     // Send confirmation email (optional but recommended)
     await transporter.sendMail({
-      from: `"GroupTask" <${process.env.SMTP_USER}>`,
+      from: `"GroupTask" <vincenttayros078@gmail.com>`,
       to: email,
       subject: "Password Reset Successful",
       html: `
