@@ -235,7 +235,6 @@ model Task {
   timeSlots TimeSlot[] @relation("TaskTimeSlots")
 
    primaryTimeSlotId String? @unique
-  primaryTimeSlot TimeSlot? @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   
   // Keep for backward compatibility
   scheduledTime String? // Legacy single time (e.g., "09:00", "14:30", "18:45")
@@ -295,13 +294,12 @@ model TimeSlot {
 
   // Relationships
   task           Task         @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
-  primaryForTask Task? @relation("TaskPrimaryTimeSlot", fields: [primaryForTaskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  primaryForTaskId String? @unique
+
   assignments    Assignment[] @relation("TimeSlotAssignments")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
+ 
   @@index([taskId])
   @@index([sortOrder])
   @@index([isPrimary])
