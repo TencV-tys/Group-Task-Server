@@ -234,9 +234,9 @@ model Task {
   // Multiple time slots relationship
   timeSlots TimeSlot[] @relation("TaskTimeSlots")
 
-  // For quick access, store primary time slot
-  // primaryTimeSlotId String? @unique
-
+   primaryTimeSlotId String? @unique
+  primaryTimeSlot TimeSlot? @relation("TaskPrimaryTimeSlot", fields: [primaryTimeSlotId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  
   // Keep for backward compatibility
   scheduledTime String? // Legacy single time (e.g., "09:00", "14:30", "18:45")
   timeFormat    String? @default("12h") // "12h" or "24h"
@@ -295,7 +295,8 @@ model TimeSlot {
 
   // Relationships
   task           Task         @relation("TaskTimeSlots", fields: [taskId], references: [id], onDelete: Cascade)
-  // primaryForTask Task?        @relation("TaskPrimaryTimeSlot")
+  primaryForTask Task? @relation("TaskPrimaryTimeSlot", fields: [primaryForTaskId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  primaryForTaskId String? @unique
   assignments    Assignment[] @relation("TimeSlotAssignments")
 
   createdAt DateTime @default(now())
