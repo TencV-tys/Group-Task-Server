@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "ts-node-dev src/server.ts",
-    "build":"tsc --noEmitOnError false --skipLibCheck --noImplicitAny false --strictNullChecks false || exit 0",
+    "build": "tsc --noEmitOnError false --skipLibCheck --noImplicitAny false --strictNullChecks false || exit 0",
     "start": "npx prisma migrate deploy && node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -39,6 +39,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
+    "resend": "^6.12.2",
     "socket.io": "^4.8.3",
     "zod": "^4.3.5"
   },
