@@ -51,12 +51,12 @@ export class UserPasswordResetService {
         data: {
           resetPasswordToken: hashedToken,
           resetPasswordExpires: resetTokenExpiry
-        }
+        } 
       });
  
       console.log("Reset token stored in database");
 
-      // Create reset URL
+      // Create reset URL 
       const resetUrl = `${process.env.APP_URL}/reset-password-form?token=${resetToken}&email=${email}`;
       console.log("Reset URL generated:", resetUrl);
 
