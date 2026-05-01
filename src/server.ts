@@ -303,6 +303,7 @@ console.log('✅ Socket.IO initialized');
 const MY_IP = process.env.MY_IP;
 const Wifi = process.env.WIFI_IP;
 const PORT = process.env.PORT;
+const APP_URL = process.env.APP_URL;
 
 server.listen(PORT, async () => {
     console.log(`
@@ -314,6 +315,7 @@ server.listen(PORT, async () => {
    📍 Local:   http://localhost:${PORT}
    📱 Mobile:  http://${MY_IP}:${PORT}
    📶 WiFi:    http://${Wifi}:${PORT}
+      APP URL: ${APP_URL}
 
 🔌 WebSocket Server: Active
    └─ Real-time features enabled
