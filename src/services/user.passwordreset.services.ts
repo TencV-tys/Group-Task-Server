@@ -3,19 +3,21 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { hashedPassword } from "../utils/shared.bcrypt";
 
-// Create transporter with your Gmail settings
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false, // true for 465, false for 587
+  port: parseInt(process.env.SMTP_PORT || '465'),
+  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for 587
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  // Add these for better debugging
   tls: {
-    rejectUnauthorized: false // Only for development
-  }
+    rejectUnauthorized: false,
+    ciphers: 'SSLv3'
+  },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 });
 
 export class UserPasswordResetService {
