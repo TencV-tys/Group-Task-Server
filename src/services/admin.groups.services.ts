@@ -1341,94 +1341,95 @@ static async getGroups(filters: GroupFilters = {}) {
     }
   }
 
-  // ========== GET GROUP STATISTICS ==========
-  static async getGroupStatistics() {
-    try {
-      const [totalGroups, groupsWithReports, activeGroups, suspendedGroups, deletedGroups] = await Promise.all([
-        prisma.group.count(),
-        prisma.group.count({
-          where: {
-            reports: { 
-              some: { 
-                status: { in: ['PENDING', 'REVIEWING'] } 
-              } 
-            }
-          }
-        }),
-        prisma.group.count({
-          where: { status: GroupStatus.ACTIVE, isDeleted: false }
-        }),
-        prisma.group.count({
-          where: { status: GroupStatus.SUSPENDED }
-        }),
-        prisma.group.count({
-          where: { 
-            OR: [
-              { status: GroupStatus.DELETED },
-              { isDeleted: true }
-            ]
-          }
-        })
-      ]);
-
-      const groupsByMemberCountResult = await prisma.$queryRaw<Array<{
-        exactly_6: bigint;
-        exactly_7: bigint;
-        exactly_8: bigint;
-        exactly_9: bigint;
-        exactly_10: bigint;
-      }>>`
-        SELECT 
-          COUNT(CASE WHEN member_count = 6 THEN 1 END) as exactly_6,
-          COUNT(CASE WHEN member_count = 7 THEN 1 END) as exactly_7,
-          COUNT(CASE WHEN member_count = 8 THEN 1 END) as exactly_8, 
-          COUNT(CASE WHEN member_count = 9 THEN 1 END) as exactly_9,
-          COUNT(CASE WHEN member_count = 10 THEN 1 END) as exactly_10
-        FROM (
-          SELECT g.id, COUNT(gm.id) as member_count
-          FROM groups g
-          LEFT JOIN group_members gm ON g.id = gm.groupId
-          WHERE g.isDeleted = false
-          GROUP BY g.id
-        ) as member_counts
-      `;
-
-      const groupsByMemberCount = groupsByMemberCountResult[0] || {
-        exactly_6: BigInt(0),
-        exactly_7: BigInt(0),
-        exactly_8: BigInt(0),
-        exactly_9: BigInt(0),
-        exactly_10: BigInt(0)
-      };
-
-      return {
-        success: true,
-        statistics: {
-          overview: {
-            total: totalGroups,
-            withReports: groupsWithReports,
-            active: activeGroups,
-            suspended: suspendedGroups,
-            deleted: deletedGroups
-          },
-          byMemberCount: {
-            exactly_6: Number(groupsByMemberCount.exactly_6),
-            exactly_7: Number(groupsByMemberCount.exactly_7),
-            exactly_8: Number(groupsByMemberCount.exactly_8),
-            exactly_9: Number(groupsByMemberCount.exactly_9),
-            exactly_10: Number(groupsByMemberCount.exactly_10)
+ // ========== GET GROUP STATISTICS ==========
+static async getGroupStatistics() {
+  try {
+    const [totalGroups, groupsWithReports, activeGroups, suspendedGroups, deletedGroups] = await Promise.all([
+      prisma.group.count(),
+      prisma.group.count({
+        where: {
+          reports: { 
+            some: { 
+              status: { in: ['PENDING', 'REVIEWING'] } 
+            } 
           }
         }
-      };
+      }),
+      prisma.group.count({
+        where: { status: GroupStatus.ACTIVE, isDeleted: false }
+      }),
+      prisma.group.count({
+        where: { status: GroupStatus.SUSPENDED }
+      }),
+      prisma.group.count({
+        where: { 
+          OR: [
+            { status: GroupStatus.DELETED },
+            { isDeleted: true }
+          ]
+        }
+      })
+    ]);
 
-    } catch (error: any) {
-      console.error('Error fetching group statistics:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to fetch group statistics'
-      };
-    }
+    // ✅ FIXED SQL - Added proper spacing and correct syntax
+    const groupsByMemberCountResult = await prisma.$queryRaw<Array<{
+      exactly_6: bigint;
+      exactly_7: bigint;
+      exactly_8: bigint;
+      exactly_9: bigint;
+      exactly_10: bigint;
+    }>>`
+      SELECT 
+        COUNT(CASE WHEN member_count = 6 THEN 1 END) as exactly_6,
+        COUNT(CASE WHEN member_count = 7 THEN 1 END) as exactly_7,
+        COUNT(CASE WHEN member_count = 8 THEN 1 END) as exactly_8, 
+        COUNT(CASE WHEN member_count = 9 THEN 1 END) as exactly_9,
+        COUNT(CASE WHEN member_count = 10 THEN 1 END) as exactly_10
+      FROM (
+        SELECT g.id, COUNT(gm.id) as member_count
+        FROM \`groups\` g
+        LEFT JOIN group_members gm ON g.id = gm.groupId
+        WHERE g.isDeleted = false
+        GROUP BY g.id
+      ) AS member_counts
+    `;
+
+    const groupsByMemberCount = groupsByMemberCountResult[0] || {
+      exactly_6: BigInt(0),
+      exactly_7: BigInt(0),
+      exactly_8: BigInt(0),
+      exactly_9: BigInt(0),
+      exactly_10: BigInt(0)
+    };
+
+    return {
+      success: true,
+      statistics: {
+        overview: {
+          total: totalGroups,
+          withReports: groupsWithReports,
+          active: activeGroups,
+          suspended: suspendedGroups,
+          deleted: deletedGroups
+        },
+        byMemberCount: {
+          exactly_6: Number(groupsByMemberCount.exactly_6),
+          exactly_7: Number(groupsByMemberCount.exactly_7),
+          exactly_8: Number(groupsByMemberCount.exactly_8),
+          exactly_9: Number(groupsByMemberCount.exactly_9),
+          exactly_10: Number(groupsByMemberCount.exactly_10)
+        }
+      }
+    };
+
+  } catch (error: any) {
+    console.error('Error fetching group statistics:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to fetch group statistics'
+    };
   }
+}
 
   // ========== HELPER METHODS ==========
   static isGroupDeleted(group: any): boolean {
