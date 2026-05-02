@@ -2438,7 +2438,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             }
           });
         }
-      }
+      } 
     }
 
     console.log(`\n📊 Neglect detection summary: ${neglectedCount} assignments/slots marked as neglected`);
@@ -2496,7 +2496,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
     const processedSlotsThisRun = new Set<string>();
     const now = new Date();
 
-    // ✅ FIXED: Get current time in PHT (Asia/Manila)
+    // Get current time in PHT (Asia/Manila)
     const phtTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
     const currentHour = phtTime.getHours();
     const currentMinute = phtTime.getMinutes();
@@ -2561,6 +2561,12 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
 
       if (timeSlotsToCheck.length === 0) continue;
 
+      // ✅ NEW: Track which slots need reminders for THIS assignment
+      let nextUpcomingSlot = null;
+      let nextActiveSlot = null;
+      let nextUpcomingTime = Infinity;
+      let nextActiveTime = Infinity;
+
       for (const timeSlot of timeSlotsToCheck) {
         if (completedSlotIds.includes(timeSlot.id)) continue;
         if (missedSlotIds.includes(timeSlot.id)) continue;
@@ -2568,7 +2574,7 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
         const slotKey = `${assignment.id}_${timeSlot.id}`;
         if (processedSlotsThisRun.has(slotKey)) continue;
 
-        // ---- Upcoming reminder (slot starts within 60 min) ----
+        // Check upcoming reminder (slot starts within 60 min)
         const [startHourStr, startMinStr] = timeSlot.startTime.split(':');
         const startHour = parseInt(startHourStr || '0', 10);
         const startMinute = parseInt(startMinStr || '0', 10);
@@ -2578,98 +2584,112 @@ static async sendUpcomingTaskReminders(): Promise<{ success: boolean; remindersS
         const timeUntilStart = startInMinutes - currentInMinutes;
 
         if (timeUntilStart > 0 && timeUntilStart <= 60) {
-          const existingReminder = await prisma.userNotification.findFirst({
-            where: {
-              userId: assignment.userId,
-              type: "TASK_REMINDER",
-              createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
-              data: { path: "$.slotId", equals: timeSlot.id }
-            }
-          });
-
-          if (!existingReminder) {
-            processedSlotsThisRun.add(slotKey);
-            await UserNotificationService.createNotification({
-              userId: assignment.userId,
-              type: "TASK_REMINDER",
-              title: "⏰ Task Starting Soon",
-              message: `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}starts at ${timeSlot.startTime} (in ${timeUntilStart} minutes)`,
-              data: {
-                assignmentId: assignment.id,
-                taskId: assignment.task!.id,
-                taskTitle: assignment.task!.title,
-                groupId: assignment.task!.groupId,
-                groupName: assignment.task!.group?.name || 'Group',
-                slotId: timeSlot.id,
-                startTime: timeSlot.startTime,
-                endTime: timeSlot.endTime,
-                label: timeSlot.label,
-                points: timeSlot.points,
-                minutesUntilStart: timeUntilStart,
-                dueDate: assignment.dueDate
-              }
-            });
-            remindersSent++;
-            console.log(`📢 Reminder: "${assignment.task!.title}" starts in ${timeUntilStart}min → ${assignment.user?.fullName}`);
+          if (timeUntilStart < nextUpcomingTime) {
+            nextUpcomingTime = timeUntilStart;
+            nextUpcomingSlot = timeSlot;
           }
         }
 
-        // ---- Active/submission-window reminder ----
+        // Check active reminder (submission window)
         const [endHourStr, endMinStr] = timeSlot.endTime.split(':');
         const endHour = parseInt(endHourStr || '0', 10);
         const endMinute = parseInt(endMinStr || '0', 10);
         if (isNaN(endHour) || isNaN(endMinute)) continue;
 
         const endInMinutes = endHour * 60 + endMinute;
-        const submissionStartMins = endInMinutes;       // opens AT end time
-        const graceEndMins = endInMinutes + 30;         // closes 30 min after
+        const submissionStartMins = endInMinutes;
+        const graceEndMins = endInMinutes + 30;
 
         if (currentInMinutes >= submissionStartMins && currentInMinutes <= graceEndMins) {
-          const activeKey = `${assignment.id}_${timeSlot.id}_active`;
-          if (processedSlotsThisRun.has(activeKey)) continue;
-
-          const existingActive = await prisma.userNotification.findFirst({
-            where: {
-              userId: assignment.userId,
-              type: "TASK_ACTIVE",
-              createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
-              data: { path: "$.slotId", equals: timeSlot.id }
-            }
-          });
-
-          if (!existingActive) {
-            processedSlotsThisRun.add(activeKey);
-            const timeLeft = graceEndMins - currentInMinutes;
-            const isLate = currentInMinutes > (endInMinutes + 25);
-
-            await UserNotificationService.createNotification({
-              userId: assignment.userId,
-              type: "TASK_ACTIVE",
-              title: isLate ? "⚠️ Late Submission Window" : "🔔 Ready to Submit",
-              message: isLate
-                ? `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}closing soon! ${timeLeft} min left. Points will be reduced.`
-                : `"${assignment.task!.title}" ${timeSlot.label ? `(${timeSlot.label}) ` : ''}can now be submitted (${timeLeft} min left)`,
-              data: {
-                assignmentId: assignment.id,
-                taskId: assignment.task!.id,
-                taskTitle: assignment.task!.title,
-                groupId: assignment.task!.groupId,
-                groupName: assignment.task!.group?.name || 'Group',
-                slotId: timeSlot.id,
-                startTime: timeSlot.startTime,
-                endTime: timeSlot.endTime,
-                label: timeSlot.label,
-                points: timeSlot.points,
-                timeLeft,
-                isLate,
-                dueDate: assignment.dueDate
-              }
-            });
-            remindersSent++;
-            console.log(`📢 Active: "${assignment.task!.title}" - ${timeLeft}min left → ${assignment.user?.fullName}`);
+          const timeLeft = graceEndMins - currentInMinutes;
+          if (timeLeft < nextActiveTime) {
+            nextActiveTime = timeLeft;
+            nextActiveSlot = timeSlot;
           }
         }
-      }  
+      }
+
+      // ✅ Send ONLY ONE reminder per assignment (the most urgent)
+      if (nextUpcomingSlot) {
+        const existingReminder = await prisma.userNotification.findFirst({
+          where: {
+            userId: assignment.userId,
+            type: "TASK_REMINDER",
+            createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
+            data: { path: "$.assignmentId", equals: assignment.id }
+          }
+        });
+
+        if (!existingReminder) {
+          processedSlotsThisRun.add(`${assignment.id}_${nextUpcomingSlot.id}`);
+          
+          await UserNotificationService.createNotification({
+            userId: assignment.userId,
+            type: "TASK_REMINDER",
+            title: "⏰ Task Starting Soon",
+            message: `"${assignment.task!.title}" ${nextUpcomingSlot.label ? `(${nextUpcomingSlot.label}) ` : ''}starts at ${nextUpcomingSlot.startTime} (in ${nextUpcomingTime} minutes)`,
+            data: {
+              assignmentId: assignment.id,
+              taskId: assignment.task!.id,
+              taskTitle: assignment.task!.title,
+              groupId: assignment.task!.groupId,
+              groupName: assignment.task!.group?.name || 'Group',
+              slotId: nextUpcomingSlot.id,
+              startTime: nextUpcomingSlot.startTime,
+              endTime: nextUpcomingSlot.endTime,
+              label: nextUpcomingSlot.label,
+              points: nextUpcomingSlot.points,
+              minutesUntilStart: nextUpcomingTime,
+              dueDate: assignment.dueDate
+            }
+          });
+          remindersSent++;
+          console.log(`📢 Reminder: "${assignment.task!.title}" starts in ${nextUpcomingTime}min → ${assignment.user?.fullName}`);
+        }
+      } 
+      else if (nextActiveSlot) {
+        const existingActive = await prisma.userNotification.findFirst({
+          where: {
+            userId: assignment.userId,
+            type: "TASK_ACTIVE",
+            createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
+            data: { path: "$.assignmentId", equals: assignment.id }
+          }
+        });
+
+        if (!existingActive) {
+          processedSlotsThisRun.add(`${assignment.id}_${nextActiveSlot.id}_active`);
+          
+          const timeLeft = nextActiveTime;
+          const isLate = timeLeft < 5; // Less than 5 minutes left in grace period
+
+          await UserNotificationService.createNotification({
+            userId: assignment.userId,
+            type: "TASK_ACTIVE",
+            title: isLate ? "⚠️ Late Submission Window" : "🔔 Ready to Submit",
+            message: isLate
+              ? `"${assignment.task!.title}" ${nextActiveSlot.label ? `(${nextActiveSlot.label}) ` : ''}closing soon! ${timeLeft} min left. Points will be reduced.`
+              : `"${assignment.task!.title}" ${nextActiveSlot.label ? `(${nextActiveSlot.label}) ` : ''}can now be submitted (${timeLeft} min left)`,
+            data: {
+              assignmentId: assignment.id,
+              taskId: assignment.task!.id,
+              taskTitle: assignment.task!.title,
+              groupId: assignment.task!.groupId,
+              groupName: assignment.task!.group?.name || 'Group',
+              slotId: nextActiveSlot.id,
+              startTime: nextActiveSlot.startTime,
+              endTime: nextActiveSlot.endTime,
+              label: nextActiveSlot.label,
+              points: nextActiveSlot.points,
+              timeLeft,
+              isLate,
+              dueDate: assignment.dueDate
+            }
+          });
+          remindersSent++;
+          console.log(`📢 Active: "${assignment.task!.title}" - ${timeLeft}min left → ${assignment.user?.fullName}`);
+        }
+      }
     }
 
     console.log(`✅ Sent ${remindersSent} reminders`);

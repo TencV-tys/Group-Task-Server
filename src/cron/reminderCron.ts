@@ -41,7 +41,7 @@ const sendDailyTaskReminders = async () => {
 
     const validAssignments = todaysAssignments.filter(a => a.task !== null);
 
-    // ✅ FIX Bug 1: batch-fetch all admins upfront — no N+1
+    // Batch-fetch all admins upfront
     const groupIds = [...new Set(validAssignments.map(a => a.task!.groupId).filter(Boolean))] as string[];
     const adminMemberships = await prisma.groupMember.findMany({
       where: { groupId: { in: groupIds }, groupRole: "ADMIN", isActive: true },
@@ -56,14 +56,13 @@ const sendDailyTaskReminders = async () => {
     const userTasks: Record<string, any> = {};
 
     for (const assignment of validAssignments) {
-      const groupId = assignment.task!.groupId; // ✅ FIX Bug 2: no redundant fallback
+      const groupId = assignment.task!.groupId;
 
       if (!groupId) {
         console.log(`⚠️ No groupId for assignment ${assignment.id}, skipping`);
         continue;
       }
 
-      // ✅ FIX Bug 1: use pre-fetched map instead of DB call
       const groupAdmins = adminUserIdsByGroup[groupId] || new Set();
       if (groupAdmins.has(assignment.userId)) {
         console.log(`⏭️ Skipping admin: ${assignment.user?.fullName}`);
@@ -74,34 +73,55 @@ const sendDailyTaskReminders = async () => {
         userTasks[assignment.userId] = {
           userId: assignment.userId,
           userName: assignment.user?.fullName || 'User',
-          tasks: []
+          assignments: []  // ✅ Changed from 'tasks' to 'assignments'
         };
       }
 
-      // ✅ FIX Bug 3: safe length check
       const timeSlots = (assignment.task!.timeSlots?.length ?? 0) > 0
         ? assignment.task!.timeSlots
         : assignment.timeSlot ? [assignment.timeSlot] : [];
 
       const completedSlotIds: string[] = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds: string[]    = (assignment as any).missedTimeSlotIds    || [];
+      const missedSlotIds: string[] = (assignment as any).missedTimeSlotIds || [];
+
+      // ✅ Count how many slots are still pending for this assignment
+      let pendingSlotsCount = 0;
+      const pendingSlotsList: any[] = [];
 
       for (const slot of timeSlots) {
         if (completedSlotIds.includes(slot.id)) continue;
         if (missedSlotIds.includes(slot.id)) continue;
-
-        let timeInfo = `${slot.startTime} - ${slot.endTime}`;
-        if (slot.label) timeInfo += ` (${slot.label})`;
-
-        userTasks[assignment.userId].tasks.push({
-          taskId: assignment.task!.id,
-          title: assignment.task!.title,
-          timeSlot: timeInfo,
-          points: slot.points || assignment.points,
+        
+        pendingSlotsCount++;
+        pendingSlotsList.push({
           startTime: slot.startTime,
           endTime: slot.endTime,
           label: slot.label,
-          slotId: slot.id
+          points: slot.points || assignment.points
+        });
+      }
+
+      // ✅ Only add assignment if it has pending slots
+      if (pendingSlotsCount > 0) {
+        // Build time slot description
+        let timeSlotDescription = '';
+        if (pendingSlotsList.length === 1) {
+          const slot = pendingSlotsList[0];
+          timeSlotDescription = `${slot.startTime} - ${slot.endTime}`;
+          if (slot.label) timeSlotDescription += ` (${slot.label})`;
+        } else {
+          // Multiple slots - list them
+          const slotTimes = pendingSlotsList.map(slot => slot.startTime).join(', ');
+          timeSlotDescription = `${pendingSlotsCount} slots (${slotTimes})`;
+        }
+
+        userTasks[assignment.userId].assignments.push({
+          taskId: assignment.task!.id,
+          title: assignment.task!.title,
+          timeSlotDescription,
+          pendingSlotsCount,
+          pendingSlots: pendingSlotsList,
+          totalSlots: timeSlots.length
         });
       }
     }
@@ -110,20 +130,30 @@ const sendDailyTaskReminders = async () => {
 
     for (const userId in userTasks) {
       const userData = userTasks[userId];
-      const taskCount = userData.tasks.length;
-      if (taskCount === 0) continue;
+      const assignmentCount = userData.assignments.length;
+      if (assignmentCount === 0) continue;
+
+      // ✅ Calculate total pending slots for the user
+      const totalPendingSlots = userData.assignments.reduce(
+        (sum: number, a: any) => sum + a.pendingSlotsCount, 0
+      );
 
       let message = '';
-      if (taskCount === 1) {
-        const task = userData.tasks[0];
-        message = `You have 1 task today: "${task.title}"`;
-        if (task.timeSlot) message += ` at ${task.timeSlot}`;
+      if (assignmentCount === 1) {
+        const assignment = userData.assignments[0];
+        if (assignment.pendingSlotsCount === 1) {
+          message = `You have 1 pending slot today: "${assignment.title}" at ${assignment.timeSlotDescription}`;
+        } else {
+          message = `You have ${assignment.pendingSlotsCount} pending slots for "${assignment.title}" today (${assignment.timeSlotDescription})`;
+        }
       } else {
-        message = `You have ${taskCount} tasks today:\n`;
-        userData.tasks.forEach((task: any, index: number) => {
-          message += `${index + 1}. "${task.title}"`;
-          if (task.timeSlot) message += ` (${task.timeSlot})`;
-          message += '\n';
+        message = `You have ${totalPendingSlots} pending slots across ${assignmentCount} tasks today:\n`;
+        userData.assignments.forEach((assignment: any, index: number) => {
+          if (assignment.pendingSlotsCount === 1) {
+            message += `${index + 1}. "${assignment.title}" at ${assignment.timeSlotDescription}\n`;
+          } else {
+            message += `${index + 1}. "${assignment.title}" - ${assignment.pendingSlotsCount} slots (${assignment.timeSlotDescription})\n`;
+          }
         });
       }
 
@@ -139,12 +169,17 @@ const sendDailyTaskReminders = async () => {
         await UserNotificationService.createNotification({
           userId: userData.userId,
           type: "DAILY_TASK_REMINDER",
-          title: `📅 ${taskCount} Task${taskCount > 1 ? 's' : ''} Due Today`,
+          title: `📅 ${totalPendingSlots} Pending Slot${totalPendingSlots !== 1 ? 's' : ''} Today`,
           message,
-          data: { date: todayUTC.toISOString(), taskCount, tasks: userData.tasks }
+          data: { 
+            date: todayUTC.toISOString(), 
+            assignmentCount,
+            totalPendingSlots,
+            assignments: userData.assignments 
+          }
         });
         remindersSent++;
-        console.log(`📢 Sent daily reminder to ${userData.userName} with ${taskCount} tasks`);
+        console.log(`📢 Sent daily reminder to ${userData.userName} with ${assignmentCount} assignment(s) (${totalPendingSlots} pending slots)`);
       }
     }
 
