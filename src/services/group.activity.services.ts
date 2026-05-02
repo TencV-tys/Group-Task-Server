@@ -370,9 +370,6 @@ static async getMemberContributionDetails(
 
       const isMultiSlot = assignment.task?.timeSlots && assignment.task.timeSlots.length > 1;
       
-      // ✅ Calculate assignment points based on slots for multi-slot tasks
-      let assignmentPoints = 0;
-      let earnedPointsForAssignment = 0;
       let totalPointsForAssignment = 0;
       
       if (isMultiSlot) {
@@ -380,7 +377,7 @@ static async getMemberContributionDetails(
         const timeSlots = assignment.task?.timeSlots || [];
         totalPointsForAssignment = timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
         
-        // ✅ Get completed slots
+        // Get completed slots
         const completedSlotIdsRaw = (assignment as any).completedTimeSlotIds;
         let completedSlotIds: string[] = [];
         if (completedSlotIdsRaw) {
@@ -395,24 +392,13 @@ static async getMemberContributionDetails(
           }
         }
         
-        // ✅ Calculate earned points from COMPLETED slots only
-        earnedPointsForAssignment = timeSlots
-          .filter(slot => completedSlotIds.includes(slot.id))
-          .reduce((sum, slot) => sum + (slot.points || 0), 0);
-        
-        // ✅ For display, use the stored points (already includes penalties)
-        assignmentPoints = assignment.points || earnedPointsForAssignment;
-        
         console.log(`  📊 Multi-slot: ${assignment.task!.title}`);
         console.log(`     Completed slots: ${completedSlotIds.length}/${timeSlots.length}`);
         console.log(`     Total possible points: ${totalPointsForAssignment}`);
-        console.log(`     Earned points (completed slots): ${earnedPointsForAssignment}`);
-        console.log(`     Stored points: ${assignment.points}`);
+        console.log(`     Stored points (with penalties): ${assignment.points}`);
       } else {
         // Single-slot
         totalPointsForAssignment = assignment.points || 0;
-        earnedPointsForAssignment = assignment.verified === true ? totalPointsForAssignment : 0;
-        assignmentPoints = totalPointsForAssignment;
       }
       
       weeks[weekNum].totalAssignments++;
@@ -422,17 +408,18 @@ static async getMemberContributionDetails(
         weeks[weekNum].completedAssignments++;
       }
       
-      // ✅ Add earned points based on VERIFIED status for completed work
+      // ✅ CRITICAL FIX: Use actual stored points from database
       if (assignment.verified === true) {
-        weeks[weekNum].earnedPoints += earnedPointsForAssignment;
+        const actualStoredPoints = assignment.points || 0;
+        weeks[weekNum].earnedPoints += actualStoredPoints;
+        console.log(`  ✅ Verified: ${assignment.task!.title} - Adding stored points: ${actualStoredPoints}`);
       }
       
-      // ✅ Check missed status for BOTH single and multi-slot
+      // Check missed status
       let isMissed = false;
       let missedSlotsList: string[] = [];
 
       if (isMultiSlot) {
-        // Multi-slot: check missedTimeSlotIds
         const missedSlotIdsRaw = (assignment as any).missedTimeSlotIds;
         if (missedSlotIdsRaw) {
           if (typeof missedSlotIdsRaw === 'string') {
@@ -446,20 +433,17 @@ static async getMemberContributionDetails(
           }
         }
         
-        // If current time slot is missed, mark assignment as missed for display
         if (assignment.timeSlot && missedSlotsList.includes(assignment.timeSlot.id)) {
           isMissed = true;
         } else if (missedSlotsList.length > 0 && assignment.verified !== true) {
           isMissed = true;
         }
       } else {
-        // Single-slot: check expired flag
         if (assignment.expired === true && assignment.verified !== true) {
           isMissed = true;
         }
       }
 
-      // ✅ Get completed slots for frontend display
       let completedSlotsList: string[] = [];
       if (isMultiSlot) {
         const completedSlotIdsRaw = (assignment as any).completedTimeSlotIds;
@@ -484,8 +468,8 @@ static async getMemberContributionDetails(
         completed: assignment.completed,
         completedAt: assignment.completedAt,
         verified: assignment.verified,
-        points: assignmentPoints,
-        earnedPoints: earnedPointsForAssignment,
+        points: assignment.points || 0,
+        earnedPoints: assignment.verified === true ? (assignment.points || 0) : 0,
         totalPoints: totalPointsForAssignment,
         isLate: assignment.completedAt && assignment.completedAt > assignment.dueDate,
         timeSlot: assignment.timeSlot ? 
@@ -567,6 +551,7 @@ static async getMemberContributionDetails(
     return { success: false, message: error.message || "Error retrieving member details" };
   }
 }
+
 
 static async getAdminDashboard(groupId: string, userId: string) {
   try {
