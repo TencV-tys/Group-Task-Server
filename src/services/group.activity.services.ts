@@ -12,7 +12,7 @@ export class GroupActivityService {
     
     const membership = await prisma.groupMember.findFirst({
       where: { userId, groupId, groupRole: "ADMIN" }
-    });
+    }); 
 
     if (!membership) {
       console.log('❌ User is not admin');
@@ -273,6 +273,8 @@ export class GroupActivityService {
   }
 }
 
+// services/group.activity.services.ts - COMPLETELY FIXED getMemberContributionDetails
+
 static async getMemberContributionDetails(
   groupId: string,
   memberId: string,
@@ -366,52 +368,111 @@ static async getMemberContributionDetails(
         };
       }
 
-      let assignmentPoints = assignment.points || 0;
+      const isMultiSlot = assignment.task?.timeSlots && assignment.task.timeSlots.length > 1;
       
-      if (assignment.task?.timeSlots && assignment.task.timeSlots.length > 0 && assignment.timeSlot) {
-        assignmentPoints = assignment.timeSlot.points || assignment.points || 0;
+      // ✅ Calculate assignment points based on slots for multi-slot tasks
+      let assignmentPoints = 0;
+      let earnedPointsForAssignment = 0;
+      let totalPointsForAssignment = 0;
+      
+      if (isMultiSlot) {
+        // Multi-slot: sum points from ALL slots (total possible)
+        const timeSlots = assignment.task?.timeSlots || [];
+        totalPointsForAssignment = timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+        
+        // ✅ Get completed slots
+        const completedSlotIdsRaw = (assignment as any).completedTimeSlotIds;
+        let completedSlotIds: string[] = [];
+        if (completedSlotIdsRaw) {
+          if (typeof completedSlotIdsRaw === 'string') {
+            try {
+              completedSlotIds = JSON.parse(completedSlotIdsRaw);
+            } catch (e) {
+              completedSlotIds = [];
+            }
+          } else if (Array.isArray(completedSlotIdsRaw)) {
+            completedSlotIds = completedSlotIdsRaw;
+          }
+        }
+        
+        // ✅ Calculate earned points from COMPLETED slots only
+        earnedPointsForAssignment = timeSlots
+          .filter(slot => completedSlotIds.includes(slot.id))
+          .reduce((sum, slot) => sum + (slot.points || 0), 0);
+        
+        // ✅ For display, use the stored points (already includes penalties)
+        assignmentPoints = assignment.points || earnedPointsForAssignment;
+        
+        console.log(`  📊 Multi-slot: ${assignment.task!.title}`);
+        console.log(`     Completed slots: ${completedSlotIds.length}/${timeSlots.length}`);
+        console.log(`     Total possible points: ${totalPointsForAssignment}`);
+        console.log(`     Earned points (completed slots): ${earnedPointsForAssignment}`);
+        console.log(`     Stored points: ${assignment.points}`);
+      } else {
+        // Single-slot
+        totalPointsForAssignment = assignment.points || 0;
+        earnedPointsForAssignment = assignment.verified === true ? totalPointsForAssignment : 0;
+        assignmentPoints = totalPointsForAssignment;
       }
       
       weeks[weekNum].totalAssignments++;
-      weeks[weekNum].totalPoints += assignmentPoints;
-
+      weeks[weekNum].totalPoints += totalPointsForAssignment;
+      
       if (assignment.completed === true) {
         weeks[weekNum].completedAssignments++;
       }
       
+      // ✅ Add earned points based on VERIFIED status for completed work
       if (assignment.verified === true) {
-        weeks[weekNum].earnedPoints += assignmentPoints;
+        weeks[weekNum].earnedPoints += earnedPointsForAssignment;
       }
-
-      // ✅ FIXED: Check missed status for BOTH single and multi-slot
+      
+      // ✅ Check missed status for BOTH single and multi-slot
       let isMissed = false;
-      const isMultiSlot = assignment.task?.timeSlots && assignment.task.timeSlots.length > 1;
+      let missedSlotsList: string[] = [];
 
       if (isMultiSlot) {
         // Multi-slot: check missedTimeSlotIds
         const missedSlotIdsRaw = (assignment as any).missedTimeSlotIds;
         if (missedSlotIdsRaw) {
-          let missedSlotIds: string[] = [];
           if (typeof missedSlotIdsRaw === 'string') {
             try {
-              missedSlotIds = JSON.parse(missedSlotIdsRaw);
+              missedSlotsList = JSON.parse(missedSlotIdsRaw);
             } catch (e) {
-              missedSlotIds = [];
+              missedSlotsList = [];
             }
           } else if (Array.isArray(missedSlotIdsRaw)) {
-            missedSlotIds = missedSlotIdsRaw;
+            missedSlotsList = missedSlotIdsRaw;
           }
-          
-          if (assignment.timeSlot && missedSlotIds.includes(assignment.timeSlot.id)) {
-            isMissed = true;
-          } else if (missedSlotIds.length > 0) {
-            isMissed = true;
-          }
+        }
+        
+        // If current time slot is missed, mark assignment as missed for display
+        if (assignment.timeSlot && missedSlotsList.includes(assignment.timeSlot.id)) {
+          isMissed = true;
+        } else if (missedSlotsList.length > 0 && assignment.verified !== true) {
+          isMissed = true;
         }
       } else {
         // Single-slot: check expired flag
-        if (assignment.expired === true) {
+        if (assignment.expired === true && assignment.verified !== true) {
           isMissed = true;
+        }
+      }
+
+      // ✅ Get completed slots for frontend display
+      let completedSlotsList: string[] = [];
+      if (isMultiSlot) {
+        const completedSlotIdsRaw = (assignment as any).completedTimeSlotIds;
+        if (completedSlotIdsRaw) {
+          if (typeof completedSlotIdsRaw === 'string') {
+            try {
+              completedSlotsList = JSON.parse(completedSlotIdsRaw);
+            } catch (e) {
+              completedSlotsList = [];
+            }
+          } else if (Array.isArray(completedSlotIdsRaw)) {
+            completedSlotsList = completedSlotIdsRaw;
+          }
         }
       }
 
@@ -424,6 +485,8 @@ static async getMemberContributionDetails(
         completedAt: assignment.completedAt,
         verified: assignment.verified,
         points: assignmentPoints,
+        earnedPoints: earnedPointsForAssignment,
+        totalPoints: totalPointsForAssignment,
         isLate: assignment.completedAt && assignment.completedAt > assignment.dueDate,
         timeSlot: assignment.timeSlot ? 
           `${assignment.timeSlot.startTime} - ${assignment.timeSlot.endTime}` : null,
@@ -432,8 +495,10 @@ static async getMemberContributionDetails(
         photoUrl: assignment.photoUrl,
         expired: assignment.expired,
         partiallyExpired: assignment.partiallyExpired,
-        completedTimeSlotIds: (assignment as any).completedTimeSlotIds || [],
-        missedTimeSlotIds: (assignment as any).missedTimeSlotIds || []
+        completedTimeSlotIds: completedSlotsList,
+        missedTimeSlotIds: missedSlotsList,
+        timeSlots: assignment.task?.timeSlots || [],
+        isMultiSlot: isMultiSlot
       });
     });
 
@@ -451,7 +516,7 @@ static async getMemberContributionDetails(
       earnedPoints += week.earnedPoints;
     });
 
-    const completionRate = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
+    const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
 
     let roleMessage = "";
     if (isAdmin) {
@@ -459,6 +524,13 @@ static async getMemberContributionDetails(
     } else if (!inRotation) {
       roleMessage = "This user is not currently in rotation and has no assigned tasks.";
     }
+
+    console.log(`📊 [getMemberContributionDetails] Final stats for ${targetMember.user.fullName}:`, {
+      totalAssignments,
+      totalPoints,
+      earnedPoints,
+      completionRate
+    });
 
     return {
       success: true,
@@ -587,7 +659,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
         return missedSlotIds.length > 0 && a.verified !== true;
       } else {
         return a.expired === true && a.verified !== true;
-      }
+      } 
     });
     const expiredCount = expiredAssignmentsList.length;
     
