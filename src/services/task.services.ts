@@ -694,7 +694,7 @@ static async createTask(
           
           // Update primary time slot - FIXED: Use primaryTimeSlot relation
           if (createdSlots.length > 0 && createdSlots[0]) {
-            updateData.primaryTimeSlot = { connect: { id: createdSlots[0].id } };
+            updateData.primaryTimeSlotId = createdSlots[0].id ;
           }
         } else {
           // Create default time slot if none provided
@@ -710,7 +710,7 @@ static async createTask(
             }
           });
           createdSlots = [defaultSlot];
-          updateData.primaryTimeSlot = { connect: { id: defaultSlot.id } };
+          updateData.primaryTimeSlotId =  defaultSlot.id;
         }
       }
 

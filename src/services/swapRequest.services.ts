@@ -268,11 +268,12 @@ export class SwapRequestService {
                   fullName: true,
                   avatarUrl: true
                 }
-              }
+              },
+              timeSlot:true
             }
           }
         }
-      }) as SwapRequestWithAssignment | null;
+      });
 
       if (!swapRequest) {
         return { success: false, message: "Swap request not found" };
@@ -443,26 +444,27 @@ export class SwapRequestService {
   // ADMIN: Reject swap request
   static async adminRejectSwapRequest(requestId: string, adminId: string, reason: string) {
     try {
-      const swapRequest = await prisma.swapRequest.findUnique({
-        where: { id: requestId },
-        include: {
-          assignment: {
-            include: {
-              task: {
-                include: {
-                  group: true
-                }
-              },
-              user: {
-                select: {
-                  id: true,
-                  fullName: true
-                }
+        const swapRequest = await prisma.swapRequest.findUnique({
+      where: { id: requestId },
+      include: {
+        assignment: {
+          include: {
+            task: {
+              include: {
+                group: true
               }
-            }
+            },
+            user: {
+              select: {
+                id: true,
+                fullName: true
+              }
+            },
+            timeSlot: true  // ✅ ADD THIS
           }
         }
-      }) as SwapRequestWithAssignment | null;
+      }
+    });
 
       if (!swapRequest) {
         return { success: false, message: "Swap request not found" };

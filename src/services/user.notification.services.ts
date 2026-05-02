@@ -53,11 +53,11 @@ private static async sendPushNotification(
     });
 
     const result = await response.json();
-    
+    const resultData = result as { data?: any[] };
     // Handle invalid tokens (remove them)
-    if (result.data && Array.isArray(result.data)) {
-      for (let i = 0; i < result.data.length; i++) {
-        const ticket = result.data[i];
+    if (resultData.data && Array.isArray(resultData.data)) {
+      for (let i = 0; i < resultData.data.length; i++) {
+        const ticket = resultData.data[i];
         const device = devices[i];
         
         // ✅ Check if device exists before accessing
