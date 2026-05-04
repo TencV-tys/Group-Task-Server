@@ -6,20 +6,15 @@ import { SocketService } from "./socket.services";
 export class UserNotificationService {
   
 
-  // Send push notification to user's device
-private static async sendPushNotification(
+ private static async sendPushNotification(
   userId: string,
   title: string,
   message: string,
   data?: any
 ): Promise<void> {
   try {
-    // Get user's active device tokens
     const devices = await prisma.userDevice.findMany({
-      where: { 
-        userId, 
-        isActive: true 
-      }
+      where: { userId, isActive: true }
     });
 
     if (devices.length === 0) {
@@ -27,21 +22,31 @@ private static async sendPushNotification(
       return;
     }
 
-    // Prepare notifications for all devices
     const notifications = devices.map((device: { expoPushToken: string }) => ({
       to: device.expoPushToken,
-      sound: 'default',
       title: title,
       body: message,
+      sound: 'default',
+      priority: 'high' as const,
       data: {
         ...data,
         notificationId: data?.notificationId,
         type: data?.type,
       },
-      priority: 'high' as const,
+      android: {
+        channelId: 'default',
+        priority: 'high',
+        importance: 'high',
+        sound: 'default',
+        vibrate: true,
+        lockscreenVisibility: 'public'
+      },
+      ios: {
+        sound: 'default',
+        priority: 'high'
+      }
     }));
 
-    // Send to Expo push service
     const response = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
@@ -54,13 +59,12 @@ private static async sendPushNotification(
 
     const result = await response.json();
     const resultData = result as { data?: any[] };
-    // Handle invalid tokens (remove them)
+    
     if (resultData.data && Array.isArray(resultData.data)) {
       for (let i = 0; i < resultData.data.length; i++) {
         const ticket = resultData.data[i];
         const device = devices[i];
         
-        // ✅ Check if device exists before accessing
         if (ticket?.status === 'error' && ticket.details?.error === 'DeviceNotRegistered' && device) {
           await prisma.userDevice.updateMany({
             where: { expoPushToken: device.expoPushToken },
