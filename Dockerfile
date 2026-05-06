@@ -1,4 +1,4 @@
-# Dockerfile - Fixed with public folder
+# Dockerfile - Fixed with public folder (REMOVED npm audit fix)
 FROM node:20-alpine AS builder
 
 # Update Alpine to fix known vulns
@@ -11,14 +11,12 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Force clean install
-RUN npm clean-install && \
-    npm audit fix --force && \
+# ✅ FIXED: Remove npm audit fix which causes build failures
+RUN npm clean-install --no-audit && \
     npm cache clean --force
 
 RUN npx prisma generate
 COPY . .
-# ✅ ADD THIS LINE - Copy public folder explicitly
 COPY --chown=nodejs:nodejs public ./public
 
 RUN npm run build
@@ -32,13 +30,12 @@ RUN apk update && apk upgrade && \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm clean-install --only=production && \
+RUN npm clean-install --only=production --no-audit && \
     npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma/
-# ✅ ADD THIS LINE - Copy public folder to final image
 COPY --from=builder /app/public ./public
 
 RUN addgroup -g 1001 -S nodejs && \
