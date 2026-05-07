@@ -7,15 +7,15 @@ export class UserNotificationService {
 
   private static async sendPushNotification(
     userId: string,
-    title: string,
+    title: string, 
     message: string,
-    data?: any
+    data?: any  
   ): Promise<void> {
     try {
       const devices = await prisma.userDevice.findMany({
         where: { userId, isActive: true }
       });
-
+ 
       if (devices.length === 0) {
         console.log(`📱 No active devices found for user ${userId}`);
         return;
@@ -31,7 +31,8 @@ export class UserNotificationService {
         body: message,
         sound: 'default',
         priority: 'high' as const,
-        channelId: 'default', // ✅ Top-level — links to the HIGH importance channel
+        channelId: 'default',
+        _displayInForeground: true, 
         data: {
           ...data,
           notificationId: data?.notificationId,
