@@ -118,19 +118,29 @@ export class GroupActivityService {
       }
     }).length;
     
-     // ✅ TOTAL POINTS: Sum of task.points (per assignment)
-const totalPoints = validAssignments.reduce((sum, a) => sum + (a.task?.points || 0), 0);
-// Should be: 14 × 5 = 70
-
-// ✅ EARNED POINTS: Sum of assignment.points where verified (already includes penalties)
-const earnedPoints = validAssignments
-  .filter(a => a.verified === true)
-  .reduce((sum, a) => sum + (a.points || 0), 0);
-// Should be: 2 × 2 = 4
-
-const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
-
-
+       let totalPoints = 0;
+    for (const a of validAssignments) {
+      const task = a.task;
+      if (!task) continue;
+      
+      // For multi-slot tasks, sum all slot points
+      if (task.timeSlots && task.timeSlots.length > 1) {
+        const slotPointsTotal = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+        totalPoints += slotPointsTotal;
+      } else {
+        // Single-slot task
+        totalPoints += (task.points || 0);
+      }
+    }
+    
+    // ✅ EARNED POINTS (already correct)
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+    
+    const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+    
+ 
 console.log(`📊 Results:`, {
   totalAssignments: validAssignments.length,
   verifiedAssignments: validAssignments.filter(a => a.verified === true).length,
