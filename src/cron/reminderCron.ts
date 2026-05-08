@@ -157,15 +157,8 @@ const sendDailyTaskReminders = async () => {
         });
       }
 
-      const existingReminder = await prisma.userNotification.findFirst({
-        where: {
-          userId: userData.userId,
-          type: "DAILY_TASK_REMINDER",
-          createdAt: { gte: todayUTC }
-        }
-      });
+    
 
-      if (!existingReminder) {
         await UserNotificationService.createNotification({
           userId: userData.userId,
           type: "DAILY_TASK_REMINDER",
@@ -180,7 +173,7 @@ const sendDailyTaskReminders = async () => {
         });
         remindersSent++;
         console.log(`📢 Sent daily reminder to ${userData.userName} with ${assignmentCount} assignment(s) (${totalPendingSlots} pending slots)`);
-      }
+      
     }
 
     if (remindersSent > 0) {
