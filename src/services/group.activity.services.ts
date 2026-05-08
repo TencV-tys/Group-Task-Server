@@ -401,9 +401,13 @@ static async getMemberContributionDetails(
       let totalPointsForAssignment = 0;
       
       if (isMultiSlot) {
-        // Multi-slot: sum points from ALL slots (total possible)
+        // ✅ FIXED: Use points PER SLOT (assignment-based)
+        // Calculate points per slot = total task points / number of slots
         const timeSlots = assignment.task?.timeSlots || [];
-        totalPointsForAssignment = timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
+        const numSlots = timeSlots.length;
+        const taskTotalPoints = assignment.task?.points || 0;
+        const pointsPerSlot = numSlots > 0 ? taskTotalPoints / numSlots : 0;
+        totalPointsForAssignment = pointsPerSlot;
         
         // Get completed slots
         const completedSlotIdsRaw = (assignment as any).completedTimeSlotIds;
@@ -422,11 +426,13 @@ static async getMemberContributionDetails(
         
         console.log(`  📊 Multi-slot: ${assignment.task!.title}`);
         console.log(`     Completed slots: ${completedSlotIds.length}/${timeSlots.length}`);
-        console.log(`     Total possible points: ${totalPointsForAssignment}`);
-        console.log(`     Stored points (with penalties): ${assignment.points}`);
+        console.log(`     Task total points: ${taskTotalPoints}`);
+        console.log(`     Points per slot: ${pointsPerSlot}`);
+        console.log(`     Total possible points (assignment-based): ${totalPointsForAssignment}`);
+        console.log(`     Stored earned points: ${assignment.points}`);
       } else {
         // Single-slot
-        totalPointsForAssignment = assignment.points || 0;
+        totalPointsForAssignment = assignment.task?.points || 0;
       }
       
       weeks[weekNum].totalAssignments++;
@@ -436,11 +442,11 @@ static async getMemberContributionDetails(
         weeks[weekNum].completedAssignments++;
       }
       
-      // ✅ CRITICAL FIX: Use actual stored points from database
+      // Use actual stored points from database for earned points
       if (assignment.verified === true) {
         const actualStoredPoints = assignment.points || 0;
         weeks[weekNum].earnedPoints += actualStoredPoints;
-        console.log(`  ✅ Verified: ${assignment.task!.title} - Adding stored points: ${actualStoredPoints}`);
+        console.log(`  ✅ Verified: ${assignment.task!.title} - Adding earned points: ${actualStoredPoints}`);
       }
       
       // Check missed status
@@ -675,37 +681,35 @@ static async getAdminDashboard(groupId: string, userId: string) {
     });
     const expiredCount = expiredAssignmentsList.length;
     
-    // Keep points for display
-    const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-    const earnedPoints = validAssignments
-      .filter(a => a.verified === true)
-      .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
-
-    // ✅ NEW: SLOT-BASED COMPLETION PERCENTAGE
-    let totalSlots = 0;
-    let verifiedSlots = 0;
-    
+    // ✅ FIXED: POINTS-BASED total and earned (consistent with getGroupActivitySummary)
+    let totalPoints = 0;
     for (const a of validAssignments) {
-      if (a.task?.timeSlots && a.task.timeSlots.length > 1) {
-        // Multi-slot task: count each slot individually
-        totalSlots += a.task.timeSlots.length;
-        const completedSlotIds = (a as any).completedTimeSlotIds || [];
-        verifiedSlots += completedSlotIds.length;
+      const task = a.task;
+      if (!task) continue;
+      
+      if (task.timeSlots && task.timeSlots.length > 1) {
+        // Points per slot = total task points / number of slots
+        const pointsPerSlot = task.points / task.timeSlots.length;
+        totalPoints += pointsPerSlot;
       } else {
-        // Single-slot task: count as 1
-        totalSlots += 1;
-        if (a.verified === true) verifiedSlots += 1;
+        totalPoints += (task.points || 0);
       }
     }
     
-    // Use slot-based completion percentage (more accurate for multi-slot)
-    const completionPercentage = totalSlots > 0 ? Math.round((verifiedSlots / totalSlots) * 100) : 0;
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+    
+    // ✅ POINTS-BASED completion percentage (6%)
+    const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
     
     console.log(`📊 [getAdminDashboard] Completion calculation:`, {
-      totalSlots,
-      verifiedSlots,
-      completionPercentage,
-      pointsBasedRate: totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0
+      totalAssignments,
+      verifiedAssignments,
+      totalPoints,      // 70
+      earnedPoints,     // 4
+      completionPercentage, // 6%
+      pointsBasedRate: completionPercentage
     });
     
     // Calculate neglected points from truly expired assignments (both types)
@@ -770,12 +774,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
           totalTasks: tasks.length,
           recurringTasks: tasks.filter(t => t.isRecurring).length,
           weeklyCompletion: {
-            total: totalAssignments,                    // ✅ Now returns total SLOTS
-            completed: verifiedAssignments,             // ✅ Now returns verified SLOTS
+            total: Math.round(totalPoints),      // 70 points
+            completed: Math.round(earnedPoints), // 4 points
+            percentage: completionPercentage,    // 6%
             pending: pendingAssignments,
             pendingVerification: pendingVerificationCount,
-            percentage: completionPercentage,     // ✅ Slot-based percentage
-            activeTotal: totalSlots - (expiredCount * 2) - pendingVerificationCount  // Rough estimate
+            activeTotal: totalAssignments - expiredCount - pendingVerificationCount
           },
           points: {
             total: totalPoints,
@@ -809,6 +813,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
   }
 }
 
+ 
 static async getMemberDashboard(groupId: string, userId: string) {
   try {
     console.log('🔍🔍🔍 [getMemberDashboard] START 🔍🔍🔍');
