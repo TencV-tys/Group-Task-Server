@@ -132,11 +132,11 @@ const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints)
 
 
 console.log(`📊 Results:`, {
-  totalAssignments: 14,
-  verifiedAssignments: 2,
-  totalPoints: 70,      // ✅ NOT 140
-  earnedPoints: 4,      // ✅ NOT 10
-  completionRate: (4/70)*100
+  totalAssignments: validAssignments.length,
+  verifiedAssignments: validAssignments.filter(a => a.verified === true).length,
+  totalPoints,
+  earnedPoints,
+  completionRate
 });
 
     const activeMembers = await prisma.groupMember.findMany({
