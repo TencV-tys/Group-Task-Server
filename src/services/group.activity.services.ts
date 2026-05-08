@@ -927,25 +927,43 @@ static async getMemberDashboard(groupId: string, userId: string) {
       }
     });
 
-    const formattedDueToday = dueTodayAssignments.map(a => ({
-      id: a.id,
-      taskId: a.taskId,
-      title: a.task!.title,
-      points: a.points || 0,
-      dueDate: a.dueDate,
-      timeSlot: a.timeSlot,
-      completed: a.completed
-    }));
+     const formattedDueToday = dueTodayAssignments.map(a => ({
+  id: a.id,
+  taskId: a.taskId,
+  title: a.task!.title,
+  points: a.points || 0,
+  dueDate: a.dueDate,
+  timeSlot: a.timeSlot,
+  completed: a.completed,
+  // ✅ ADD THESE FIELDS
+  verified: a.verified,
+  photoUrl: a.photoUrl,
+  expired: a.expired,
+  partiallyExpired: a.partiallyExpired,
+  missedTimeSlotIds: (a as any).missedTimeSlotIds || [],
+  completedTimeSlotIds: (a as any).completedTimeSlotIds || [],
+  timeSlots: a.task?.timeSlots || []
+}));
 
-    const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
-      id: a.id,
-      taskId: a.taskId,
-      title: a.task!.title,
-      points: a.points || 0,
-      dueDate: a.dueDate,
-      timeSlot: a.timeSlot,
-      isOverdue: false
-    }));
+const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
+  id: a.id,
+  taskId: a.taskId,
+  title: a.task!.title,
+  points: a.points || 0,
+  dueDate: a.dueDate,
+  timeSlot: a.timeSlot,
+  isOverdue: false,
+  // ✅ ADD THESE FIELDS
+  verified: a.verified,
+  photoUrl: a.photoUrl,
+  expired: a.expired,
+  partiallyExpired: a.partiallyExpired,
+  missedTimeSlotIds: (a as any).missedTimeSlotIds || [],
+  completedTimeSlotIds: (a as any).completedTimeSlotIds || [],
+  timeSlots: a.task?.timeSlots || []
+}));
+
+    
 
     const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
       const dueDate = new Date(a.dueDate);
