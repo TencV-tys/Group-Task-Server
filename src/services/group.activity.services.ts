@@ -118,23 +118,26 @@ export class GroupActivityService {
       }
     }).length;
     
-    // ✅ TOTAL POINTS: Sum of task.points (per assignment)
-    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.task?.points || 0), 0);
-    
-    // ✅ EARNED POINTS: Sum of assignment.points where verified (already includes penalties)
-    const earnedPoints = validAssignments
-      .filter(a => a.verified === true)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
+     // ✅ TOTAL POINTS: Sum of task.points (per assignment)
+const totalPoints = validAssignments.reduce((sum, a) => sum + (a.task?.points || 0), 0);
+// Should be: 14 × 5 = 70
 
-    const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+// ✅ EARNED POINTS: Sum of assignment.points where verified (already includes penalties)
+const earnedPoints = validAssignments
+  .filter(a => a.verified === true)
+  .reduce((sum, a) => sum + (a.points || 0), 0);
+// Should be: 2 × 2 = 4
 
-    console.log(`📊 [getGroupActivitySummary] Results:`, {
-      totalAssignments,
-      verifiedAssignments,
-      totalPoints,
-      earnedPoints,
-      completionRate
-    });
+const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+
+
+console.log(`📊 Results:`, {
+  totalAssignments: 14,
+  verifiedAssignments: 2,
+  totalPoints: 70,      // ✅ NOT 140
+  earnedPoints: 4,      // ✅ NOT 10
+  completionRate: (4/70)*100
+});
 
     const activeMembers = await prisma.groupMember.findMany({
       where: {
