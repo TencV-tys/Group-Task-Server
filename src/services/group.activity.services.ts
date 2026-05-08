@@ -118,15 +118,20 @@ export class GroupActivityService {
       }
     }).length;
     
-    // ✅ ASSIGNMENT-BASED: Use task.points (not slot points)
     let totalPoints = 0;
-    for (const a of validAssignments) {
-      const task = a.task;
-      if (!task) continue;
-      // Use task.points directly (assignment-based)
-      totalPoints += (task.points || 0);
-    }
-    
+for (const a of validAssignments) {
+  const task = a.task;
+  if (!task) continue;
+  
+  if (task.timeSlots && task.timeSlots.length > 1) {
+    // Average points per slot = total / number of slots
+    const pointsPerSlot = task.points / task.timeSlots.length;
+    totalPoints += pointsPerSlot;
+  } else {
+    totalPoints += (task.points || 0);
+  }
+}
+   
     // ✅ EARNED POINTS from verified assignments (assignment.points already has penalties)
     const earnedPoints = validAssignments
       .filter(a => a.verified === true)
