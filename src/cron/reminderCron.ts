@@ -193,7 +193,7 @@ const sendDailyTaskReminders = async () => {
     return 0;
   }
 };
-
+ 
 // ========== INITIALIZE CRON JOBS ==========
 export const initReminderCron = () => {
   
@@ -223,6 +223,8 @@ export const initReminderCron = () => {
     console.error('❌ Error in reminder cron job:', error);
   }
     
+},{
+  timezone: "Asia/Manila"
 });
 
   // 2️⃣ RUN AT 7:00 AM PHT (23:00 UTC) - Early morning daily summary
