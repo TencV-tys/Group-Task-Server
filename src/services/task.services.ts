@@ -2736,6 +2736,13 @@ static async getTaskStatistics(groupId: string, userId: string) {
       return { success: false, message: "Group not found" };
     }
 
+    // ✅ Get user's cumulative points from GroupMember table (all-time points)
+    const userMember = await prisma.groupMember.findFirst({
+      where: { userId, groupId, isActive: true },
+      select: { cumulativePoints: true }
+    });
+    const userTotalPoints = userMember?.cumulativePoints || 0;
+
     const totalTasks = await prisma.task.count({
       where: { groupId, isDeleted: false }
     });
@@ -2771,16 +2778,14 @@ static async getTaskStatistics(groupId: string, userId: string) {
     });
 
     const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
-    const nowUTC = new Date(); // Already UTC
+    const nowUTC = new Date();
 
-    // ✅ FIXED: Calculate using UTC time comparison
     const completedAssignments = validAssignments.filter(a => a.completed === true);
     
     const neglectedAssignments = validAssignments.filter(a => {
       if (a.completed) return false;
       if (a.expired === true) return true;
       const dueDate = new Date(a.dueDate);
-      // Use getTime() for proper UTC comparison
       return dueDate.getTime() < nowUTC.getTime();
     });
     
@@ -2814,6 +2819,7 @@ static async getTaskStatistics(groupId: string, userId: string) {
       completedPoints,
       pendingPoints,
       neglectedPoints,
+      userTotalPoints,  // ✅ All-time points
       currentTimeUTC: nowUTC.toISOString()
     });
 
@@ -2842,7 +2848,7 @@ static async getTaskStatistics(groupId: string, userId: string) {
           completed: userCompleted.length,
           pending: userPending.length,
           neglected: userNeglected.length,
-          userPoints: userCompleted.reduce((sum, a) => sum + (a.points || 0), 0)
+          userPoints: userTotalPoints  // ✅ Now returns all-time points
         }
       }
     };

@@ -107,7 +107,7 @@ export class GroupActivityService {
     ).length;
     const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
     
-    // ✅ FIXED: Count neglected for BOTH single and multi-slot tasks
+    // Count neglected for BOTH single and multi-slot tasks
     const neglectedAssignments = validAssignments.filter(a => {
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
       
@@ -119,16 +119,30 @@ export class GroupActivityService {
       }
     }).length;
     
-    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.points || 0), 0);
+    // ✅ FIXED: Calculate total points from ORIGINAL task/slot points (not penalized)
+    let totalOriginalPoints = 0;
+    for (const a of validAssignments) {
+      if (a.task?.timeSlots && a.task.timeSlots.length > 1) {
+        // Multi-slot: sum all slot original points
+        const slotPoints = a.task.timeSlots.reduce((s, slot) => s + (slot.points || 0), 0);
+        totalOriginalPoints += slotPoints;
+      } else {
+        // Single-slot: use task points
+        totalOriginalPoints += (a.task?.points || 0);
+      }
+    }
+    
+    // ✅ FIXED: Calculate earned points from STORED assignment.points (already includes penalties)
     const earnedPoints = validAssignments
       .filter(a => a.verified === true)
-      .reduce((sum, a) => {
-        let pointsToAdd = a.points || 0;
-        if (a.timeSlot && a.timeSlot.points) {
-          pointsToAdd = a.timeSlot.points;
-        }
-        return sum + pointsToAdd;
-      }, 0);
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+
+    console.log(`📊 [getGroupActivitySummary] Points calculation:`, {
+      totalOriginalPoints,
+      earnedPoints,
+      verifiedCount: verifiedAssignments,
+      totalAssignments
+    });
 
     const activeMembers = await prisma.groupMember.findMany({
       where: {
@@ -177,7 +191,7 @@ export class GroupActivityService {
         const completedAssignmentsCount = validUserAssignments.filter(a => a.completed).length;
         const verifiedAssignmentsCount = validUserAssignments.filter(a => a.verified === true).length;
         
-        // ✅ FIXED: Count neglected for each member
+        // Count neglected for each member
         const neglectedCount = validUserAssignments.filter(a => {
           const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
           if (isMultiSlot) {
@@ -188,6 +202,7 @@ export class GroupActivityService {
           }
         }).length;
         
+        // ✅ Use stored points for earned points total
         const earnedPointsTotal = validUserAssignments
           .filter(a => a.verified === true)
           .reduce((sum, a) => sum + (a.points || 0), 0);
@@ -232,6 +247,8 @@ export class GroupActivityService {
       role: admin.groupRole
     }));
 
+    const completionRate = totalOriginalPoints > 0 ? Math.round((earnedPoints / totalOriginalPoints) * 100) : 0;
+
     return {
       success: true,
       message: "Group activity summary retrieved",
@@ -252,9 +269,9 @@ export class GroupActivityService {
             neglected: neglectedAssignments
           },
           points: {
-            total: totalPoints,
-            earned: earnedPoints,
-            completionRate: totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0
+            total: totalOriginalPoints,    // ✅ Now total original points (140)
+            earned: earnedPoints,          // ✅ Now earned points with penalties (4)
+            completionRate
           }
         },
         memberContributions,
@@ -773,7 +790,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
           neglectedPoints: neglectedByMember[m.userId]?.points || 0
         }))
       }
-    };
+    }; 
 
   } catch (error: any) {
     console.error("Error in getAdminDashboard:", error);
