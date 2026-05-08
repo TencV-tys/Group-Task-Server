@@ -224,25 +224,33 @@ export const initReminderCron = () => {
   cron.schedule('0 23 * * *', async () => {
     console.log('🌅 Running morning daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
-  });
+  },{
+  timezone: "Asia/Manila"  // ✅ ADD THIS
+});
 
   // 3️⃣ RUN AT 12:00 PM PHT (04:00 UTC) - Noon reminder
   cron.schedule('0 4 * * *', async () => {
     console.log('☀️ Running afternoon daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
-  });
+  },{
+  timezone: "Asia/Manila"  // ✅ ADD THIS
+});
 
   // 4️⃣ RUN AT 4:00 PM PHT (08:00 UTC) - Afternoon/Evening reminder
   cron.schedule('0 8 * * *', async () => {
     console.log('🌆 Running evening daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
-  });
+  },{
+  timezone: "Asia/Manila"  // ✅ ADD THIS
+});
 
   // 5️⃣ RUN AT 7:00 PM PHT (11:00 UTC) - Night reminder
   cron.schedule('0 11 * * *', async () => {
     console.log('🌙 Running night daily task reminder at:', new Date().toISOString());
     await sendDailyTaskReminders();
-  });
+  },{
+  timezone: "Asia/Manila"  // ✅ ADD THIS
+});
   
   console.log('🔔 Task reminder cron initialized:');
   console.log('   ├─ Every 10 minutes: Upcoming task alerts (supports multi-slot tasks, excludes admins)');
