@@ -200,7 +200,7 @@ export const initReminderCron = () => {
   // 1️⃣ RUN EVERY 10 MINUTES - Upcoming task reminders
   //    */10 means every 10 minutes (0, 10, 20, 30, 40, 50)
  
-  cron.schedule('*/10 * * * *', async () => {
+ cron.schedule('*/10 * * * *', async () => {
   console.log('🔔 Running task reminder check at:', new Date().toISOString());
   
   try { 
@@ -215,12 +215,12 @@ export const initReminderCron = () => {
         console.log(`ℹ️ No reminders needed at ${new Date().toISOString()}`);
       }
     } else {
-      console.error(`❌ Reminder error: ${result.message}`);
+      // ✅ Handle error without accessing result.message
+      console.error(`❌ Reminder cron failed`);
     }
     
   } catch (error) {
     console.error('❌ Error in reminder cron job:', error);
-    // Don't re-throw - let cron continue
   }
     
 });
