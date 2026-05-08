@@ -4,7 +4,7 @@ import prisma from "../prisma";
 
 export class GroupActivityService {
 
-  static async getGroupActivitySummary(groupId: string, userId: string) {
+ static async getGroupActivitySummary(groupId: string, userId: string) {
   try {
     console.log('\n🔍🔍🔍 [getGroupActivitySummary] START 🔍🔍🔍');
     console.log(`📊 Group ID: ${groupId}`);
@@ -89,15 +89,7 @@ export class GroupActivityService {
             id: true,
             title: true, 
             points: true,
-            timeSlots: {
-              select: {
-                id: true,
-                startTime: true,
-                endTime: true,
-                label: true,
-                points: true
-              }
-            }
+            timeSlots: true
           } 
         },
         timeSlot: true
@@ -105,90 +97,17 @@ export class GroupActivityService {
     });
 
     const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
-    const now = new Date();
     
-    // ========== SLOT-BASED COUNTS ==========
-    let totalSlots = 0;
-    let completedSlots = 0;
-    let verifiedSlots = 0;
-    let pendingVerificationSlots = 0;
-    let rejectedSlots = 0;
-    let neglectedSlots = 0;
-    let totalOriginalPoints = 0;
-    let earnedPoints = 0;
-    
-    for (const a of validAssignments) {
-      const timeSlots = a.task?.timeSlots || [];
-      const isMultiSlot = timeSlots.length > 1;
-      
-      if (isMultiSlot) {
-        // Multi-slot task: count each slot individually
-        const completedSlotIds = (a as any).completedTimeSlotIds || [];
-        const missedSlotIds = (a as any).missedTimeSlotIds || [];
-        
-        for (const slot of timeSlots) {
-          totalSlots++;
-          totalOriginalPoints += (slot.points || 0);
-          
-          const isCompleted = completedSlotIds.includes(slot.id);
-          const isMissed = missedSlotIds.includes(slot.id);
-          const isVerified = a.verified === true;
-          const isRejected = a.verified === false;
-          const hasPhoto = a.photoUrl !== null;
-          
-          if (isVerified && isCompleted) {
-            verifiedSlots++;
-            earnedPoints += (slot.points || 0);
-          } else if (isRejected && isCompleted) {
-            rejectedSlots++;
-          } else if (hasPhoto && !isVerified && !isRejected && isCompleted) {
-            pendingVerificationSlots++;
-          } else if (isMissed) {
-            neglectedSlots++;
-          } else if (!isCompleted && !isMissed) {
-            // Not started - do nothing, just counted in totalSlots
-          }
-          
-          if (isCompleted) {
-            completedSlots++;
-          }
-        }
-      } else {
-        // Single-slot task
-        totalSlots++;
-        totalOriginalPoints += (a.task?.points || 0);
-        
-        const isVerified = a.verified === true;
-        const isRejected = a.verified === false;
-        const hasPhoto = a.photoUrl !== null;
-        const isExpired = a.expired === true;
-        
-        if (isVerified) {
-          verifiedSlots++;
-          completedSlots++;
-          earnedPoints += (a.points || 0);
-        } else if (isRejected) {
-          rejectedSlots++;
-          if (a.completed) completedSlots++;
-        } else if (hasPhoto && !isVerified && !isRejected) {
-          pendingVerificationSlots++;
-          if (a.completed) completedSlots++;
-        } else if (isExpired) {
-          neglectedSlots++;
-        } else if (a.completed) {
-          completedSlots++;
-        }
-      }
-    }
-
+    // ========== SIMPLE ASSIGNMENT-BASED CALCULATIONS ==========
+    const totalAssignments = validAssignments.length;
     const completedAssignments = validAssignments.filter(a => a.completed === true).length;
     const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
-    const pendingVerificationAssignments = validAssignments.filter(a => 
+    const pendingVerification = validAssignments.filter(a => 
       a.photoUrl !== null && a.verified === null
     ).length;
     const rejectedAssignments = validAssignments.filter(a => a.verified === false).length;
     
-    // Neglected assignments (at least one missed slot)
+    // Count neglected (has missed slots OR expired)
     const neglectedAssignments = validAssignments.filter(a => {
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
       if (isMultiSlot) {
@@ -198,16 +117,23 @@ export class GroupActivityService {
         return a.expired === true && a.verified !== true;
       }
     }).length;
+    
+    // ✅ TOTAL POINTS: Sum of task.points (per assignment)
+    const totalPoints = validAssignments.reduce((sum, a) => sum + (a.task?.points || 0), 0);
+    
+    // ✅ EARNED POINTS: Sum of assignment.points where verified (already includes penalties)
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
 
-    console.log(`📊 [getGroupActivitySummary] SLOT-BASED Stats:`, {
-      totalSlots,
-      verifiedSlots,
-      pendingVerificationSlots,
-      rejectedSlots,
-      neglectedSlots,
-      totalOriginalPoints,
+    const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+
+    console.log(`📊 [getGroupActivitySummary] Results:`, {
+      totalAssignments,
+      verifiedAssignments,
+      totalPoints,
       earnedPoints,
-      completionRate: totalOriginalPoints > 0 ? Math.round((earnedPoints / totalOriginalPoints) * 100) : 0
+      completionRate
     });
 
     const activeMembers = await prisma.groupMember.findMany({
@@ -253,32 +179,11 @@ export class GroupActivityService {
       .map(item => {
         const validUserAssignments = item.user.assignments.filter(a => a.task !== null);
         
-        // SLOT-BASED per member
-        let memberTotalSlots = 0;
-        let memberVerifiedSlots = 0;
-        let memberEarnedPoints = 0;
+        const totalAssignmentsCount = validUserAssignments.length;
+        const verifiedAssignmentsCount = validUserAssignments.filter(a => a.verified === true).length;
         
-        for (const a of validUserAssignments) {
-          const timeSlots = a.task?.timeSlots || [];
-          if (timeSlots.length > 1) {
-            const completedSlotIds = (a as any).completedTimeSlotIds || [];
-            for (const slot of timeSlots) {
-              memberTotalSlots++;
-              if (completedSlotIds.includes(slot.id) && a.verified === true) {
-                memberVerifiedSlots++;
-                memberEarnedPoints += (slot.points || 0);
-              }
-            }
-          } else {
-            memberTotalSlots++;
-            if (a.verified === true) {
-              memberVerifiedSlots++;
-              memberEarnedPoints += (a.points || 0);
-            }
-          }
-        }
-        
-        const memberNeglectedCount = validUserAssignments.filter(a => {
+        // Count neglected for each member
+        const neglectedCount = validUserAssignments.filter(a => {
           const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
           if (isMultiSlot) {
             const missedSlotIds = (a as any).missedTimeSlotIds || [];
@@ -287,16 +192,21 @@ export class GroupActivityService {
             return a.expired === true && a.verified !== true;
           }
         }).length;
+        
+        // Earned points for this member
+        const earnedPointsTotal = validUserAssignments
+          .filter(a => a.verified === true)
+          .reduce((sum, a) => sum + (a.points || 0), 0);
 
         return {
           id: item.user.id,
           fullName: item.user.fullName,
           avatarUrl: item.user.avatarUrl,
-          totalAssignments: memberTotalSlots,
-          completedAssignments: memberVerifiedSlots,
-          verifiedAssignments: memberVerifiedSlots,
-          neglectedCount: memberNeglectedCount,
-          earnedPoints: memberEarnedPoints,
+          totalAssignments: totalAssignmentsCount,
+          completedAssignments: verifiedAssignmentsCount,
+          verifiedAssignments: verifiedAssignmentsCount,
+          neglectedCount: neglectedCount,
+          earnedPoints: earnedPointsTotal,
           inRotation: true
         };
       })
@@ -328,8 +238,6 @@ export class GroupActivityService {
       role: admin.groupRole
     }));
 
-    const completionRate = totalOriginalPoints > 0 ? Math.round((earnedPoints / totalOriginalPoints) * 100) : 0;
-
     return {
       success: true,
       message: "Group activity summary retrieved",
@@ -342,16 +250,16 @@ export class GroupActivityService {
           totalTasks,
           currentWeek: group?.currentRotationWeek || 1,
           assignments: {
-            total: totalSlots,           // ✅ Total SLOTS
-            completed: completedSlots,    // ✅ Completed SLOTS
-            pendingVerification: pendingVerificationSlots,  // ✅ Pending SLOTS
-            verified: verifiedSlots,      // ✅ Verified SLOTS
-            rejected: rejectedSlots,      // ✅ Rejected SLOTS
-            neglected: neglectedSlots     // ✅ Neglected SLOTS
+            total: totalAssignments,
+            completed: completedAssignments,
+            pendingVerification,
+            verified: verifiedAssignments,
+            rejected: rejectedAssignments,
+            neglected: neglectedAssignments
           },
           points: {
-            total: totalOriginalPoints,   // ✅ Total original points (all slots)
-            earned: earnedPoints,         // ✅ Earned points (with penalties)
+            total: totalPoints,      // ✅ 70 (14 tasks × 5 points)
+            earned: earnedPoints,    // ✅ 4 (2 verified × 2 points)
             completionRate
           }
         },
