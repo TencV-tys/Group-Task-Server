@@ -2056,20 +2056,14 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     const now = new Date();
     const { todayUTC } = AssignmentService.getUTCToday();
 
-    // Get assignments where NOT all slots are completed AND no photo
+    // Get assignments for current week
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
         rotationWeek: group.currentRotationWeek,
         completed: false,
         photoUrl: null,
-        AND: [
-          {
-            OR: [
-              { verified: null }
-            ]
-          }
-        ]
+        verified: null
       },
       include: {
         user: { select: { id: true, fullName: true, avatarUrl: true } },
@@ -2095,20 +2089,59 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       // Only check assignments due TODAY
       if (dueDateUTC !== todayUTC.getTime()) continue;
 
+      // ✅ FETCH FRESH DATA for this assignment
+      const freshAssignment = await prisma.assignment.findUnique({
+        where: { id: assignment.id },
+        select: { 
+          completedTimeSlotIds: true,
+          missedTimeSlotIds: true
+        }
+      });
+      
+      let completedSlotIds: string[] = [];
+const completedRaw = freshAssignment?.completedTimeSlotIds;
+if (completedRaw) {
+  if (typeof completedRaw === 'string') {
+    try { 
+      const parsed = JSON.parse(completedRaw);
+      completedSlotIds = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    } catch(e) { 
+      completedSlotIds = []; 
+    }
+  } else if (Array.isArray(completedRaw)) {
+    // Filter to ensure all items are strings
+    completedSlotIds = completedRaw.filter((item): item is string => typeof item === 'string');
+  }
+}
+
+let missedSlotIds: string[] = [];
+const missedRaw = freshAssignment?.missedTimeSlotIds;
+if (missedRaw) {
+  if (typeof missedRaw === 'string') {
+    try { 
+      const parsed = JSON.parse(missedRaw);
+      missedSlotIds = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    } catch(e) { 
+      missedSlotIds = []; 
+    }
+  } else if (Array.isArray(missedRaw)) {
+    // Filter to ensure all items are strings
+    missedSlotIds = missedRaw.filter((item): item is string => typeof item === 'string');
+  }
+} 
+
       const timeSlots = assignment.task.timeSlots;
-      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
       
       // ✅ Check if ALL slots are either completed OR already missed
       const allSlotsAccounted = timeSlots.every(slot => 
         completedSlotIds.includes(slot.id) || missedSlotIds.includes(slot.id)
       );
       
-      // If all slots are accounted for, skip (nothing to neglect)
+      // If all slots are accounted for, skip
       if (allSlotsAccounted) continue;
       
-      // Find which slots are still pending AND past their grace period
-      let newlyMissedSlots = [];
+      // Find slots that are still pending AND past their grace period
+      const newlyMissedSlots = [];
       for (const slot of timeSlots) {
         if (completedSlotIds.includes(slot.id)) continue;
         if (missedSlotIds.includes(slot.id)) continue;
@@ -2133,23 +2166,23 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       
       if (newlyMissedSlots.length === 0) continue;
       
-      // Mark as partially expired or fully expired
+      // ✅ Update missed slots (merge with existing)
       const updatedMissedIds = [...missedSlotIds, ...newlyMissedSlots.map(s => s.id)];
       const allSlotsMissed = timeSlots.every(slot => updatedMissedIds.includes(slot.id));
       
-      // Calculate points lost (only for newly missed slots)
+      // Calculate points lost for newly missed slots only
       let pointsLost = 0;
       for (const slot of newlyMissedSlots) {
         pointsLost += slot.points || 0;
       }
       totalPointsNotAwarded += pointsLost;
       
-      // Deduct points from user
+      // Deduct points
       const currentMember = await prisma.groupMember.findFirst({
         where: { userId: assignment.userId, groupId, isActive: true },
         select: { cumulativePoints: true }
       });
-      let currentPoints = currentMember?.cumulativePoints || 0;
+      const currentPoints = currentMember?.cumulativePoints || 0;
       const actualDeduction = Math.min(pointsLost, currentPoints);
       
       if (actualDeduction > 0) {
@@ -2162,21 +2195,21 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         });
       }
       
-      // Update assignment
+      // ✅ Update assignment with proper partial/full expiration
       await prisma.assignment.update({
         where: { id: assignment.id },
         data: {
           missedTimeSlotIds: updatedMissedIds,
-          points: 0,
-          partiallyExpired: !allSlotsMissed,
-          expired: allSlotsMissed,
+          points: Math.max(0, (currentPoints - actualDeduction)), // Remaining points if any
+          partiallyExpired: !allSlotsMissed && updatedMissedIds.length > 0, // ✅ TRUE if some but not all slots missed
+          expired: allSlotsMissed, // ✅ TRUE only if ALL slots missed
           expiredAt: allSlotsMissed ? now : undefined
         }
       });
       
       neglectedCount += newlyMissedSlots.length;
       
-      // Send ONE notification per assignment (not per slot)
+      // Send notification for newly missed slots
       const missedSlotsList = newlyMissedSlots.map(s => `${s.startTime}-${s.endTime}`).join(', ');
       await UserNotificationService.createNotification({
         userId: assignment.userId,
@@ -2199,9 +2232,10 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
   }
 }
 
+
 static async sendUpcomingTaskReminders() {
   try {
-    const processedAssignments = new Set<string>();
+    const processedSlots = new Set<string>();
     const now = new Date();
     const phtTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
     const currentInMinutes = phtTime.getHours() * 60 + phtTime.getMinutes();
@@ -2224,23 +2258,74 @@ static async sendUpcomingTaskReminders() {
       }
     });
     
-    // ✅ FIX: Change validAssignments to assignments
     const validAssignments = assignments.filter(a => a.task !== null);
-    
     let remindersSent = 0;
-    const COOLDOWN_MS = 24 * 60 * 60 * 1000; // Once per day per assignment
+    const COOLDOWN_MS = 24 * 60 * 60 * 1000;
     
-    for (const assignment of validAssignments) {  // ← This needs validAssignments
-      if (processedAssignments.has(assignment.id)) continue;
+    // Fetch ALL recent reminders at once
+    const recentReminders = await prisma.userNotification.findMany({
+      where: {
+        type: "TASK_DAILY_REMINDER",
+        createdAt: { gte: new Date(Date.now() - COOLDOWN_MS) }
+      }
+    });
+    
+    // Create Set of assignmentId_slotId that already received reminders
+    const remindedSlotKeys = new Set<string>();
+    for (const reminder of recentReminders) {
+      const data = reminder.data as any;
+      if (data?.assignmentId && data?.slotId) {
+        remindedSlotKeys.add(`${reminder.userId}_${data.assignmentId}_${data.slotId}`);
+      }
+    }
+    
+    for (const assignment of validAssignments) {
+      // Get fresh completed/missed slots
+      const freshAssignment = await prisma.assignment.findUnique({
+        where: { id: assignment.id },
+        select: { completedTimeSlotIds: true, missedTimeSlotIds: true }
+      });
       
-      const completedSlotIds = (assignment as any).completedTimeSlotIds || [];
-      const missedSlotIds = (assignment as any).missedTimeSlotIds || [];
+      // ✅ Type-safe parsing for completedTimeSlotIds
+      let completedSlotIds: string[] = [];
+      const completedRaw = freshAssignment?.completedTimeSlotIds;
+      if (completedRaw) {
+        if (typeof completedRaw === 'string') {
+          try { 
+            const parsed = JSON.parse(completedRaw);
+            completedSlotIds = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+          } catch(e) { 
+            completedSlotIds = []; 
+          }
+        } else if (Array.isArray(completedRaw)) {
+          completedSlotIds = completedRaw.filter((item): item is string => typeof item === 'string');
+        }
+      }
+      
+      // ✅ Type-safe parsing for missedTimeSlotIds
+      let missedSlotIds: string[] = [];
+      const missedRaw = freshAssignment?.missedTimeSlotIds;
+      if (missedRaw) {
+        if (typeof missedRaw === 'string') {
+          try { 
+            const parsed = JSON.parse(missedRaw);
+            missedSlotIds = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+          } catch(e) { 
+            missedSlotIds = []; 
+          }
+        } else if (Array.isArray(missedRaw)) {
+          missedSlotIds = missedRaw.filter((item): item is string => typeof item === 'string');
+        }
+      }
+      
       const pendingSlots = [];
+      const newlyPendingSlots = [];
       
       for (const slot of assignment.task.timeSlots) {
         if (completedSlotIds.includes(slot.id)) continue;
         if (missedSlotIds.includes(slot.id)) continue;
         
+        // Calculate if slot is still within grace period
         const [endHour, endMinute] = slot.endTime.split(':').map(Number);
         let endHourUTC = endHour - 8;
         if (endHourUTC < 0) endHourUTC += 24;
@@ -2255,27 +2340,21 @@ static async sendUpcomingTaskReminders() {
         
         if (currentInMinutes <= graceEndMins) {
           pendingSlots.push(slot);
+          
+          // Check if this specific slot already got a reminder
+          const slotKey = `${assignment.userId}_${assignment.id}_${slot.id}`;
+          if (!remindedSlotKeys.has(slotKey) && !processedSlots.has(slotKey)) {
+            newlyPendingSlots.push(slot);
+            processedSlots.add(slotKey);
+          }
         }
       }
       
-      if (pendingSlots.length === 0) continue;
+      if (newlyPendingSlots.length === 0) continue;
       
-      // Check cooldown
-      const recentReminder = await prisma.userNotification.findFirst({
-        where: {
-          userId: assignment.userId,
-          type: "TASK_DAILY_REMINDER",
-          createdAt: { gte: new Date(Date.now() - COOLDOWN_MS) },
-          data: { path: "$.assignmentId", equals: assignment.id }
-        }
-      });
-      
-      if (recentReminder) continue;
-      
-      processedAssignments.add(assignment.id);
-      
-      const slotCount = pendingSlots.length;
-      const slotTimes = pendingSlots.map(s => s.startTime).join(', ');
+      // Send ONE notification for NEWLY pending slots only
+      const slotCount = newlyPendingSlots.length;
+      const slotTimes = newlyPendingSlots.map(s => s.startTime).join(', ');
       
       await UserNotificationService.createNotification({
         userId: assignment.userId,
@@ -2284,7 +2363,9 @@ static async sendUpcomingTaskReminders() {
         message: `You have ${slotCount} pending slot${slotCount > 1 ? 's' : ''} for "${assignment.task.title}" today (${slotTimes})`,
         data: {
           assignmentId: assignment.id,
+          taskId: assignment.task.id,
           taskTitle: assignment.task.title,
+          slotId: newlyPendingSlots[0].id,
           pendingSlots: slotCount,
           slotTimes
         }
@@ -2298,6 +2379,7 @@ static async sendUpcomingTaskReminders() {
     return { success: false, remindersSent: 0 };
   }
 }
+
 
 private static async markAssignmentAsNeglected(
   assignmentId: string,
