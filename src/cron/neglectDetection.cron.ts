@@ -23,5 +23,5 @@ export const initNeglectDetectionCron = () => {
     }
   });
 
-  console.log('⏰ Neglect detection cron job initialized (running every 30 minutes)');
+  console.log('⏰ Neglect detection cron job initialized (running every 15 minutes)');
 };
