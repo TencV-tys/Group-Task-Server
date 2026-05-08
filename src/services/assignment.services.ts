@@ -1763,8 +1763,6 @@ static async getUserAssignments(
       taskId: { not: null }
     };
     
-    console.log(`📊 Initial where clause:`, JSON.stringify(where, null, 2));
-
     if (filters.status) {
       switch (filters.status) {
         case 'pending':
@@ -1774,44 +1772,33 @@ static async getUserAssignments(
             { partiallyExpired: false },
             { partiallyExpired: null }
           ];
-          console.log(`   ✅ Filter: pending (completed = false, expired = false, partiallyExpired = false/null)`);
           break;
-              case 'pending_verification':  // ✅ ADD THIS CASE
-      where.photoUrl = { not: null };
-      where.verified = null;
-      where.completed = false;
-      console.log(`   ✅ Filter: pending_verification (has photo, awaiting admin)`);
-      break;
+        case 'pending_verification':
+          where.photoUrl = { not: null };
+          where.verified = null;
+          where.completed = false;
+          break;
         case 'completed':
           where.completed = true;
           where.verified = null;
-          console.log(`   ✅ Filter: completed (completed = true, verified = null)`);
           break;
         case 'verified':
           where.completed = true;
           where.verified = true;
-          console.log(`   ✅ Filter: verified (completed = true, verified = true)`);
           break;
         case 'rejected':
           where.completed = true;
           where.verified = false;
-          console.log(`   ✅ Filter: rejected (completed = true, verified = false)`);
           break;
       }
     }
 
     if (filters.week !== undefined) {
       where.rotationWeek = filters.week;
-      console.log(`   ✅ Filter: week = ${filters.week}`);
     }
 
-    // ✅ FIXED: Use UTC for date boundaries
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
-    
-    console.log(`📅 Today UTC: ${todayUTC.toISOString()}`);
-    console.log(`📅 Tomorrow UTC: ${tomorrowUTC.toISOString()}`);
 
-    console.log(`🔍 Executing Prisma query...`);
     const [assignments, total] = await Promise.all([
       prisma.assignment.findMany({
         where,
@@ -1843,10 +1830,34 @@ static async getUserAssignments(
       prisma.assignment.count({ where })
     ]);
 
-    console.log(`📊 Found ${assignments.length} assignments (total: ${total})`);
-
     const validAssignments = assignments.filter(a => a.task !== null);
-    console.log(`✅ Valid assignments (with task): ${validAssignments.length}`);
+    
+    // ✅ Calculate total possible points for this user
+    let totalPossiblePoints = 0;
+    for (const a of validAssignments) {
+      const task = a.task;
+      if (task) {
+        if (task.timeSlots && task.timeSlots.length > 1) {
+          // Points per slot (assignment-based)
+          const pointsPerSlot = task.points / task.timeSlots.length;
+          totalPossiblePoints += pointsPerSlot;
+        } else {
+          totalPossiblePoints += (task.points || 0);
+        }
+      }
+    }
+    
+    // ✅ Calculate earned points
+    const earnedPoints = validAssignments
+      .filter(a => a.verified === true)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+    
+    console.log(`📊 [getUserAssignments] Points summary for user ${userId}:`, {
+      totalAssignments: validAssignments.length,
+      totalPossiblePoints,
+      earnedPoints,
+      completionRate: totalPossiblePoints > 0 ? Math.round((earnedPoints / totalPossiblePoints) * 100) : 0
+    });
     
     const formattedAssignments = validAssignments.map(assignment => {
       const verificationStatus = AssignmentHelpers.getVerificationStatus(assignment);
@@ -1859,6 +1870,13 @@ static async getUserAssignments(
         id: assignment.id,
         taskId: assignment.taskId,
         taskTitle: assignment.task!.title,
+        task: {
+          id: assignment.task!.id,
+          title: assignment.task!.title,
+          points: assignment.task!.points,
+          executionFrequency: assignment.task!.executionFrequency,
+          timeSlots: assignment.task!.timeSlots || []
+        },
         group: assignment.task!.group,
         points: assignment.points,
         completed: assignment.completed,
@@ -1872,7 +1890,6 @@ static async getUserAssignments(
         timeUntilDue,
         timeSlot: assignment.timeSlot,
         rotationWeek: assignment.rotationWeek,
-        // ✅ FIXED: Use UTC for isDueToday
         isDueToday: assignment.dueDate >= todayUTC && assignment.dueDate < tomorrowUTC,
         isHistorical: false,
         expired: assignment.expired || false,
@@ -1897,8 +1914,6 @@ static async getUserAssignments(
       },
       orderBy: { dueDate: 'asc' }
     });
-
-    console.log(`📚 Historical assignments (deleted tasks): ${historicalAssignments.length}`);
 
     const formattedHistorical = historicalAssignments.map(assignment => ({
       id: assignment.id,
@@ -1927,14 +1942,14 @@ static async getUserAssignments(
     })); 
 
     const allAssignments = [...formattedAssignments, ...formattedHistorical];
-    console.log(`📊 Total assignments returned: ${allAssignments.length}`);
-    console.log(`🔍🔍🔍 [getUserAssignments] END 🔍🔍🔍`);
 
     return {
       success: true,
       message: "Assignments retrieved successfully",
       assignments: allAssignments,
       total: validAssignments.length + historicalAssignments.length,
+      totalPossiblePoints,  // ✅ ADD THIS
+      earnedPoints,         // ✅ ADD THIS
       filters,
       currentDate: { today: todayUTC, tomorrow: tomorrowUTC }
     };
