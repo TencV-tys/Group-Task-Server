@@ -2401,7 +2401,9 @@ static async sendUpcomingTaskReminders() {
     const currentInMinutes = phtTime.getHours() * 60 + phtTime.getMinutes();
     const { todayUTC, tomorrowUTC } = AssignmentService.getUTCToday();
     
-    console.log(`⏰ Current PHT time: ${phtTime.getHours()}:${phtTime.getMinutes()} (${currentInMinutes} minutes)`);
+    console.log(`\n⏰ ========== [sendUpcomingTaskReminders] ==========`);
+    console.log(`   Current PHT time: ${phtTime.getHours()}:${phtTime.getMinutes().toString().padStart(2, '0')} (${currentInMinutes} minutes)`);
+    console.log(`   Today UTC: ${todayUTC.toISOString()}`);
     
     const assignments = await prisma.assignment.findMany({
       where: {
@@ -2421,13 +2423,15 @@ static async sendUpcomingTaskReminders() {
     });
     
     const validAssignments = assignments.filter(a => a.task !== null);
-    let remindersSent = 0;
-    const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+    console.log(`📊 Found ${validAssignments.length} active assignments for today`);
     
-    // Fetch recent reminders
+    let remindersSent = 0;
+    const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours cooldown per slot
+    
+    // Fetch recent reminders for this user
     const recentReminders = await prisma.userNotification.findMany({
       where: {
-        type: "TASK_DAILY_REMINDER",
+        type: { in: ["TASK_REMINDER", "TASK_ACTIVE"] },
         createdAt: { gte: new Date(Date.now() - COOLDOWN_MS) }
       }
     });
@@ -2441,6 +2445,7 @@ static async sendUpcomingTaskReminders() {
     }
     
     for (const assignment of validAssignments) {
+      // Get fresh completed/missed slots
       const freshAssignment = await prisma.assignment.findUnique({
         where: { id: assignment.id },
         select: { completedTimeSlotIds: true, missedTimeSlotIds: true }
@@ -2472,9 +2477,19 @@ static async sendUpcomingTaskReminders() {
         }
       }
       
+      console.log(`\n📋 Assignment: ${assignment.task.title} (User: ${assignment.user?.fullName})`);
+      
+      // ✅ Check EACH slot INDEPENDENTLY
       for (const slot of assignment.task.timeSlots) {
-        if (completedSlotIds.includes(slot.id)) continue;
-        if (missedSlotIds.includes(slot.id)) continue;
+        // Skip already completed or missed slots
+        if (completedSlotIds.includes(slot.id)) {
+          console.log(`   ⏭️ Slot ${slot.startTime}-${slot.endTime} already COMPLETED`);
+          continue;
+        }
+        if (missedSlotIds.includes(slot.id)) {
+          console.log(`   ⏭️ Slot ${slot.startTime}-${slot.endTime} already MISSED`);
+          continue;
+        }
         
         // Parse times
         const [startHour, startMinute] = slot.startTime.split(':').map(Number);
@@ -2484,41 +2499,50 @@ static async sendUpcomingTaskReminders() {
         const endInMinutes = endHour * 60 + endMinute;
         const graceEndMins = endInMinutes + 30;
         
-        console.log(`\n🔍 Slot ${slot.startTime}-${slot.endTime}:`);
-        console.log(`   startInMinutes: ${startInMinutes}`);
-        console.log(`   endInMinutes: ${endInMinutes}`);
-        console.log(`   graceEndMins: ${graceEndMins}`);
-        console.log(`   currentInMinutes: ${currentInMinutes}`);
+        const minutesUntilStart = startInMinutes - currentInMinutes;
+        const minutesUntilEnd = endInMinutes - currentInMinutes;
+        const timeLeftInGrace = graceEndMins - currentInMinutes;
         
-        let reminderType: 'upcoming' | 'active' | null = null;
+        console.log(`\n   🔍 Slot ${slot.startTime}-${slot.endTime}:`);
+        console.log(`      startInMinutes: ${startInMinutes}`);
+        console.log(`      endInMinutes: ${endInMinutes}`);
+        console.log(`      graceEndMins: ${graceEndMins}`);
+        console.log(`      minutesUntilStart: ${minutesUntilStart}`);
+        console.log(`      minutesUntilEnd: ${minutesUntilEnd}`);
+        console.log(`      timeLeftInGrace: ${timeLeftInGrace}`);
+        
+        let reminderType: 'upcoming' | 'active' | 'starting' | null = null;
         let reminderTimeLeft = 0;
         
-        // ✅ Upcoming reminder: 30-60 minutes BEFORE start time
-        const minutesUntilStart = startInMinutes - currentInMinutes;
-        if (minutesUntilStart > 0 && minutesUntilStart <= 60 && minutesUntilStart > 30) {
+        // ✅ TYPE 1: Starting soon (0-15 minutes before start)
+        if (minutesUntilStart > 0 && minutesUntilStart <= 15) {
+          reminderType = 'starting';
+          reminderTimeLeft = minutesUntilStart;
+          console.log(`      → STARTING SOON (starts in ${reminderTimeLeft} min)`);
+        }
+        // ✅ TYPE 2: Upcoming (15-60 minutes before start)
+        else if (minutesUntilStart > 15 && minutesUntilStart <= 60) {
           reminderType = 'upcoming';
           reminderTimeLeft = minutesUntilStart;
-          console.log(`   → UPCOMING reminder (starts in ${reminderTimeLeft} min)`);
+          console.log(`      → UPCOMING (starts in ${reminderTimeLeft} min)`);
         }
-        // ✅ Active reminder: During submission window (end time to grace end, last 15 minutes)
+        // ✅ TYPE 3: Active (during submission window, any time)
         else if (currentInMinutes >= endInMinutes && currentInMinutes <= graceEndMins) {
-          const timeLeft = graceEndMins - currentInMinutes;
-          if (timeLeft <= 15 && timeLeft > 0) {
-            reminderType = 'active';
-            reminderTimeLeft = timeLeft;
-            console.log(`   → ACTIVE reminder (${reminderTimeLeft} min left in grace period)`);
-          } else {
-            console.log(`   → In window but not last 15 minutes (${timeLeft} min left)`);
-          }
-        } else {
-          console.log(`   → No reminder needed`);
+          reminderType = 'active';
+          reminderTimeLeft = timeLeftInGrace;
+          const isLate = reminderTimeLeft <= 5;
+          console.log(`      → ACTIVE (${reminderTimeLeft} min left in grace period) ${isLate ? '⚠️ LATE WARNING' : ''}`);
+        }
+        else {
+          console.log(`      → No reminder needed`);
         }
         
         if (!reminderType) continue;
         
+        // Check if already sent for this slot
         const slotKey = `${assignment.userId}_${assignment.id}_${slot.id}`;
         if (remindedSlotKeys.has(slotKey) || processedSlots.has(slotKey)) {
-          console.log(`   ⏭️ Already reminded for this slot`);
+          console.log(`      ⏭️ Already reminded for this slot (cooldown active)`);
           continue;
         }
         
@@ -2527,20 +2551,23 @@ static async sendUpcomingTaskReminders() {
         let title = '';
         let message = '';
         
-        if (reminderType === 'upcoming') {
+        if (reminderType === 'starting') {
+          title = "🔔 Task Slot Starting Now";
+          message = `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot at ${slot.startTime} starts in ${Math.ceil(reminderTimeLeft)} minute${reminderTimeLeft !== 1 ? 's' : ''}!`;
+        } else if (reminderType === 'upcoming') {
           title = "⏰ Task Slot Starting Soon";
           message = `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot at ${slot.startTime} starts in ${Math.ceil(reminderTimeLeft)} minutes`;
         } else {
-          const isLate = reminderTimeLeft < 5;
+          const isLate = reminderTimeLeft <= 5;
           title = isLate ? "⚠️ Submission Window Closing" : "🔔 Ready to Submit";
           message = isLate
-            ? `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot (${slot.startTime}-${slot.endTime}) closing soon! ${Math.ceil(reminderTimeLeft)} min left. Points will be reduced.`
-            : `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot (${slot.startTime}-${slot.endTime}) can now be submitted. ${Math.ceil(reminderTimeLeft)} min left.`;
+            ? `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot (${slot.startTime}-${slot.endTime}) closing in ${Math.ceil(reminderTimeLeft)} minutes! Points will be reduced.`
+            : `"${assignment.task.title}" ${slot.label ? `(${slot.label}) ` : ''}slot (${slot.startTime}-${slot.endTime}) can now be submitted. ${Math.ceil(reminderTimeLeft)} minutes left.`;
         }
         
         await UserNotificationService.createNotification({
           userId: assignment.userId,
-          type: reminderType === 'upcoming' ? "TASK_REMINDER" : "TASK_ACTIVE",
+          type: reminderType === 'active' ? "TASK_ACTIVE" : "TASK_REMINDER",
           title,
           message,
           data: {
@@ -2554,18 +2581,21 @@ static async sendUpcomingTaskReminders() {
             endTime: slot.endTime,
             label: slot.label,
             points: slot.points,
-            minutesUntilStart: reminderType === 'upcoming' ? reminderTimeLeft : undefined,
+            minutesUntilStart: reminderType !== 'active' ? reminderTimeLeft : undefined,
             timeLeft: reminderType === 'active' ? reminderTimeLeft : undefined,
-            isLate: reminderType === 'active' && reminderTimeLeft < 5,
+            isLate: reminderType === 'active' && reminderTimeLeft <= 5,
             dueDate: assignment.dueDate
           }
         });
         remindersSent++;
-        console.log(`   ✅ SENT ${reminderType} reminder for slot ${slot.startTime}-${slot.endTime}`);
+        console.log(`      ✅ SENT ${reminderType.toUpperCase()} reminder for slot ${slot.startTime}-${slot.endTime}`);
       }
     }
     
-    console.log(`\n✅ Sent ${remindersSent} slot-specific reminders`);
+    console.log(`\n📊 ========== REMINDER SUMMARY ==========`);
+    console.log(`   Total reminders sent: ${remindersSent}`);
+    console.log(`==========================================\n`);
+    
     return { success: true, remindersSent };
     
   } catch (error) {
@@ -2573,6 +2603,7 @@ static async sendUpcomingTaskReminders() {
     return { success: false, remindersSent: 0 };
   }
 }
+
 
 private static async markAssignmentAsNeglected(
   assignmentId: string,
@@ -2667,7 +2698,7 @@ private static async markAssignmentAsNeglected(
       data: {
         assignmentId: assignment.id,
         taskId: assignment.taskId,
-        taskTitle: assignment.task!.title,
+        taskTitle: assignment.task!.title, 
         groupId: assignment.task!.groupId,
         pointsLost: actualDeduction,
         dueDate: assignment.dueDate,
