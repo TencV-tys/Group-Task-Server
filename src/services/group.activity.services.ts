@@ -4,7 +4,7 @@ import prisma from "../prisma";
 
 export class GroupActivityService {
 
- static async getGroupActivitySummary(groupId: string, userId: string) {
+  static async getGroupActivitySummary(groupId: string, userId: string) {
   try {
     console.log('\n🔍🔍🔍 [getGroupActivitySummary] START 🔍🔍🔍');
     console.log(`📊 Group ID: ${groupId}`);
@@ -98,7 +98,7 @@ export class GroupActivityService {
 
     const validAssignments = currentWeekAssignments.filter(a => a.task !== null);
     
-    // ========== SIMPLE ASSIGNMENT-BASED CALCULATIONS ==========
+    // ========== ASSIGNMENT-BASED CALCULATIONS (NOT SLOT-BASED) ==========
     const totalAssignments = validAssignments.length;
     const completedAssignments = validAssignments.filter(a => a.completed === true).length;
     const verifiedAssignments = validAssignments.filter(a => a.verified === true).length;
@@ -118,36 +118,29 @@ export class GroupActivityService {
       }
     }).length;
     
-       let totalPoints = 0;
+    // ✅ ASSIGNMENT-BASED: Use task.points (not slot points)
+    let totalPoints = 0;
     for (const a of validAssignments) {
       const task = a.task;
       if (!task) continue;
-      
-      // For multi-slot tasks, sum all slot points
-      if (task.timeSlots && task.timeSlots.length > 1) {
-        const slotPointsTotal = task.timeSlots.reduce((sum, slot) => sum + (slot.points || 0), 0);
-        totalPoints += slotPointsTotal;
-      } else {
-        // Single-slot task
-        totalPoints += (task.points || 0);
-      }
+      // Use task.points directly (assignment-based)
+      totalPoints += (task.points || 0);
     }
     
-    // ✅ EARNED POINTS (already correct)
+    // ✅ EARNED POINTS from verified assignments (assignment.points already has penalties)
     const earnedPoints = validAssignments
       .filter(a => a.verified === true)
       .reduce((sum, a) => sum + (a.points || 0), 0);
     
     const completionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
     
- 
-console.log(`📊 Results:`, {
-  totalAssignments: validAssignments.length,
-  verifiedAssignments: validAssignments.filter(a => a.verified === true).length,
-  totalPoints,
-  earnedPoints,
-  completionRate
-});
+    console.log(`📊 Results:`, {
+      totalAssignments: validAssignments.length,
+      verifiedAssignments: validAssignments.filter(a => a.verified === true).length,
+      totalPoints,
+      earnedPoints,
+      completionRate
+    });
 
     const activeMembers = await prisma.groupMember.findMany({
       where: {
@@ -178,6 +171,7 @@ console.log(`📊 Results:`, {
                   select: {
                     id: true,
                     title: true,
+                    points:true,
                     timeSlots: true
                   }
                 }
@@ -206,6 +200,15 @@ console.log(`📊 Results:`, {
           }
         }).length;
         
+        // ✅ Calculate total possible points for this member (assignment-based)
+        let memberTotalPoints = 0;
+        for (const a of validUserAssignments) {
+          const task = a.task;
+          if (task) {
+            memberTotalPoints += (task.points || 0);
+          }
+        }
+        
         // Earned points for this member
         const earnedPointsTotal = validUserAssignments
           .filter(a => a.verified === true)
@@ -216,6 +219,7 @@ console.log(`📊 Results:`, {
           fullName: item.user.fullName,
           avatarUrl: item.user.avatarUrl,
           totalAssignments: totalAssignmentsCount,
+          totalPoints: memberTotalPoints,
           completedAssignments: verifiedAssignmentsCount,
           verifiedAssignments: verifiedAssignmentsCount,
           neglectedCount: neglectedCount,
@@ -273,7 +277,7 @@ console.log(`📊 Results:`, {
           points: {
             total: totalPoints,      // ✅ 70 (14 tasks × 5 points)
             earned: earnedPoints,    // ✅ 4 (2 verified × 2 points)
-            completionRate
+            completionRate           // ✅ 6%
           }
         },
         memberContributions,
