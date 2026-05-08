@@ -552,7 +552,6 @@ static async getMemberContributionDetails(
   }
 }
 
-
 static async getAdminDashboard(groupId: string, userId: string) {
   try {
     const membership = await prisma.groupMember.findFirst({
@@ -635,7 +634,7 @@ static async getAdminDashboard(groupId: string, userId: string) {
       a.photoUrl !== null && a.verified === null
     ).length;
     
-    // ✅ FIXED: Count neglected for BOTH single and multi-slot tasks
+    // Count neglected for BOTH single and multi-slot tasks
     const expiredAssignmentsList = validAssignments.filter(a => {
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
       
@@ -648,14 +647,40 @@ static async getAdminDashboard(groupId: string, userId: string) {
     });
     const expiredCount = expiredAssignmentsList.length;
     
+    // Keep points for display
     const totalPoints = validAssignments.reduce((sum: number, a: any) => sum + (a.points || 0), 0);
     const earnedPoints = validAssignments
       .filter(a => a.verified === true)
       .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
 
-    const completionPercentage = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+    // ✅ NEW: SLOT-BASED COMPLETION PERCENTAGE
+    let totalSlots = 0;
+    let verifiedSlots = 0;
     
-    // ✅ Calculate neglected points from truly expired assignments (both types)
+    for (const a of validAssignments) {
+      if (a.task?.timeSlots && a.task.timeSlots.length > 1) {
+        // Multi-slot task: count each slot individually
+        totalSlots += a.task.timeSlots.length;
+        const completedSlotIds = (a as any).completedTimeSlotIds || [];
+        verifiedSlots += completedSlotIds.length;
+      } else {
+        // Single-slot task: count as 1
+        totalSlots += 1;
+        if (a.verified === true) verifiedSlots += 1;
+      }
+    }
+    
+    // Use slot-based completion percentage (more accurate for multi-slot)
+    const completionPercentage = totalSlots > 0 ? Math.round((verifiedSlots / totalSlots) * 100) : 0;
+    
+    console.log(`📊 [getAdminDashboard] Completion calculation:`, {
+      totalSlots,
+      verifiedSlots,
+      completionPercentage,
+      pointsBasedRate: totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0
+    });
+    
+    // Calculate neglected points from truly expired assignments (both types)
     let neglectedPoints = 0;
     for (const a of expiredAssignmentsList) {
       const isMultiSlot = a.task?.timeSlots && a.task.timeSlots.length > 1;
@@ -717,12 +742,12 @@ static async getAdminDashboard(groupId: string, userId: string) {
           totalTasks: tasks.length,
           recurringTasks: tasks.filter(t => t.isRecurring).length,
           weeklyCompletion: {
-            total: totalAssignments,
-            completed: verifiedAssignments,
+            total: totalSlots,                    // ✅ Now returns total SLOTS
+            completed: verifiedSlots,             // ✅ Now returns verified SLOTS
             pending: pendingAssignments,
             pendingVerification: pendingVerificationCount,
-            percentage: completionPercentage,
-            activeTotal: totalAssignments - expiredCount - pendingVerificationCount
+            percentage: completionPercentage,     // ✅ Slot-based percentage
+            activeTotal: totalSlots - (expiredCount * 2) - pendingVerificationCount  // Rough estimate
           },
           points: {
             total: totalPoints,
@@ -950,7 +975,7 @@ const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
   taskId: a.taskId,
   title: a.task!.title,
   points: a.points || 0,
-  dueDate: a.dueDate,
+  dueDate: a.dueDate, 
   timeSlot: a.timeSlot,
   isOverdue: false,
   // ✅ ADD THESE FIELDS
@@ -962,7 +987,7 @@ const formattedUpcoming = upcomingAssignments.slice(0, 10).map(a => ({
   completedTimeSlotIds: (a as any).completedTimeSlotIds || [],
   timeSlots: a.task?.timeSlots || []
 }));
-
+ 
     
 
     const formattedNeglected = expiredAssignments.slice(0, 3).map(a => {
