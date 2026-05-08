@@ -270,78 +270,84 @@ static async completeAssignment(req: UserAuthRequest, res: Response) {
   }
 
   // ========== GET USER ASSIGNMENTS ==========
-  static async getUserAssignments(req: UserAuthRequest, res: Response) {
-    console.log('\n👥 ========== [getUserAssignments] ==========');
-    console.log('   👤 Requesting user ID:', req.user?.id);
-    console.log('   🎯 Target user ID:', req.params.userId);
-    console.log('   📊 Query params:', {
-      status: req.query.status,
-      week: req.query.week,
-      limit: req.query.limit,
-      offset: req.query.offset
-    });
-    
-    try {
-      const userId = req.user?.id;
-      const { userId: targetUserId } = req.params as { userId: string };
-      const { 
-        status,
-        week,
-        limit = 20,
-        offset = 0 
-      } = req.query;
+static async getUserAssignments(req: UserAuthRequest, res: Response) {
+  console.log('\n👥 ========== [getUserAssignments] ==========');
+  console.log('   👤 Requesting user ID:', req.user?.id);
+  console.log('   🎯 Target user ID:', req.params.userId);
+  console.log('   📊 Query params:', {
+    status: req.query.status,
+    week: req.query.week,
+    limit: req.query.limit,
+    offset: req.query.offset
+  });
+  
+  try {
+    const userId = req.user?.id;
+    const { userId: targetUserId } = req.params as { userId: string };
+    const { 
+      status,
+      week,
+      limit = 20,
+      offset = 0 
+    } = req.query;
 
-      if (!userId) {
-        console.log("   ❌ No user ID");
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated"
-        });
-      }
-
-      console.log("   🔄 Calling AssignmentService.getUserAssignments...");
-      const result = await AssignmentService.getUserAssignments(
-        targetUserId,
-        {
-          status: status as string,
-          week: week !== undefined ? Number(week) : undefined,
-          limit: Number(limit),
-          offset: Number(offset)
-        }
-      );
-
-      console.log("   📊 Result:", {
-        success: result.success,
-        totalAssignments: result.total,
-        assignmentsCount: result.assignments?.length
-      });
-
-      if (!result.success) {
-        console.log("   ❌ Failed to get user assignments");
-        return res.status(400).json({
-          success: false,
-          message: result.message
-        });
-      }
-
-      console.log(`   ✅ Returning ${result.assignments?.length || 0} assignments`);
-      return res.json({
-        success: true,
-        message: result.message,
-        assignments: result.assignments,
-        total: result.total,
-        filters: result.filters,
-        currentDate: result.currentDate
-      });
-
-    } catch (error: any) {
-      console.error("❌ [getUserAssignments] ERROR:", error);
-      return res.status(500).json({
+    if (!userId) {
+      console.log("   ❌ No user ID");
+      return res.status(401).json({
         success: false,
-        message: "Internal server error"
+        message: "User not authenticated"
       });
     }
+
+    console.log("   🔄 Calling AssignmentService.getUserAssignments...");
+    const result = await AssignmentService.getUserAssignments(
+      targetUserId,
+      {
+        status: status as string,
+        week: week !== undefined ? Number(week) : undefined,
+        limit: Number(limit),
+        offset: Number(offset)
+      }
+    );
+
+    console.log("   📊 Result:", {
+      success: result.success,
+      totalAssignments: result.total,
+      assignmentsCount: result.assignments?.length,
+      totalPossiblePoints: result.totalPossiblePoints,  // ✅ LOG THIS
+      earnedPoints: result.earnedPoints                 // ✅ LOG THIS
+    });
+
+    if (!result.success) {
+      console.log("   ❌ Failed to get user assignments");
+      return res.status(400).json({
+        success: false,
+        message: result.message
+      });
+    }
+
+    console.log(`   ✅ Returning ${result.assignments?.length || 0} assignments`);
+    
+    // ✅ ADD totalPossiblePoints and earnedPoints to response
+    return res.json({
+      success: true,
+      message: result.message,
+      assignments: result.assignments,
+      total: result.total,
+      totalPossiblePoints: result.totalPossiblePoints || 0,  // ✅ ADD THIS
+      earnedPoints: result.earnedPoints || 0,               // ✅ ADD THIS
+      filters: result.filters,
+      currentDate: result.currentDate
+    });
+
+  } catch (error: any) {
+    console.error("❌ [getUserAssignments] ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
+}
 
  // ========== GET TODAY'S ASSIGNMENTS ==========
 static async getTodayAssignments(req: UserAuthRequest, res: Response) {
