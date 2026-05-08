@@ -288,7 +288,7 @@ export class GroupActivityService {
     console.error("❌ GroupActivityService.getGroupActivitySummary error:", error);
     return { success: false, message: error.message || "Error retrieving activity summary" };
   }
-}
+} 
 
 // services/group.activity.services.ts - COMPLETELY FIXED getMemberContributionDetails
 
@@ -759,8 +759,8 @@ static async getAdminDashboard(groupId: string, userId: string) {
           totalTasks: tasks.length,
           recurringTasks: tasks.filter(t => t.isRecurring).length,
           weeklyCompletion: {
-            total: totalSlots,                    // ✅ Now returns total SLOTS
-            completed: verifiedSlots,             // ✅ Now returns verified SLOTS
+            total: totalAssignments,                    // ✅ Now returns total SLOTS
+            completed: verifiedAssignments,             // ✅ Now returns verified SLOTS
             pending: pendingAssignments,
             pendingVerification: pendingVerificationCount,
             percentage: completionPercentage,     // ✅ Slot-based percentage
