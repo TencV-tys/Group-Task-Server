@@ -2216,52 +2216,64 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         
         const newlyMissedSlots: any[] = [];
         
-        for (const slot of freshTimeSlots) {
-          // Skip if already completed
-          if (completedSlotIds.includes(slot.id)) {
-            console.log(`   ✅ Slot ${slot.startTime}-${slot.endTime} already COMPLETED - skipping`);
-            continue;
-          }
-          
-          // Skip if already missed (prevents duplicates)
-          if (existingMissedSlotIds.includes(slot.id)) {
-            console.log(`   ⚠️ Slot ${slot.startTime}-${slot.endTime} already MISSED - skipping duplicate`);
-            continue;
-          }
-          
-          const endTimeStr = slot.endTime;
-          if (!endTimeStr) continue;
-          
-          const endTimeParts = endTimeStr.split(':');
-          if (endTimeParts.length < 2) continue;
-          
-          let endHour = parseInt(endTimeParts[0] || '0', 10);
-          const endMin = parseInt(endTimeParts[1] || '0', 10);
-          
-          if (isNaN(endHour) || isNaN(endMin)) continue;
-          
-          console.log(`   📍 Slot ${slot.startTime}-${slot.endTime}: endHour=${endHour}, endMin=${endMin}`);
-          
-          // PHT (UTC+8) to UTC
-          endHour = endHour - 8;
-          if (endHour < 0) endHour += 24;
-          
-          const slotEndTimeUTC = new Date(Date.UTC(dueYear, dueMonth, dueDay, endHour, endMin, 0, 0));
-          const gracePeriodEnd = new Date(slotEndTimeUTC.getTime() + 30 * 60000);
-          
-          console.log(`   ⏰ Checking slot ${slot.startTime}-${slot.endTime}:`);
-          console.log(`      End UTC: ${slotEndTimeUTC.toISOString()}`);
-          console.log(`      Grace ends: ${gracePeriodEnd.toISOString()}`);
-          console.log(`      Current: ${now.toISOString()}`);
-          
-          if (now > gracePeriodEnd) {
-            console.log(`      ❌ Slot ${slot.startTime}-${slot.endTime} is NEGLECTED!`);
-            newlyMissedSlots.push(slot);
-          } else {
-            const timeRemaining = Math.ceil((gracePeriodEnd.getTime() - now.getTime()) / 1000);
-            console.log(`      ⏰ Still in grace period (ends in ${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s)`);
-          }
-        }
+        // In checkGroupNeglectedAssignments, inside the multi-slot loop:
+
+for (const slot of freshTimeSlots) {
+  console.log(`\n🔍🔍🔍 ========== CHECKING SLOT ==========`);
+  console.log(`   Slot: ${slot.startTime} - ${slot.endTime}`);
+  console.log(`   Slot ID: ${slot.id}`);
+  
+  if (completedSlotIds.includes(slot.id)) {
+    console.log(`   ⏭️ Already COMPLETED - skipping`);
+    continue;
+  }
+  
+  if (existingMissedSlotIds.includes(slot.id)) {
+    console.log(`   ⏭️ Already MISSED - skipping duplicate`);
+    continue;
+  }
+  
+  const endTimeStr = slot.endTime;
+  console.log(`   Raw endTime string: "${endTimeStr}"`);
+  
+  const endTimeParts = endTimeStr.split(':');
+  console.log(`   endTimeParts:`, endTimeParts);
+  
+  let endHour = parseInt(endTimeParts[0] || '0', 10);
+  const endMin = parseInt(endTimeParts[1] || '0', 10);
+  console.log(`   endHour: ${endHour}, endMin: ${endMin}`);
+  
+  // PHT (UTC+8) to UTC
+  let endHourUTC = endHour - 8;
+  if (endHourUTC < 0) endHourUTC += 24;
+  console.log(`   endHourUTC: ${endHourUTC}`);
+  
+  const dueYear = dueDateObj.getUTCFullYear();
+  const dueMonth = dueDateObj.getUTCMonth();
+  const dueDay = dueDateObj.getUTCDate();
+  console.log(`   dueDate components: ${dueYear}-${dueMonth + 1}-${dueDay}`);
+  
+  const slotEndTimeUTC = new Date(Date.UTC(dueYear, dueMonth, dueDay, endHourUTC, endMin, 0, 0));
+  console.log(`   slotEndTimeUTC: ${slotEndTimeUTC.toISOString()}`);
+  console.log(`   slotEndTimeUTC (PHT): ${slotEndTimeUTC.getUTCHours() + 8}:${slotEndTimeUTC.getUTCMinutes()}`);
+  
+  const graceEnd = new Date(slotEndTimeUTC.getTime() + 30 * 60000);
+  console.log(`   graceEnd UTC: ${graceEnd.toISOString()}`);
+  console.log(`   graceEnd PHT: ${graceEnd.getUTCHours() + 8}:${graceEnd.getUTCMinutes()}`);
+  
+  console.log(`   now UTC: ${now.toISOString()}`);
+  console.log(`   now PHT: ${now.getUTCHours() + 8}:${now.getUTCMinutes()}`);
+  
+  console.log(`   now > graceEnd? ${now > graceEnd}`);
+  
+  if (now > graceEnd) {
+    console.log(`   ❌❌❌ SLOT IS NEGLECTED!`);
+    newlyMissedSlots.push(slot);
+  } else {
+    const timeRemaining = Math.ceil((graceEnd.getTime() - now.getTime()) / 1000);
+    console.log(`   ✅ Still in grace period (${Math.floor(timeRemaining / 60)}m ${timeRemaining % 60}s left)`);
+  }
+}
         
         if (newlyMissedSlots.length === 0) {
           console.log(`   ✅ No newly missed slots for this assignment`);
