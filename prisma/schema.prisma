@@ -351,6 +351,7 @@ model Assignment {
   slotPoints Json? @default("{}")
   originalTotalPoints Int? @default(0)
   partiallyExpired Boolean @default(false)
+  slotExpiredAt Json?
 
   // Relationships
   task         Task?         @relation("TaskAssignments", fields: [taskId], references: [id], onDelete: SetNull)
