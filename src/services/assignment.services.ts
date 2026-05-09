@@ -2192,13 +2192,34 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         }
       }
       
-      // ✅ Parse existing slot expiry times
       let slotExpiredAt: Record<string, Date> = {};
-      const expiryRaw = freshAssignment?.slotExpiredAt;
-      if (expiryRaw && typeof expiryRaw === 'object') {
-        slotExpiredAt = expiryRaw as Record<string, Date>;
+const expiryRaw = freshAssignment?.slotExpiredAt;
+if (expiryRaw) {
+  if (typeof expiryRaw === 'string') {
+    try {
+      const parsed = JSON.parse(expiryRaw);
+      if (parsed && typeof parsed === 'object') {
+        // Convert each value to Date if it's a string
+        slotExpiredAt = Object.entries(parsed).reduce((acc, [key, value]) => {
+          acc[key] = typeof value === 'string' ? new Date(value) : new Date();
+          return acc;
+        }, {} as Record<string, Date>);
       }
-      
+    } catch(e) {
+      slotExpiredAt = {};
+    }
+  } else if (typeof expiryRaw === 'object' && expiryRaw !== null) {
+    // Handle Prisma JsonValue object
+    const obj = expiryRaw as any;
+    slotExpiredAt = Object.keys(obj).reduce((acc, key) => {
+      const value = obj[key];
+      acc[key] = typeof value === 'string' ? new Date(value) : 
+                  value instanceof Date ? value : new Date();
+      return acc;
+    }, {} as Record<string, Date>);
+  }
+}
+   
       console.log(`   📊 Existing completed slots: ${completedSlotIds.length}`);
       console.log(`   📊 Existing missed slots: ${existingMissedSlotIds.length}`);
       
