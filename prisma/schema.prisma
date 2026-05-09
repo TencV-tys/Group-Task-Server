@@ -361,12 +361,12 @@ model Assignment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
+  @@unique([taskId, userId, dueDate, timeSlotId])
   @@index([dueDate])
   @@index([completed])
   @@index([userId, completed])
   @@index([rotationWeek])
-  @@index([weekStart, weekEnd])
+  @@index([weekStart, weekEnd]) 
   @@index([assignmentDay])
   @@index([timeSlotId])
   @@map("assignments")
