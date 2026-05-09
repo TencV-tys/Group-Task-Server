@@ -3,8 +3,8 @@ import cron from 'node-cron';
 import { AssignmentService } from '../services/assignment.services';
 
 export const initNeglectDetectionCron = () => {
-  // Runs every 15 minutes including 11:30 PM — no separate end-of-day needed
-  cron.schedule('*/15 * * * *', async () => {
+  // Runs every 5 minutes including 11:30 PM — no separate end-of-day needed
+  cron.schedule('*/5 * * * *', async () => {
     console.log('🕒 Running neglect detection cron job...');
     console.log('⏱️ Current time:', new Date().toISOString());
 
@@ -23,5 +23,5 @@ export const initNeglectDetectionCron = () => {
     }
   });
 
-  console.log('⏰ Neglect detection cron job initialized (running every 15 minutes)');
+  console.log('⏰ Neglect detection cron job initialized (running every 5 minutes)');
 };
