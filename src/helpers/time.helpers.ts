@@ -28,6 +28,13 @@ export class TimeHelpers {
   static readonly GRACE_PERIOD_MINUTES = 30;
   static readonly LATE_SUBMISSION_PENALTY = 0.5;
 
+  // Helper function to convert PHT hour to UTC hour
+  private static convertPHTtoUTC(endHour: number): number {
+    let endHourUTC = endHour - 8;
+    if (endHourUTC < 0) endHourUTC += 24;
+    return endHourUTC;
+  }
+
   // ========== UTC-BASED METHODS ==========
 static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): CanSubmitResult {
   const dueDate = new Date(assignment.dueDate);
@@ -60,12 +67,14 @@ static canSubmitAssignment(assignment: any, currentTime: Date = new Date()): Can
   const endHour = parseInt(endParts[0] || '0', 10);
   const endMinute = parseInt(endParts[1] || '0', 10);
   
-  // ✅ PHT is UTC+8, so subtract 8 to convert slot time to UTC
+  // ✅ FIXED: Convert PHT to UTC properly
+  const endHourUTC = this.convertPHTtoUTC(endHour);
+  
   const endTime = new Date(Date.UTC(
     dueDate.getUTCFullYear(),
     dueDate.getUTCMonth(),
     dueDate.getUTCDate(),
-    endHour - 8,
+    endHourUTC,
     endMinute, 0, 0
   ));
   
@@ -181,12 +190,14 @@ static isAssignmentNeglected(assignment: any, currentTime: Date = new Date()): b
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Convert PHT to UTC
+    // ✅ FIXED: Convert PHT to UTC properly
+    const endHourUTC = this.convertPHTtoUTC(endHour);
+    
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour - 8, endMinute, 0, 0
+      endHourUTC, endMinute, 0, 0
     ));
     const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
@@ -228,12 +239,14 @@ static getNeglectedTimeSlots(assignment: any, currentTime: Date = new Date()): a
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Convert PHT to UTC
+    // ✅ FIXED: Convert PHT to UTC properly
+    const endHourUTC = this.convertPHTtoUTC(endHour);
+    
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour - 8, endMinute, 0, 0
+      endHourUTC, endMinute, 0, 0
     ));
     const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
@@ -281,12 +294,14 @@ static hasAvailableTimeSlot(assignment: any, currentTime: Date = new Date()): bo
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Convert PHT to UTC
+    // ✅ FIXED: Convert PHT to UTC properly
+    const endHourUTC = this.convertPHTtoUTC(endHour);
+    
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour - 8, endMinute, 0, 0
+      endHourUTC, endMinute, 0, 0
     ));
     const gracePeriodEnd = new Date(endTime.getTime() + TimeHelpers.GRACE_PERIOD_MINUTES * 60000);
     
@@ -328,12 +343,14 @@ static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date())
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Convert PHT to UTC
+    // ✅ FIXED: Convert PHT to UTC properly
+    const endHourUTC = this.convertPHTtoUTC(endHour);
+    
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour - 8, endMinute, 0, 0
+      endHourUTC, endMinute, 0, 0
     ));
     
     const submissionStart = new Date(endTime.getTime() - 30 * 60000);
@@ -478,12 +495,14 @@ static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date())
     const endHour = parseInt(endParts[0] || '0', 10);
     const endMinute = parseInt(endParts[1] || '0', 10);
     
-    // ✅ Convert PHT to UTC
+    // ✅ FIXED: Convert PHT to UTC properly
+    const endHourUTC = this.convertPHTtoUTC(endHour);
+    
     const endTime = new Date(Date.UTC(
       dueDate.getUTCFullYear(),
       dueDate.getUTCMonth(),
       dueDate.getUTCDate(),
-      endHour - 8, endMinute, 0, 0
+      endHourUTC, endMinute, 0, 0
     ));
     
     const submissionStart = new Date(endTime.getTime() - 30 * 60000);
@@ -587,12 +606,14 @@ static getCurrentActiveTimeSlot(assignment: any, currentTime: Date = new Date())
   const endHour = parseInt(endParts[0] || '0', 10);
   const endMinute = parseInt(endParts[1] || '0', 10);
   
-  // ✅ Convert PHT to UTC
+  // ✅ FIXED: Convert PHT to UTC properly
+  const endHourUTC = this.convertPHTtoUTC(endHour);
+  
   const endTime = new Date(Date.UTC(
     dueDate.getUTCFullYear(),
     dueDate.getUTCMonth(),
     dueDate.getUTCDate(),
-    endHour - 8, endMinute, 0, 0
+    endHourUTC, endMinute, 0, 0
   ));
   
   const submissionStart = new Date(endTime.getTime() - 30 * 60000);
