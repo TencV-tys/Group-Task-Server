@@ -1,21 +1,22 @@
-// services/admin.report.services.ts - FIXED FOR MySQL (remove mode: 'insensitive')
+// services/admin.report.services.ts - COMPLETE WITH PHOTO SUPPORT
 
 import prisma from "../prisma";
 import { AdminNotificationsService } from "./admin.notifications.service";
 import { ReportStatus } from "@prisma/client";
 import { SocketService } from "./socket.services";
 import { UserNotificationService } from "./user.notification.services";
+import { extractPublicId, deleteFromCloudinary } from "../config/cloudinary.config"; // 👈 ADD FOR PHOTO DELETION
 
 export class AdminReportService {
   
-  // ========== GET ALL REPORTS - FIXED FOR MySQL ==========
+  // ========== GET ALL REPORTS - WITH PHOTO ==========
   static async getReports(filters: {
     status?: string;
     type?: string; 
     search?: string; 
     page?: number;
     limit?: number;
-  } = {}) {
+  } = {}) { 
     try {
       const { status, type, search, page = 1, limit = 20 } = filters;
       const skip = (page - 1) * limit;
@@ -24,7 +25,6 @@ export class AdminReportService {
       if (status && status !== 'ALL') where.status = status;
       if (type) where.type = type;
       
-      // ✅ FIX: Remove 'mode: insensitive' for MySQL compatibility
       if (search && search.trim()) { 
         where.OR = [
           { description: { contains: search.trim() } },
@@ -71,10 +71,17 @@ export class AdminReportService {
         prisma.report.count({ where })
       ]);
 
+      // ✅ Add photo info to each report
+      const reportsWithPhoto = reports.map(report => ({
+        ...report,
+        hasPhoto: !!report.photoUrl,
+        photoUrl: report.photoUrl || null
+      }));
+
       return {
         success: true,
         message: "Reports retrieved successfully",
-        reports,
+        reports: reportsWithPhoto,
         pagination: {
           page,
           limit,
@@ -92,7 +99,7 @@ export class AdminReportService {
     }
   }
 
-  // ========== GET SINGLE REPORT ==========
+  // ========== GET SINGLE REPORT - WITH PHOTO ==========
   static async getReportById(reportId: string) {
     try {
       const report = await prisma.report.findUnique({
@@ -139,10 +146,15 @@ export class AdminReportService {
         };
       }
 
+      // ✅ Add photo info
       return {
         success: true,
         message: "Report retrieved successfully",
-        data: report
+        data: {
+          ...report,
+          hasPhoto: !!report.photoUrl,
+          photoUrl: report.photoUrl || null
+        }
       };
 
     } catch (error: any) {
@@ -214,6 +226,13 @@ export class AdminReportService {
       const reporterName = updatedReport.reporter?.fullName || 'A user';
       const oldStatus = existingReport.status;
 
+      // ✅ Add photo info to updated report
+      const reportWithPhoto = {
+        ...updatedReport,
+        hasPhoto: !!updatedReport.photoUrl,
+        photoUrl: updatedReport.photoUrl || null
+      };
+
       // Emit to reporter
       await SocketService.emitReportStatusChanged(
         updatedReport.reporterId,
@@ -277,7 +296,7 @@ export class AdminReportService {
       return {
         success: true,
         message: `Report status updated to ${status}`,
-        report: updatedReport
+        report: reportWithPhoto
       };
 
     } catch (error: any) {
@@ -286,81 +305,7 @@ export class AdminReportService {
     }
   }
 
-  // ========== BULK UPDATE REPORTS ==========
-  static async bulkUpdateReports(
-    reportIds: string[],
-    adminId: string,
-    status: ReportStatus,
-    resolutionNotes?: string
-  ) {
-    try {
-      let successCount = 0;
-      const failedIds: string[] = [];
-
-      for (const reportId of reportIds) {
-        try {
-          const result = await this.updateReportStatus(reportId, adminId, status, resolutionNotes);
-          if (result.success) successCount++;
-          else failedIds.push(reportId);
-        } catch (error) {
-          failedIds.push(reportId);
-        }
-      }
-
-      return {
-        success: true,
-        message: `Updated ${successCount} out of ${reportIds.length} reports to ${status}`,
-        data: { totalCount: reportIds.length, successCount, failedIds }
-      };
-
-    } catch (error: any) {
-      console.error("❌ [REPORT] Error in bulk update:", error);
-      return { success: false, message: error.message || "Failed to bulk update reports" };
-    }
-  }
-
-  // ========== GET REPORT STATISTICS ==========
-  static async getReportStats() {
-    try {
-      const whereCondition = { deletedAt: null };
-      
-      const [pending, reviewing, resolved, dismissed, total] = await Promise.all([
-        prisma.report.count({ where: { ...whereCondition, status: "PENDING" } }),
-        prisma.report.count({ where: { ...whereCondition, status: "REVIEWING" } }),
-        prisma.report.count({ where: { ...whereCondition, status: "RESOLVED" } }),
-        prisma.report.count({ where: { ...whereCondition, status: "DISMISSED" } }),
-        prisma.report.count({ where: whereCondition })
-      ]);
-
-      const byType = await prisma.report.groupBy({
-        by: ['type'],
-        where: whereCondition,
-        _count: true
-      });
-
-      return {
-        success: true,
-        message: "Report statistics retrieved",
-        statistics: {
-          overview: {
-            total,
-            pending,
-            reviewing,
-            resolved,
-            dismissed,
-            resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0
-          },
-          byType: byType.map(item => ({ type: item.type, count: item._count }))
-        }
-      };
-
-    } catch (error: any) {
-      console.error("❌ [REPORT] Error getting stats:", error);
-      return { success: false, message: error.message || "Failed to retrieve statistics" };
-    }
-  }
-
-  // ========== DELETE REPORT ==========
+  // ========== DELETE REPORT - WITH PHOTO CLEANUP ==========
   static async deleteReport(reportId: string, adminId: string, hardDelete: boolean = false) {
     try {
       const admin = await prisma.systemAdmin.findUnique({
@@ -378,6 +323,19 @@ export class AdminReportService {
 
       if (!existingReport) {
         return { success: false, message: "Report not found" };
+      }
+
+      // ✅ Delete photo from Cloudinary if hard deleting and photo exists
+      if (hardDelete && existingReport.photoUrl) {
+        try {
+          const publicId = extractPublicId(existingReport.photoUrl);
+          if (publicId) {
+            await deleteFromCloudinary(publicId);
+            console.log(`📸 Deleted photo for report ${reportId}`);
+          }
+        } catch (photoError) {
+          console.error("Error deleting photo from Cloudinary:", photoError);
+        }
       }
 
       if (hardDelete) {
@@ -426,7 +384,83 @@ export class AdminReportService {
     }
   }
 
-  // ========== BULK DELETE REPORTS ==========
+  // ========== GET REPORT STATISTICS - WITH PHOTO COUNT ==========
+  static async getReportStats() {
+    try {
+      const whereCondition = { deletedAt: null };
+      
+      const [pending, reviewing, resolved, dismissed, total, withPhoto] = await Promise.all([
+        prisma.report.count({ where: { ...whereCondition, status: "PENDING" } }),
+        prisma.report.count({ where: { ...whereCondition, status: "REVIEWING" } }),
+        prisma.report.count({ where: { ...whereCondition, status: "RESOLVED" } }),
+        prisma.report.count({ where: { ...whereCondition, status: "DISMISSED" } }),
+        prisma.report.count({ where: whereCondition }),
+        prisma.report.count({ where: { ...whereCondition, photoUrl: { not: null } } }) // 👈 COUNT REPORTS WITH PHOTOS
+      ]);
+
+      const byType = await prisma.report.groupBy({
+        by: ['type'],
+        where: whereCondition,
+        _count: true
+      });
+
+      return {
+        success: true,
+        message: "Report statistics retrieved",
+        statistics: {
+          overview: {
+            total,
+            pending,
+            reviewing,
+            resolved,
+            dismissed,
+            resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0,
+            withPhoto // 👈 ADD PHOTO COUNT
+          },
+          byType: byType.map(item => ({ type: item.type, count: item._count }))
+        }
+      };
+
+    } catch (error: any) {
+      console.error("❌ [REPORT] Error getting stats:", error);
+      return { success: false, message: error.message || "Failed to retrieve statistics" };
+    }
+  }
+
+  // ========== BULK UPDATE REPORTS ==========
+  static async bulkUpdateReports(
+    reportIds: string[],
+    adminId: string,
+    status: ReportStatus,
+    resolutionNotes?: string
+  ) {
+    try {
+      let successCount = 0;
+      const failedIds: string[] = [];
+
+      for (const reportId of reportIds) {
+        try {
+          const result = await this.updateReportStatus(reportId, adminId, status, resolutionNotes);
+          if (result.success) successCount++;
+          else failedIds.push(reportId);
+        } catch (error) {
+          failedIds.push(reportId);
+        }
+      }
+
+      return {
+        success: true,
+        message: `Updated ${successCount} out of ${reportIds.length} reports to ${status}`,
+        data: { totalCount: reportIds.length, successCount, failedIds }
+      };
+
+    } catch (error: any) {
+      console.error("❌ [REPORT] Error in bulk update:", error);
+      return { success: false, message: error.message || "Failed to bulk update reports" };
+    }
+  }
+
+  // ========== BULK DELETE REPORTS - WITH PHOTO CLEANUP ==========
   static async bulkDeleteReports(reportIds: string[], adminId: string, hardDelete: boolean = false) {
     try {
       let successCount = 0;

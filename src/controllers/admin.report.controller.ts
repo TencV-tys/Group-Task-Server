@@ -1,4 +1,4 @@
-// controllers/admin.report.controller.ts - COMPLETE FIXED VERSION
+// controllers/admin.report.controller.ts - UPDATED WITH PHOTO SUPPORT
 
 import { Response } from "express";
 import { AdminAuthRequest } from "../middlewares/admin.auth.middleware";
@@ -8,30 +8,27 @@ import { ReportStatus } from "@prisma/client";
 
 export class AdminReportController {
   
-  // ========== GET ALL REPORTS (ADMIN ONLY) - FIXED ==========
+  // ========== GET ALL REPORTS (ADMIN ONLY) - WITH PHOTO ==========
   static async getAllReports(req: AdminAuthRequest, res: Response) {
-    try {
+    try { 
       const adminId = req.admin?.id;
 
       if (!adminId) {
         return res.status(401).json({ 
           success: false,
           message: "Admin not authenticated"
-        });
+        }); 
       }
 
-      // ✅ Get query parameters
       const { status, search, page = 1, limit = 20 } = req.query;
       const skip = (Number(page) - 1) * Number(limit);
       
       const where: any = { deletedAt: null };
       
-      // Status filter
       if (status && status !== 'ALL') {
         where.status = status;
       }
       
-      // ✅ Search filter
       if (search && typeof search === 'string' && search.trim()) {
         where.OR = [
           { description: { contains: search.trim() } },
@@ -42,7 +39,6 @@ export class AdminReportController {
 
       console.log('📥 [Controller] Fetching reports with where:', JSON.stringify(where));
 
-      // Fetch reports
       const [reports, total] = await Promise.all([
         prisma.report.findMany({
           where,
@@ -86,11 +82,17 @@ export class AdminReportController {
 
       console.log(`✅ [Controller] Found ${reports.length} reports (total: ${total})`);
 
-      // ✅ CORRECT RESPONSE FORMAT - matches frontend expectations
+      // ✅ Add photo info to each report
+      const reportsWithPhoto = reports.map(report => ({
+        ...report,
+        hasPhoto: !!report.photoUrl,
+        photoUrl: report.photoUrl || null
+      }));
+
       return res.json({
         success: true,
         message: "Reports retrieved successfully",
-        reports: reports,
+        reports: reportsWithPhoto,
         pagination: {
           page: Number(page),
           limit: Number(limit),
@@ -109,7 +111,7 @@ export class AdminReportController {
     }
   }
 
-  // ========== GET SINGLE REPORT DETAILS (ADMIN ONLY) ==========
+  // ========== GET SINGLE REPORT DETAILS (ADMIN ONLY) - WITH PHOTO ==========
   static async getReportDetails(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
@@ -166,10 +168,15 @@ export class AdminReportController {
         });
       }
 
+      // ✅ Add photo info
       return res.json({
         success: true,
         message: "Report retrieved successfully",
-        report: report
+        report: {
+          ...report,
+          hasPhoto: !!report.photoUrl,
+          photoUrl: report.photoUrl || null
+        }
       });
 
     } catch (error: any) {
@@ -181,7 +188,7 @@ export class AdminReportController {
     }
   }
 
-  // ========== UPDATE REPORT STATUS (ADMIN ONLY) ==========
+  // ========== UPDATE REPORT STATUS (ADMIN ONLY) - WITH PHOTO ==========
   static async updateReportStatus(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
@@ -227,7 +234,7 @@ export class AdminReportController {
       return res.json({
         success: true,
         message: `Report status updated to ${status}`,
-        report: result.report
+        report: result.report // Service already includes photo info
       });
 
     } catch (error: any) {
@@ -239,7 +246,7 @@ export class AdminReportController {
     }
   }
 
-  // ========== GET REPORT STATISTICS (ADMIN ONLY) ==========
+  // ========== GET REPORT STATISTICS (ADMIN ONLY) - WITH PHOTO COUNT ==========
   static async getReportStatistics(req: AdminAuthRequest, res: Response) {
     try {
       const adminId = req.admin?.id;
@@ -251,12 +258,13 @@ export class AdminReportController {
         });
       }
 
-      const [total, pending, reviewing, resolved, dismissed] = await Promise.all([
+      const [total, pending, reviewing, resolved, dismissed, withPhoto] = await Promise.all([
         prisma.report.count({ where: { deletedAt: null } }),
         prisma.report.count({ where: { status: 'PENDING', deletedAt: null } }),
         prisma.report.count({ where: { status: 'REVIEWING', deletedAt: null } }),
         prisma.report.count({ where: { status: 'RESOLVED', deletedAt: null } }),
-        prisma.report.count({ where: { status: 'DISMISSED', deletedAt: null } })
+        prisma.report.count({ where: { status: 'DISMISSED', deletedAt: null } }),
+        prisma.report.count({ where: { deletedAt: null, photoUrl: { not: null } } }) // 👈 COUNT REPORTS WITH PHOTOS
       ]);
 
       const byType = await prisma.report.groupBy({
@@ -275,7 +283,8 @@ export class AdminReportController {
             reviewing,
             resolved,
             dismissed,
-            resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0
+            resolutionRate: total > 0 ? Math.round(((resolved + dismissed) / total) * 100) : 0,
+            withPhoto // 👈 ADD PHOTO COUNT
           },
           byType: byType.map(item => ({
             type: item.type,
