@@ -2,7 +2,7 @@
 import rateLimit from 'express-rate-limit';
 
 // 1 hour in milliseconds
-const ONE = 60 * 60 * 1000; // 10,800,000 ms = 3 hours
+const ONE = 30 * 60 * 1000; // 10,800,000 ms = 3 hours
 
 // Strict limiter for authentication routes
 export const authLimiter = rateLimit({
@@ -32,7 +32,7 @@ export const uploadLimiter = rateLimit({
 // Task operations limiter
 export const taskLimiter = rateLimit({
   windowMs: ONE,
-  max: 500,
+  max: 800,
   message: {
     success: false,
     message: 'Too many task operations, please try again after 1 hour'
