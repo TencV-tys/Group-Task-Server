@@ -877,37 +877,40 @@ static async emitAssignmentPendingVerification(
   }
 
   // ========== REPORT EVENTS ==========
+// services/socket.services.ts - UPDATE THIS METHOD
 
-  static async emitNewReportReceived(
-    adminIds: string[],
-    reportId: string,
-    groupId: string,
-    groupName: string,
-    reporterId: string,
-    reporterName: string,
-    reportType: string,
-    description: string,
-    createdAt: Date
-  ) {
-    try {
-      const payload = {
-        reportId,
-        groupId,
-        groupName,
-        reporterId,
-        reporterName,
-        reportType,
-        description: description.substring(0, 200),
-        createdAt
-      };
-      
-      emitToUsers(adminIds, 'report:new', payload);
-      console.log(`📢 Emitted new report to ${adminIds.length} admins`);
-    } catch (error) {
-      console.error('SocketService.emitNewReportReceived error:', error);
-    }
+static async emitNewReportReceived(
+  adminIds: string[],
+  reportId: string,
+  groupId: string,
+  groupName: string,
+  reporterId: string,
+  reporterName: string,
+  reportType: string,
+  description: string,
+  createdAt: Date,
+  photoUrl?: string | null  // 👈 ADD THIS PARAMETER
+) {
+  try {
+    const payload = {
+      reportId,
+      groupId,
+      groupName,
+      reporterId,
+      reporterName,
+      reportType,
+      description: description.substring(0, 200),
+      createdAt,
+      photoUrl: photoUrl || null  // 👈 ADD THIS TO PAYLOAD
+    };
+    
+    emitToUsers(adminIds, 'report:new', payload);
+    console.log(`📢 Emitted new report to ${adminIds.length} admins${photoUrl ? ' (with photo)' : ''}`);
+  } catch (error) {
+    console.error('SocketService.emitNewReportReceived error:', error);
   }
-
+}
+  
   static async emitReportStatusChanged(
     reporterId: string,
     reportId: string,
