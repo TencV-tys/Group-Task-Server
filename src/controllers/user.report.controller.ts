@@ -1,8 +1,10 @@
+// controllers/user.report.controller.ts
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { UserReportService } from "../services/user.report.services";
 import prisma from "../prisma";
 import { ReportType } from "@prisma/client";
+import { extractPublicId, deleteFromCloudinary } from "../config/cloudinary.config"; // 👈 DIRECT IMPORT
 
 export class UserReportController {
   
@@ -12,7 +14,7 @@ export class UserReportController {
       const userId = req.user?.id;
       const { groupId, type, description } = req.body;
       
-      // 👈 Get photo URL from uploaded file
+      // Get photo URL from uploaded file
       const photoUrl = (req as any).file?.path || null;
 
       if (!userId) {
@@ -47,27 +49,32 @@ export class UserReportController {
       });
 
       if (!membership) {
+        // Clean up uploaded photo if exists
+        if (photoUrl) {
+          const publicId = extractPublicId(photoUrl);
+          if (publicId) await deleteFromCloudinary(publicId);
+        }
+        
         return res.status(403).json({
           success: false,
           message: "You must be a member of the group to report it"
         });
       }
 
-      // Check if user has already reported this group recently
+      // Check if user has already reported this group recently (24 hours)
       const recentReport = await prisma.report.findFirst({
         where: {
           reporterId: userId,
           groupId,
           createdAt: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
           }
         }
       });
 
       if (recentReport) {
-        // If there was a photo uploaded, delete it since we won't use it
+        // Clean up uploaded photo if exists
         if (photoUrl) {
-          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
           const publicId = extractPublicId(photoUrl);
           if (publicId) await deleteFromCloudinary(publicId);
         }
@@ -83,13 +90,12 @@ export class UserReportController {
         groupId,
         type as ReportType,
         description,
-        photoUrl // 👈 Pass photo URL
+        photoUrl
       );
 
       if (!result.success) {
-        // If there was a photo uploaded and service failed, delete it
-        if (photoUrl && !result.success) {
-          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
+        // Clean up uploaded photo if service failed
+        if (photoUrl) {
           const publicId = extractPublicId(photoUrl);
           if (publicId) await deleteFromCloudinary(publicId);
         }
@@ -125,7 +131,6 @@ export class UserReportController {
       // Clean up uploaded photo if error occurred
       if ((req as any).file?.path) {
         try {
-          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
           const publicId = extractPublicId((req as any).file.path);
           if (publicId) await deleteFromCloudinary(publicId);
         } catch (cleanupError) {
@@ -173,7 +178,7 @@ export class UserReportController {
           type: report.type,
           description: report.description,
           status: report.status,
-          groupName: (report as any).group?.name || 'Unknown Group',
+          groupName: report.group?.name || 'Unknown Group',
           hasPhoto: !!report.photoUrl,
           photoUrl: report.photoUrl,
           createdAt: report.createdAt,
@@ -234,8 +239,9 @@ export class UserReportController {
           type: report.type,
           description: report.description,
           photoUrl: report.photoUrl,
+          hasPhoto: !!report.photoUrl,
           status: report.status,
-          groupName: (report as any).group?.name || 'Unknown Group',
+          groupName: report.group?.name || 'Unknown Group',
           createdAt: report.createdAt,
           resolvedAt: report.resolvedAt,
           resolutionNotes: report.resolutionNotes
