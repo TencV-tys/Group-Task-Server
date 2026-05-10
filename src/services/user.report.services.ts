@@ -1,5 +1,3 @@
-// services/user.report.services.ts - FULLY UPDATED WITH SocketService
-
 import prisma from "../prisma";
 import { AdminNotificationsService } from "./admin.notifications.service";
 import { ReportType } from "@prisma/client";
@@ -7,12 +5,13 @@ import { SocketService } from "./socket.services";
 
 export class UserReportService {
   
-  // ========== CREATE GROUP REPORT ==========
+  // ========== CREATE GROUP REPORT (with photo) ==========
   static async createGroupReport(
     reporterId: string,
     groupId: string,
     type: ReportType,
-    description: string
+    description: string,
+    photoUrl: string | null = null // 👈 Add photoUrl parameter
   ) {
     try {
       // Validate input
@@ -49,13 +48,14 @@ export class UserReportService {
         };
       }
 
-      // Create the report
+      // Create the report with photo URL
       const report = await prisma.report.create({
         data: {
           reporterId,
           groupId,
           type,
           description: description.trim(),
+          photoUrl, // 👈 Add photo URL
           status: 'PENDING'
         },
         include: {
@@ -76,7 +76,7 @@ export class UserReportService {
             }
           }
         }
-      });
+      }); 
 
       if (!report) {
         throw new Error("Failed to create report");
@@ -93,7 +93,7 @@ export class UserReportService {
 
       const adminIds = admins.map(a => a.id);
 
-      // ===== EMIT REAL-TIME SOCKET EVENT TO ALL ADMINS using SocketService =====
+      // Emit real-time socket event to all admins
       if (adminIds.length > 0) {
         await SocketService.emitNewReportReceived(
           adminIds,
@@ -104,7 +104,8 @@ export class UserReportService {
           reporterName,
           type,
           description,
-          report.createdAt
+          report.createdAt,
+          photoUrl // 👈 Pass photo URL to socket event
         );
         console.log(`📢 [REPORT] New report ${report.id} - Notified ${adminIds.length} admins via socket`);
       }
@@ -115,7 +116,7 @@ export class UserReportService {
           adminId: admin.id,
           type: "REPORT_SUBMITTED",
           title: "🚨 New Group Report",
-          message: `${reporterName} reported "${groupName}" for ${type.replace('_', ' ')}`,
+          message: `${reporterName} reported "${groupName}" for ${type.replace('_', ' ')}${photoUrl ? ' 📸' : ''}`,
           priority: "HIGH",
           data: {
             reportId: report.id,
@@ -126,6 +127,7 @@ export class UserReportService {
             reporterEmail: reporter.email,
             reportType: type,
             description: description,
+            photoUrl: photoUrl, // 👈 Include photo URL in notification
             createdAt: report.createdAt
           }
         });
@@ -137,18 +139,19 @@ export class UserReportService {
           userId: reporterId,
           type: "REPORT_SUBMITTED",
           title: "📋 Report Submitted",
-          message: `Your report against "${groupName}" has been submitted and is pending review.`,
+          message: `Your report against "${groupName}" has been submitted and is pending review.${photoUrl ? ' Your photo evidence has been attached.' : ''}`,
           data: {
             reportId: report.id,
             groupId: group.id,
             groupName: groupName,
             reportType: type,
+            hasPhoto: !!photoUrl,
             createdAt: report.createdAt
           }
         }
       });
 
-      console.log(`📢 [REPORT] New report created: ${report.id} - ${reporterName} reported ${groupName} for ${type}`);
+      console.log(`📢 [REPORT] New report created: ${report.id} - ${reporterName} reported ${groupName} for ${type}${photoUrl ? ' (with photo)' : ''}`);
 
       return {
         success: true,
@@ -157,6 +160,7 @@ export class UserReportService {
           id: report.id,
           type: report.type,
           description: report.description,
+          photoUrl: report.photoUrl,
           status: report.status,
           createdAt: report.createdAt,
           group: {

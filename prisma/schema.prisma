@@ -418,6 +418,7 @@ model Report {
   groupId     String // Group being reported
   type        ReportType
   description String       @db.Text
+   photoUrl    String?  
   status      ReportStatus @default(PENDING)
 
   // Admin resolution

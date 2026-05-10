@@ -1,17 +1,19 @@
-// controllers/user.report.controller.ts
 import { Response } from "express";
 import { UserAuthRequest } from "../middlewares/user.auth.middleware";
 import { UserReportService } from "../services/user.report.services";
 import prisma from "../prisma";
-import { ReportType } from "@prisma/client"; // 👈 ADD THIS IMPORT
+import { ReportType } from "@prisma/client";
 
 export class UserReportController {
   
-  // ========== CREATE GROUP REPORT ==========
+  // ========== CREATE GROUP REPORT (with photo) ==========
   static async createGroupReport(req: UserAuthRequest, res: Response) {
-    try {
+    try { 
       const userId = req.user?.id;
       const { groupId, type, description } = req.body;
+      
+      // 👈 Get photo URL from uploaded file
+      const photoUrl = (req as any).file?.path || null;
 
       if (!userId) {
         return res.status(401).json({
@@ -27,7 +29,7 @@ export class UserReportController {
         });
       }
 
-      // 👇 Validate that type is a valid ReportType enum value
+      // Validate that type is a valid ReportType enum value
       const validReportTypes = Object.values(ReportType);
       if (!validReportTypes.includes(type)) {
         return res.status(400).json({
@@ -63,6 +65,13 @@ export class UserReportController {
       });
 
       if (recentReport) {
+        // If there was a photo uploaded, delete it since we won't use it
+        if (photoUrl) {
+          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
+          const publicId = extractPublicId(photoUrl);
+          if (publicId) await deleteFromCloudinary(publicId);
+        }
+        
         return res.status(429).json({
           success: false,
           message: "You have already reported this group recently. Please wait 24 hours before submitting another report."
@@ -72,11 +81,19 @@ export class UserReportController {
       const result = await UserReportService.createGroupReport(
         userId,
         groupId,
-        type as ReportType, // 👈 Cast to ReportType after validation
-        description
+        type as ReportType,
+        description,
+        photoUrl // 👈 Pass photo URL
       );
 
       if (!result.success) {
+        // If there was a photo uploaded and service failed, delete it
+        if (photoUrl && !result.success) {
+          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
+          const publicId = extractPublicId(photoUrl);
+          if (publicId) await deleteFromCloudinary(publicId);
+        }
+        
         return res.status(400).json({
           success: false,
           message: result.message
@@ -97,12 +114,25 @@ export class UserReportController {
           id: result.report.id,
           type: result.report.type,
           status: result.report.status,
+          hasPhoto: !!result.report.photoUrl,
           createdAt: result.report.createdAt
         }
       });
 
     } catch (error: any) {
       console.error("Error in createGroupReport:", error);
+      
+      // Clean up uploaded photo if error occurred
+      if ((req as any).file?.path) {
+        try {
+          const { deleteFromCloudinary, extractPublicId } = await import("../config/cloudinary.config");
+          const publicId = extractPublicId((req as any).file.path);
+          if (publicId) await deleteFromCloudinary(publicId);
+        } catch (cleanupError) {
+          console.error("Error cleaning up photo:", cleanupError);
+        }
+      }
+      
       return res.status(500).json({
         success: false,
         message: "Internal server error"
@@ -110,7 +140,7 @@ export class UserReportController {
     }
   }
 
-  // ========== GET MY REPORTS ==========
+  // ========== GET MY REPORTS (with photo info) ==========
   static async getMyReports(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
@@ -144,6 +174,8 @@ export class UserReportController {
           description: report.description,
           status: report.status,
           groupName: (report as any).group?.name || 'Unknown Group',
+          hasPhoto: !!report.photoUrl,
+          photoUrl: report.photoUrl,
           createdAt: report.createdAt,
           resolvedAt: report.resolvedAt
         }))
@@ -158,11 +190,11 @@ export class UserReportController {
     }
   }
 
-  // ========== GET SINGLE REPORT ==========
+  // ========== GET SINGLE REPORT (with photo) ==========
   static async getReport(req: UserAuthRequest, res: Response) {
     try {
       const userId = req.user?.id;
-      const { reportId } = req.params as {reportId:string};
+      const { reportId } = req.params as {reportId: string};
 
       if (!userId) {
         return res.status(401).json({
@@ -201,6 +233,7 @@ export class UserReportController {
           id: report.id,
           type: report.type,
           description: report.description,
+          photoUrl: report.photoUrl,
           status: report.status,
           groupName: (report as any).group?.name || 'Unknown Group',
           createdAt: report.createdAt,
