@@ -2060,6 +2060,7 @@ private static isSingleSlotNeglected(assignment: any, now: Date): boolean {
 }
 
 
+
 private static async checkGroupNeglectedAssignments(groupId: string) {
   try {
     const group = await prisma.group.findUnique({
@@ -2072,7 +2073,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     const now = new Date();
     const { todayUTC } = AssignmentService.getUTCToday();
 
-    // ✅ FIX 1: exclude fully expired rows, still include partiallyExpired
     const assignments = await prisma.assignment.findMany({
       where: {
         task: { groupId },
@@ -2118,7 +2118,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
       if (dueDateUTC !== todayUTC.getTime()) continue;
 
-      // Fetch fresh state for THIS assignment row
       const freshAssignment = await prisma.assignment.findUnique({
         where: { id: assignment.id },
         select: {
@@ -2129,7 +2128,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       });
 
       let completedSlotIds: string[] = [];
-      let missedSlotIds: string[] = [];
+      let existingMissedSlotIds: string[] = [];
 
       if (freshAssignment?.completedTimeSlotIds) {
         if (Array.isArray(freshAssignment.completedTimeSlotIds)) {
@@ -2148,16 +2147,16 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
       if (freshAssignment?.missedTimeSlotIds) {
         if (Array.isArray(freshAssignment.missedTimeSlotIds)) {
-          missedSlotIds = freshAssignment.missedTimeSlotIds.filter(
+          existingMissedSlotIds = freshAssignment.missedTimeSlotIds.filter(
             (item): item is string => typeof item === 'string'
           );
         } else if (typeof freshAssignment.missedTimeSlotIds === 'string') {
           try {
             const parsed = JSON.parse(freshAssignment.missedTimeSlotIds);
-            missedSlotIds = Array.isArray(parsed)
+            existingMissedSlotIds = Array.isArray(parsed)
               ? parsed.filter((item): item is string => typeof item === 'string')
               : [];
-          } catch { missedSlotIds = []; }
+          } catch { existingMissedSlotIds = []; }
         }
       }
 
@@ -2166,7 +2165,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
       const dueDay = dueDateObj.getUTCDate();
 
       for (const slot of assignment.task.timeSlots) {
-        // ✅ FIX 2: each assignment row owns exactly one slot — skip all others
+        // ✅ Each assignment row owns exactly one slot
         if ((assignment as any).timeSlotId && (assignment as any).timeSlotId !== slot.id) {
           console.log(`   ⏭️ Skipping slot ${slot.startTime}-${slot.endTime} — not this row's slot`);
           continue;
@@ -2177,7 +2176,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
           continue;
         }
 
-        if (missedSlotIds.includes(slot.id)) {
+        if (existingMissedSlotIds.includes(slot.id)) {
           console.log(`   ⚠️ Slot ${slot.startTime}-${slot.endTime} already MISSED in DB`);
           continue;
         }
@@ -2194,24 +2193,22 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
         console.log(`      Current:    ${now.toISOString()}`);
 
         if (now > graceEnd) {
-          // Race condition guard
-          if (missedSlotIds.includes(slot.id)) {
+          if (existingMissedSlotIds.includes(slot.id)) {
             console.log(`      ⏭️ Race guard: already missed, skipping`);
             continue;
           }
 
-          const newMissedSlotIds = [...missedSlotIds, slot.id];
+          const newMissedSlotIds = [...existingMissedSlotIds, slot.id];
           const allSlotIds = assignment.task.timeSlots.map((s: any) => s.id);
 
-          // ✅ FIX 3: fetch ALL rows for this task+user+day to check if
-          // all slots are missed — not just the current row
+          // Fetch ALL rows for this task+user+day
           const allRowsForTask = await prisma.assignment.findMany({
             where: {
               taskId: assignment.taskId,
               userId: assignment.userId,
               dueDate: {
                 gte: new Date(Date.UTC(dueYear, dueMonth, dueDay, 0, 0, 0)),
-                lt:  new Date(Date.UTC(dueYear, dueMonth, dueDay + 1, 0, 0, 0))
+                lt: new Date(Date.UTC(dueYear, dueMonth, dueDay + 1, 0, 0, 0))
               }
             },
             select: {
@@ -2237,7 +2234,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             rowCompleted.forEach(id => allCompletedAcrossRows.add(id));
           }
 
-          // Include the slot we're marking right now
           allMissedAcrossRows.add(slot.id);
 
           const allMissed = allSlotIds.every((id: string) => allMissedAcrossRows.has(id));
@@ -2247,8 +2243,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
 
           console.log(`      ❌ SLOT ${slot.startTime}-${slot.endTime} IS NEGLECTED`);
           console.log(`         allMissed: ${allMissed}, allAccountedFor: ${allAccountedFor}`);
-          console.log(`         missedAcrossRows: [${[...allMissedAcrossRows]}]`);
-          console.log(`         completedAcrossRows: [${[...allCompletedAcrossRows]}]`);
 
           // Update only THIS row's missed slots
           await prisma.assignment.update({
@@ -2261,7 +2255,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
             }
           });
 
-          // ✅ FIX 4: once all slots accounted for, sync expired state to ALL rows
+          // Sync expired state to ALL rows when all slots accounted for
           if (allAccountedFor) {
             await prisma.assignment.updateMany({
               where: {
@@ -2269,7 +2263,7 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 userId: assignment.userId,
                 dueDate: {
                   gte: new Date(Date.UTC(dueYear, dueMonth, dueDay, 0, 0, 0)),
-                  lt:  new Date(Date.UTC(dueYear, dueMonth, dueDay + 1, 0, 0, 0))
+                  lt: new Date(Date.UTC(dueYear, dueMonth, dueDay + 1, 0, 0, 0))
                 }
               },
               data: {
@@ -2278,19 +2272,33 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
                 partiallyExpired: false
               }
             });
-            console.log(`         ✅ Synced expired state to all rows for this task`);
+            console.log(`         ✅ Synced expired state to all rows`);
           }
 
           const slotPoints = slot.points || assignment.points || 0;
-          totalPointsNotAwarded += slotPoints;
-          neglectedCount++;
-
-          await prisma.groupMember.updateMany({
+          
+          // ✅ CRITICAL: Get current user points before deducting
+          const currentMember = await prisma.groupMember.findFirst({
             where: { userId: assignment.userId, groupId, isActive: true },
-            data: { cumulativePoints: { decrement: Math.min(slotPoints, 999) } }
+            select: { cumulativePoints: true }
           });
-
-          console.log(`         💰 Deducted ${slotPoints} pts from user ${assignment.userId}`);
+          const currentPoints = currentMember?.cumulativePoints || 0;
+          
+          // ✅ PREVENT NEGATIVE POINTS
+          const actualDeduction = Math.min(slotPoints, currentPoints);
+          
+          if (actualDeduction > 0) {
+            await prisma.groupMember.updateMany({
+              where: { userId: assignment.userId, groupId, isActive: true },
+              data: { cumulativePoints: { decrement: actualDeduction } }
+            });
+            console.log(`         💰 Deducted ${actualDeduction} pts (user had ${currentPoints})`);
+            totalPointsNotAwarded += actualDeduction;
+          } else {
+            console.log(`         ⏭️ SKIPPED deduction - user has 0 points`);
+          }
+          
+          neglectedCount++;
 
         } else {
           const remaining = Math.ceil((graceEnd.getTime() - now.getTime()) / 60000);
@@ -2306,8 +2314,6 @@ private static async checkGroupNeglectedAssignments(groupId: string) {
     return { count: 0, pointsNotAwarded: 0 };
   }
 }
-
-
 static async sendUpcomingTaskReminders() {
   try {
     const processedSlots = new Set<string>();
